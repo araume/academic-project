@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Home</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/home.css" />
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" class="is-active">Home</a>
+        <a href="/connections">Connections</a>
+        <a href="/personal">Personal</a>
+        <a href="/open-library">Open Library</a>
+        <a href="/community">Community</a>
+        <a href="/rooms">Rooms</a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle">ML</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <section class="feed">
+      <div class="composer">
+        <div class="composer-avatar"></div>
+        <button class="composer-button">
+          <img src="/assets/write-create.svg" alt="" />
+          Create post
+        </button>
+      </div>
+
+      <article class="post-card">
+        <div class="post-header">
+          <div class="post-avatar"></div>
+          <div class="post-meta">
+            <div>
+              <h4>Saddam Hussein</h4>
+              <p>2 minutes ago</p>
+            </div>
+            <button class="icon-button subtle" aria-label="More">
+              <img src="/assets/dot-menu.svg" alt="" />
+            </button>
+          </div>
+        </div>
+        <p>
+          Heads up, everyone. Found some good reading in an old archive and uploaded it in the
+          open library. Check it out if you are in bridge design this week.
+        </p>
+        <button class="attachment">
+          <img src="/assets/document.svg" alt="" />
+          The Case of Alice Petals ...
+        </button>
+        <div class="post-actions">
+          <button><img src="/assets/heart.svg" alt="" />Like</button>
+          <button><img src="/assets/comment-discussion.svg" alt="" />Discussion</button>
+          <button><img src="/assets/AI-star.svg" alt="" />Ask AI</button>
+        </div>
+      </article>
+
+      <article class="post-card">
+        <div class="post-header">
+          <div class="post-avatar dark"></div>
+          <div class="post-meta">
+            <div>
+              <h4>Gengis Khan</h4>
+              <p>4 hours ago</p>
+            </div>
+            <button class="icon-button subtle" aria-label="More">
+              <img src="/assets/dot-menu.svg" alt="" />
+            </button>
+          </div>
+        </div>
+        <p>
+          Placeholder discussion thread for upcoming assignments and study rooms. Content will
+          be populated when the backend is ready.
+        </p>
+        <p>
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent luctus odio ut
+          mauris bibendum, vel cursus nisl tempor.
+        </p>
+      </article>
+    </section>
+
+    <aside class="sidebar">
+      <section class="side-card large">
+        <h3>Trending Discussions</h3>
+        <div class="placeholder-line"></div>
+        <div class="placeholder-line wide"></div>
+        <div class="placeholder-line"></div>
+      </section>
+      <div class="side-grid">
+        <section class="side-card">
+          <h3>Course materials</h3>
+          <div class="placeholder-line"></div>
+          <div class="placeholder-line"></div>
+        </section>
+        <section class="side-card">
+          <h3>Suggested Rooms</h3>
+          <div class="placeholder-line"></div>
+          <div class="placeholder-line"></div>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/src/js/home.js"></script>
+</body>
+</html>
