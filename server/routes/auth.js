@@ -37,7 +37,7 @@ router.post('/api/signup', async (req, res) => {
         (email, uid, password, username, display_name, course, recovery_email, datecreated)
       VALUES
         ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id, email, username, display_name
+      RETURNING id, email, username, display_name, uid, course
     `;
     const values = [
       email,
@@ -54,9 +54,11 @@ router.post('/api/signup', async (req, res) => {
     const user = result.rows[0];
     const sessionId = createSession({
       id: user.id,
+      uid: user.uid,
       email: user.email,
       username: user.username,
       displayName: user.display_name,
+      course: user.course,
     });
 
     const cookieOptions = {
@@ -88,7 +90,7 @@ router.post('/api/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, email, password, username, display_name FROM accounts WHERE email = $1',
+      'SELECT id, uid, email, password, username, display_name, course FROM accounts WHERE email = $1',
       [email]
     );
 
@@ -103,9 +105,11 @@ router.post('/api/login', async (req, res) => {
 
     const sessionId = createSession({
       id: user.id,
+      uid: user.uid,
       email: user.email,
       username: user.username,
       displayName: user.display_name,
+      course: user.course,
     });
 
     const cookieOptions = {
@@ -116,7 +120,7 @@ router.post('/api/login', async (req, res) => {
     };
     res.cookie('session_id', sessionId, cookieOptions);
 
-    return res.json({ ok: true, user: { id: user.id, email: user.email }, token: sessionId });
+    return res.json({ ok: true, user: { id: user.id, uid: user.uid, email: user.email, course: user.course }, token: sessionId });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Login failed.' });
   }
