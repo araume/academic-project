@@ -6,6 +6,10 @@ const { loadEnv } = require('./server/config/env');
 loadEnv();
 
 const authRoutes = require('./server/routes/auth');
+const libraryRoutes = require('./server/routes/library');
+const postsRoutes = require('./server/routes/posts');
+const profileRoutes = require('./server/routes/profile');
+const personalRoutes = require('./server/routes/personal');
 const requireAuth = require('./server/middleware/requireAuth');
 const { getSession } = require('./server/auth/sessionStore');
 
@@ -21,6 +25,10 @@ app.use('/src/styles', express.static(path.join(__dirname, 'src', 'styles')));
 app.use('/src/js', express.static(path.join(__dirname, 'src', 'js')));
 
 app.use(authRoutes);
+app.use(libraryRoutes);
+app.use(postsRoutes);
+app.use(profileRoutes);
+app.use(personalRoutes);
 
 app.get('/', (req, res) => {
   const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;

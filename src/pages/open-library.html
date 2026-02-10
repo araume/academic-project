@@ -4,19 +4,223 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Open Library</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/library.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Open Library</h1>
-      <p>Placeholder page. Content will be added later.</p>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home">Home</a>
+        <a href="/connections">Connections</a>
+        <a href="/personal">Personal</a>
+        <a href="/open-library" class="is-active">Open Library</a>
+        <a href="/community">Community</a>
+        <a href="/rooms">Rooms</a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle">ML</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="library">
+    <section class="library-header">
+      <div>
+        <p class="eyebrow">Open Library</p>
+        <h1>Find and share academic resources.</h1>
+        <p class="subcopy">Search, filter, and discuss uploaded materials across your community.</p>
+      </div>
+      <button class="primary-button" id="uploadToggle">Upload document</button>
+    </section>
+
+    <section class="library-controls">
+      <form id="searchForm" class="search-bar">
+        <input type="text" id="searchInput" placeholder="Search for documents, articles, papers..." />
+        <button type="submit">Search</button>
+      </form>
+      <div class="filters">
+        <select id="courseFilter">
+          <option value="all">All courses</option>
+        </select>
+        <select id="sortFilter">
+          <option value="recent">Recent</option>
+          <option value="oldest">Oldest</option>
+          <option value="popularity">Popularity</option>
+          <option value="views">Most views</option>
+          <option value="az">A - Z</option>
+          <option value="za">Z - A</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="document-grid" id="documentGrid"></section>
+
+    <div class="pagination" id="pagination"></div>
+  </main>
+
+  <div class="modal is-hidden" id="detailModal">
+    <div class="modal-card">
+      <button class="close-button" id="detailClose">×</button>
+      <div class="detail-header">
+        <div class="detail-thumb" id="detailThumb"></div>
+        <div>
+          <h2 id="detailTitle"></h2>
+          <p id="detailMeta"></p>
+        </div>
+      </div>
+      <p id="detailDescription" class="detail-description"></p>
+      <div class="detail-grid">
+        <div>
+          <span>File name</span>
+          <p id="detailFilename"></p>
+        </div>
+        <div>
+          <span>Uploader</span>
+          <p id="detailUploader"></p>
+        </div>
+        <div>
+          <span>Date uploaded</span>
+          <p id="detailDate"></p>
+        </div>
+        <div>
+          <span>Course</span>
+          <p id="detailCourse"></p>
+        </div>
+        <div>
+          <span>Subject/Lesson</span>
+          <p id="detailSubject"></p>
+        </div>
+        <div>
+          <span>Views</span>
+          <p id="detailViews"></p>
+        </div>
+        <div>
+          <span>Popularity</span>
+          <p id="detailPopularity"></p>
+        </div>
+      </div>
+      <div class="detail-actions">
+        <button class="ghost-button" id="detailLike">Like</button>
+        <button class="ghost-button">Discuss</button>
+        <button class="ghost-button">Ask AI</button>
+        <div class="menu-wrap">
+          <button class="menu-button" id="detailMenuToggle">⋯</button>
+          <div class="menu-pop is-hidden" id="detailMenu">
+            <button type="button" id="detailShare">Share link</button>
+            <button type="button" id="detailReport">Report</button>
+            <button type="button" id="detailEdit" class="is-hidden">Edit</button>
+            <button type="button" id="detailDelete" class="is-hidden">Delete</button>
+          </div>
+        </div>
+        <button class="primary-button" id="detailOpen">Open/View</button>
+      </div>
+
+      <div class="edit-section is-hidden" id="editSection">
+        <h3>Edit details</h3>
+        <form id="editForm" class="edit-form">
+          <label>
+            <span>Title</span>
+            <input type="text" name="title" required />
+          </label>
+          <label>
+            <span>Description</span>
+            <textarea name="description" rows="3"></textarea>
+          </label>
+          <label>
+            <span>Course</span>
+            <input type="text" name="course" required />
+          </label>
+          <label>
+            <span>Subject/Lesson</span>
+            <input type="text" name="subject" required />
+          </label>
+          <div class="edit-actions">
+            <button type="submit" class="primary-button">Save</button>
+            <button type="button" class="ghost-button" id="editCancel">Cancel</button>
+          </div>
+          <p class="form-message" id="editMessage"></p>
+        </form>
+      </div>
+
+      <div class="comment-section">
+        <h3>Discussion</h3>
+        <div class="comment-list" id="commentList"></div>
+        <form id="commentForm" class="comment-form">
+          <input type="text" id="commentInput" placeholder="Write a comment..." />
+          <button type="submit">Post</button>
+        </form>
+      </div>
     </div>
   </div>
+
+  <div class="modal is-hidden" id="uploadModal">
+    <div class="modal-card">
+      <button class="close-button" id="uploadClose">×</button>
+      <h2>Upload a document</h2>
+      <form id="uploadForm" class="upload-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea name="description" rows="3"></textarea>
+        </label>
+        <label>
+          <span>File attachment (max 50MB)</span>
+          <input type="file" name="file" required />
+        </label>
+        <label>
+          <span>Thumbnail (optional)</span>
+          <input type="file" name="thumbnail" accept="image/*" />
+        </label>
+        <label>
+          <span>Course</span>
+          <select name="course" id="uploadCourse" required>
+            <option value="">Select course</option>
+          </select>
+        </label>
+        <label>
+          <span>Subject/Lesson</span>
+          <input type="text" name="subject" required />
+        </label>
+        <label class="toggle">
+          <input type="checkbox" name="visibility" value="private" />
+          <span>Private (course members only)</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" name="aiallowed" />
+          <span>Allow AI conversation</span>
+        </label>
+        <button type="submit" class="primary-button">Upload</button>
+        <p class="form-message" id="uploadMessage"></p>
+      </form>
+    </div>
+  </div>
+
+
+  <script src="/src/js/library.js"></script>
 </body>
 </html>
