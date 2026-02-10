@@ -3,7 +3,7 @@ const multer = require('multer');
 const { ObjectId } = require('mongodb');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
-const { uploadToDrive } = require('../services/gdrive');
+const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 
 const router = express.Router();
 const upload = multer({
@@ -26,6 +26,19 @@ function buildVisibilityFilter(user) {
     filter.$or.push({ uploaderUid: userUid });
   }
   return filter;
+}
+
+const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
+
+async function signAttachment(attachment) {
+  if (!attachment) return null;
+  if (attachment.type === 'image' || attachment.type === 'video') {
+    if (attachment.key && !attachment.key.startsWith('http')) {
+      const url = await getSignedUrl(attachment.key, SIGNED_TTL);
+      return { ...attachment, link: url };
+    }
+  }
+  return attachment;
 }
 
 router.get('/api/posts', async (req, res) => {
@@ -64,21 +77,23 @@ router.get('/api/posts', async (req, res) => {
     const likedSet = new Set(liked.map((item) => item.postId.toString()));
     const bookmarkSet = new Set(bookmarked.map((item) => item.postId.toString()));
 
-    const response = posts.map((post) => ({
-      id: post._id.toString(),
-      title: post.title,
-      content: post.content,
-      course: post.course,
-      visibility: post.visibility,
-      attachment: post.attachment || null,
-      uploadDate: post.uploadDate,
-      uploader: post.uploader,
-      likesCount: post.likesCount || 0,
-      commentsCount: post.commentsCount || 0,
-      liked: likedSet.has(post._id.toString()),
-      bookmarked: bookmarkSet.has(post._id.toString()),
-      isOwner: post.uploaderUid === userUid,
-    }));
+    const response = await Promise.all(
+      posts.map(async (post) => ({
+        id: post._id.toString(),
+        title: post.title,
+        content: post.content,
+        course: post.course,
+        visibility: post.visibility,
+        attachment: await signAttachment(post.attachment || null),
+        uploadDate: post.uploadDate,
+        uploader: post.uploader,
+        likesCount: post.likesCount || 0,
+        commentsCount: post.commentsCount || 0,
+        liked: likedSet.has(post._id.toString()),
+        bookmarked: bookmarkSet.has(post._id.toString()),
+        isOwner: post.uploaderUid === userUid,
+      }))
+    );
 
     return res.json({ ok: true, total, page, pageSize, posts: response });
   } catch (error) {
@@ -116,27 +131,24 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     let attachment = null;
     if (attachmentType && attachmentType !== 'none') {
       if ((attachmentType === 'image' || attachmentType === 'video') && file) {
-        const folderId = process.env.GDRIVE_POSTS_FOLDER_ID || process.env.GDRIVE_FOLDER_ID || null;
-        const uploaded = await uploadToDrive({
+        const uploaded = await uploadToStorage({
           buffer: file.buffer,
           filename: file.originalname,
           mimeType: file.mimetype,
-          folderId,
-          makePublic: visibilityValue === 'public',
+          prefix: 'posts',
         });
         attachment = {
           type: attachmentType,
-          link: uploaded.webViewLink || uploaded.webContentLink,
+          key: uploaded.key,
           filename: file.originalname,
           mimeType: file.mimetype,
         };
       } else if (attachmentType === 'library_doc') {
-        if (!attachmentLink || !libraryDocumentUuid) {
+        if (!libraryDocumentUuid) {
           return res.status(400).json({ ok: false, message: 'Library document details required.' });
         }
         attachment = {
           type: 'library_doc',
-          link: attachmentLink,
           libraryDocumentUuid,
           title: attachmentTitle || null,
         };
@@ -228,6 +240,17 @@ router.delete('/api/posts/:id', async (req, res) => {
     const post = await postsCollection.findOne({ _id: postId });
     if (!post || post.uploaderUid !== req.user.uid) {
       return res.status(403).json({ ok: false, message: 'Not allowed.' });
+    }
+
+    if (post.attachment && (post.attachment.type === 'image' || post.attachment.type === 'video')) {
+      const key = post.attachment.key || null;
+      if (key && !key.startsWith('http')) {
+        try {
+          await deleteFromStorage(key);
+        } catch (error) {
+          console.error('Storage delete failed:', error);
+        }
+      }
     }
 
     await postsCollection.deleteOne({ _id: postId });

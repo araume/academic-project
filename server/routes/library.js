@@ -4,13 +4,21 @@ const multer = require('multer');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
-const { uploadToDrive, deleteFromDrive } = require('../services/gdrive');
+const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
+
+const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
+
+async function signIfNeeded(value) {
+  if (!value) return null;
+  if (value.startsWith('http')) return value;
+  return getSignedUrl(value, SIGNED_TTL);
+}
 
 router.use('/api/library', requireAuthApi);
 
@@ -111,13 +119,14 @@ router.get('/api/library/documents', async (req, res) => {
     `;
 
     const listResult = await pool.query(listQuery, listValues);
-    return res.json({
-      ok: true,
-      total,
-      page,
-      pageSize,
-      documents: listResult.rows,
-    });
+    const documents = await Promise.all(
+      listResult.rows.map(async (doc) => ({
+        ...doc,
+        link: await signIfNeeded(doc.link),
+        thumbnail_link: await signIfNeeded(doc.thumbnail_link),
+      }))
+    );
+    return res.json({ ok: true, total, page, pageSize, documents });
   } catch (error) {
     console.error('Document fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load documents.' });
@@ -164,7 +173,15 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ ok: false, message: 'Document not found.' });
     }
-    return res.json({ ok: true, document: result.rows[0] });
+    const doc = result.rows[0];
+    return res.json({
+      ok: true,
+      document: {
+        ...doc,
+        link: await signIfNeeded(doc.link),
+        thumbnail_link: await signIfNeeded(doc.thumbnail_link),
+      },
+    });
   } catch (error) {
     console.error('Document fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load document.' });
@@ -200,28 +217,24 @@ router.post(
 
     try {
       const uuid = crypto.randomUUID();
-      const folderId = process.env.GDRIVE_FOLDER_ID || null;
       const visibilityValue = visibility === 'private' ? 'private' : 'public';
-      const isPublic = visibilityValue === 'public';
 
-      const uploadedFile = await uploadToDrive({
+      const uploadedFile = await uploadToStorage({
         buffer: file.buffer,
         filename: file.originalname,
         mimeType: file.mimetype,
-        folderId,
-        makePublic: isPublic,
+        prefix: 'library',
       });
 
       let thumbnailLink = null;
       if (thumbnail) {
-        const uploadedThumb = await uploadToDrive({
+        const uploadedThumb = await uploadToStorage({
           buffer: thumbnail.buffer,
           filename: thumbnail.originalname,
           mimeType: thumbnail.mimetype,
-          folderId,
-          makePublic: isPublic,
+          prefix: 'library-thumbs',
         });
-        thumbnailLink = uploadedThumb.webViewLink || uploadedThumb.webContentLink || null;
+        thumbnailLink = uploadedThumb.key;
       }
 
       const insertQuery = `
@@ -243,7 +256,7 @@ router.post(
         subject.trim(),
         visibilityValue,
         aiAllowedValue,
-        uploadedFile.webViewLink || uploadedFile.webContentLink,
+        uploadedFile.key,
         thumbnailLink,
       ];
 
@@ -358,19 +371,15 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Document not found.' });
     }
 
-    const linksToDelete = [doc.link, doc.thumbnail_link].filter(Boolean);
-    const ids = linksToDelete
-      .map((link) => {
-        const match = link.match(/[-\\w]{25,}/);
-        return match ? match[0] : null;
-      })
-      .filter(Boolean);
-
-    for (const fileId of ids) {
+    const keysToDelete = [doc.link, doc.thumbnail_link].filter(Boolean);
+    for (const key of keysToDelete) {
+      if (key.startsWith('http')) {
+        continue;
+      }
       try {
-        await deleteFromDrive(fileId);
+        await deleteFromStorage(key);
       } catch (error) {
-        console.error('Drive delete failed:', error);
+        console.error('Storage delete failed:', error);
       }
     }
 

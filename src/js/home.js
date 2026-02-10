@@ -372,10 +372,9 @@ async function createPost(event) {
     const selected = attachmentDoc.options[attachmentDoc.selectedIndex];
     if (selected) {
       formData.set('libraryDocumentUuid', selected.value);
-      formData.set('attachmentLink', selected.dataset.link || '');
       formData.set('attachmentTitle', selected.dataset.title || '');
     }
-    if (!selected || !selected.dataset.link) {
+    if (!selected || !selected.value) {
       createPostMessage.textContent = 'Please select a library document.';
       return;
     }

@@ -4,19 +4,231 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Personal</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/personal.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Personal</h1>
-      <p>Placeholder page. Content will be added later.</p>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home">Home</a>
+        <a href="/connections">Connections</a>
+        <a href="/personal" class="is-active">Personal</a>
+        <a href="/open-library">Open Library</a>
+        <a href="/community">Community</a>
+        <a href="/rooms">Rooms</a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle">ML</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="personal-shell">
+    <aside class="personal-tabs">
+      <button class="tab-button is-active" data-tab="journal">Journal</button>
+      <button class="tab-button" data-tab="tasks">Tasks</button>
+      <button class="tab-button" data-tab="ai">AI Chatbot</button>
+    </aside>
+
+    <section class="personal-panel">
+      <div class="tab-panel is-active" id="tab-journal">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Journals</p>
+            <h2>Capture study notes and reflections.</h2>
+          </div>
+          <button class="ghost-button" id="newJournal">New entry</button>
+        </div>
+        <div class="panel-grid">
+          <form id="journalForm" class="panel-card">
+            <label>
+              <span>Title</span>
+              <input type="text" name="title" required />
+            </label>
+            <label>
+              <span>Folder</span>
+              <select name="folder" id="journalFolderSelect">
+                <option value="">Select folder</option>
+              </select>
+            </label>
+            <label>
+              <span>Tags (comma separated)</span>
+              <input type="text" name="tags" placeholder="bridge, exam, notes" />
+            </label>
+            <label>
+              <span>Markdown content</span>
+              <textarea name="content" rows="8" required></textarea>
+            </label>
+            <div class="form-actions">
+              <button type="button" class="ghost-button" id="resetJournal">Reset</button>
+              <button type="submit" class="primary-button">Save entry</button>
+            </div>
+            <p class="form-message" id="journalMessage"></p>
+          </form>
+          <div class="panel-card">
+            <div class="folder-row">
+              <div>
+                <h3>Folders</h3>
+                <p class="hint">Create folders and then select them for entries.</p>
+              </div>
+              <div class="folder-create">
+                <input type="text" id="newFolderName" placeholder="New folder name" />
+                <button class="ghost-button" id="createFolder">Add folder</button>
+              </div>
+            </div>
+            <div class="folder-section">
+              <h3>Folders</h3>
+              <p class="hint">Open a folder to view its entries.</p>
+              <div id="folderList" class="folder-list"></div>
+            </div>
+            <div class="entry-view" id="journalView">
+              <h4 id="journalViewTitle">Select an entry</h4>
+              <p id="journalViewMeta"></p>
+              <pre id="journalViewContent"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-tasks">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Tasks</p>
+            <h2>Track what matters most.</h2>
+          </div>
+          <button class="primary-button" id="openTaskModal">Add task</button>
+        </div>
+        <p class="form-message" id="taskMessage"></p>
+        <div class="task-board">
+          <div class="task-column">
+            <h3>Pending</h3>
+            <div id="tasksPending" class="task-list"></div>
+          </div>
+          <div class="task-column">
+            <h3>Ongoing</h3>
+            <div id="tasksOngoing" class="task-list"></div>
+          </div>
+          <div class="task-column">
+            <h3>Complete</h3>
+            <div id="tasksComplete" class="task-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-ai">
+        <div class="ai-shell">
+          <aside class="ai-sidebar">
+            <div class="ai-sidebar-top">
+              <div>
+                <p class="eyebrow">AI Companion</p>
+                <h2>Talk through ideas and study plans.</h2>
+              </div>
+              <button class="primary-button" id="newConversation">New conversation</button>
+            </div>
+            <div id="conversationList" class="conversation-list"></div>
+          </aside>
+          <section class="ai-chat">
+            <div class="ai-chat-header">
+              <div>
+                <p class="ai-title" id="conversationTitle">New conversation</p>
+                <p class="ai-subtitle" id="conversationSubtitle">Start a new chat to see responses.</p>
+              </div>
+              <div class="ai-tools">
+                <button class="ghost-button" id="openContextPicker">Add context</button>
+                <div class="context-chip is-hidden" id="contextChip">
+                  <span id="contextLabel">No context</span>
+                  <button type="button" id="clearContext">×</button>
+                </div>
+                <div id="proposalActions" class="is-hidden">
+                  <button class="ghost-button" id="rejectProposal">Reject tasks</button>
+                  <button class="primary-button" id="confirmProposal">Confirm tasks</button>
+                </div>
+              </div>
+            </div>
+            <div id="messageList" class="chat-messages"></div>
+            <form id="messageForm" class="chat-input">
+              <input type="text" id="messageInput" placeholder="Send a message..." />
+              <button type="submit" aria-label="Send">
+                <img src="/assets/send.svg" alt="" />
+              </button>
+            </form>
+            <p class="form-message" id="aiMessage"></p>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal is-hidden" id="taskModal">
+    <div class="modal-card">
+      <button class="close-button" id="taskModalClose">×</button>
+      <h2>Add a task</h2>
+      <form id="taskForm" class="panel-card">
+        <label>
+          <span>Task</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea name="description" rows="3" placeholder="What needs to be done?"></textarea>
+        </label>
+        <label>
+          <span>Priority</span>
+          <select name="priority">
+            <option value="low">Low</option>
+            <option value="normal" selected>Normal</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </label>
+        <label>
+          <span>Due date</span>
+          <input type="date" name="dueDate" />
+        </label>
+        <label>
+          <span>Tags</span>
+          <input type="text" name="tags" placeholder="exam, group work" />
+        </label>
+        <button type="submit" class="primary-button">Add task</button>
+      </form>
     </div>
   </div>
+
+  <div class="modal is-hidden" id="contextModal">
+    <div class="modal-card context-card">
+      <button class="close-button" id="contextModalClose">×</button>
+      <div class="context-header">
+        <h2>Select document context</h2>
+        <p class="hint">Pick a document to ground the conversation.</p>
+      </div>
+      <div class="context-search">
+        <input type="text" id="contextSearch" placeholder="Search documents..." />
+      </div>
+      <div id="contextList" class="context-list"></div>
+    </div>
+  </div>
+
+  <script src="/src/js/personal.js"></script>
 </body>
 </html>

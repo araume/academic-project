@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
-const { uploadToDrive } = require('../services/gdrive');
+const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 
 const router = express.Router();
 const upload = multer({
@@ -38,7 +38,11 @@ async function ensureProfile(uid) {
 router.get('/api/profile', async (req, res) => {
   try {
     const profile = await ensureProfile(req.user.uid);
-    return res.json({ ok: true, profile });
+    let photoLink = profile.photo_link;
+    if (photoLink && !photoLink.startsWith('http')) {
+      photoLink = await getSignedUrl(photoLink, Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60));
+    }
+    return res.json({ ok: true, profile: { ...profile, photo_link: photoLink } });
   } catch (error) {
     console.error('Profile fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load profile.' });
@@ -125,20 +129,27 @@ router.post('/api/profile/photo', upload.single('photo'), async (req, res) => {
   }
   try {
     await ensureProfile(req.user.uid);
-    const folderId = process.env.GDRIVE_PROFILE_FOLDER_ID || process.env.GDRIVE_FOLDER_ID || null;
-    const uploaded = await uploadToDrive({
+    const uploaded = await uploadToStorage({
       buffer: req.file.buffer,
       filename: req.file.originalname,
       mimeType: req.file.mimetype,
-      folderId,
-      makePublic: true,
+      prefix: 'profiles',
     });
-    const link = uploaded.webViewLink || uploaded.webContentLink;
+    const link = uploaded.key;
+    const previous = await pool.query('SELECT photo_link FROM profiles WHERE uid = $1', [req.user.uid]);
     const result = await pool.query(
       'UPDATE profiles SET photo_link = $1, updated_at = NOW() WHERE uid = $2 RETURNING photo_link',
       [link, req.user.uid]
     );
-    return res.json({ ok: true, photo_link: result.rows[0]?.photo_link || link });
+    if (previous.rows[0]?.photo_link && !previous.rows[0].photo_link.startsWith('http')) {
+      try {
+        await deleteFromStorage(previous.rows[0].photo_link);
+      } catch (error) {
+        console.error('Storage delete failed:', error);
+      }
+    }
+    const signed = await getSignedUrl(link, Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60));
+    return res.json({ ok: true, photo_link: signed });
   } catch (error) {
     console.error('Profile photo upload failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to upload photo.' });
