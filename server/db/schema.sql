@@ -48,3 +48,20 @@ CREATE INDEX IF NOT EXISTS documents_course_idx ON documents(course);
 CREATE INDEX IF NOT EXISTS documents_uploaddate_idx ON documents(uploaddate);
 CREATE INDEX IF NOT EXISTS documents_popularity_idx ON documents(popularity);
 CREATE INDEX IF NOT EXISTS documents_views_idx ON documents(views);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id SERIAL PRIMARY KEY,
+  uid TEXT UNIQUE NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  display_name TEXT,
+  bio TEXT,
+  main_course TEXT,
+  sub_courses TEXT[],
+  facebook TEXT,
+  linkedin TEXT,
+  instagram TEXT,
+  github TEXT,
+  portfolio TEXT,
+  photo_link TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

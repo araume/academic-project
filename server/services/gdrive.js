@@ -64,4 +64,11 @@ async function uploadToDrive({ buffer, filename, mimeType, folderId, makePublic 
 
 module.exports = {
   uploadToDrive,
+  async deleteFromDrive(fileId) {
+    const drive = getDriveClient();
+    if (!fileId) {
+      return;
+    }
+    await drive.files.delete({ fileId });
+  },
 };

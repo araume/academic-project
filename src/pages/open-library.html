@@ -198,7 +198,9 @@
         </label>
         <label>
           <span>Course</span>
-          <input type="text" name="course" list="courseList" required />
+          <select name="course" id="uploadCourse" required>
+            <option value="">Select course</option>
+          </select>
         </label>
         <label>
           <span>Subject/Lesson</span>
@@ -218,7 +220,6 @@
     </div>
   </div>
 
-  <datalist id="courseList"></datalist>
 
   <script src="/src/js/library.js"></script>
 </body>

@@ -49,62 +49,13 @@
     <section class="feed">
       <div class="composer">
         <div class="composer-avatar"></div>
-        <button class="composer-button">
+        <button class="composer-button" id="createPostToggle">
           <img src="/assets/write-create.svg" alt="" />
           Create post
         </button>
       </div>
 
-      <article class="post-card">
-        <div class="post-header">
-          <div class="post-avatar"></div>
-          <div class="post-meta">
-            <div>
-              <h4>Saddam Hussein</h4>
-              <p>2 minutes ago</p>
-            </div>
-            <button class="icon-button subtle" aria-label="More">
-              <img src="/assets/dot-menu.svg" alt="" />
-            </button>
-          </div>
-        </div>
-        <p>
-          Heads up, everyone. Found some good reading in an old archive and uploaded it in the
-          open library. Check it out if you are in bridge design this week.
-        </p>
-        <button class="attachment">
-          <img src="/assets/document.svg" alt="" />
-          The Case of Alice Petals ...
-        </button>
-        <div class="post-actions">
-          <button><img src="/assets/heart.svg" alt="" />Like</button>
-          <button><img src="/assets/comment-discussion.svg" alt="" />Discussion</button>
-          <button><img src="/assets/AI-star.svg" alt="" />Ask AI</button>
-        </div>
-      </article>
-
-      <article class="post-card">
-        <div class="post-header">
-          <div class="post-avatar dark"></div>
-          <div class="post-meta">
-            <div>
-              <h4>Gengis Khan</h4>
-              <p>4 hours ago</p>
-            </div>
-            <button class="icon-button subtle" aria-label="More">
-              <img src="/assets/dot-menu.svg" alt="" />
-            </button>
-          </div>
-        </div>
-        <p>
-          Placeholder discussion thread for upcoming assignments and study rooms. Content will
-          be populated when the backend is ready.
-        </p>
-        <p>
-          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent luctus odio ut
-          mauris bibendum, vel cursus nisl tempor.
-        </p>
-      </article>
+      <div id="postsFeed" class="posts-feed"></div>
     </section>
 
     <aside class="sidebar">
@@ -128,6 +79,123 @@
       </div>
     </aside>
   </main>
+
+  <div class="modal is-hidden" id="createPostModal">
+    <div class="modal-card">
+      <button class="close-button" id="createPostClose">×</button>
+      <h2>Create a post</h2>
+      <form id="createPostForm" class="post-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea name="content" rows="4" required></textarea>
+        </label>
+        <label>
+          <span>Course</span>
+          <select name="course" id="postCourse">
+            <option value="">Select course</option>
+          </select>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="postPublic" />
+          <span>Public post (course not required)</span>
+        </label>
+        <label>
+          <span>Attachment type</span>
+          <select name="attachmentType" id="attachmentType">
+            <option value="none">None</option>
+            <option value="image">Image</option>
+            <option value="video">Video</option>
+            <option value="link">Link</option>
+            <option value="library_doc">Open Library document</option>
+          </select>
+        </label>
+        <label id="attachmentFileRow" class="is-hidden">
+          <span>File</span>
+          <input type="file" name="file" id="attachmentFile" />
+        </label>
+        <label id="attachmentLinkRow" class="is-hidden">
+          <span>Attachment link</span>
+          <input type="url" name="attachmentLink" id="attachmentLink" placeholder="https://..." />
+        </label>
+        <label id="attachmentDocRow" class="is-hidden">
+          <span>Select document</span>
+          <select id="attachmentDoc">
+            <option value="">Select a document</option>
+          </select>
+        </label>
+        <button type="submit" class="primary-button">Post</button>
+        <p class="form-message" id="createPostMessage"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="editPostModal">
+    <div class="modal-card">
+      <button class="close-button" id="editPostClose">×</button>
+      <h2>Edit post</h2>
+      <form id="editPostForm" class="post-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea name="content" rows="4" required></textarea>
+        </label>
+        <label>
+          <span>Course</span>
+          <select name="course" id="editPostCourse">
+            <option value="">Select course</option>
+          </select>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="editPostPublic" />
+          <span>Public post (course not required)</span>
+        </label>
+        <button type="submit" class="primary-button">Save</button>
+        <p class="form-message" id="editPostMessage"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="commentsModal">
+    <div class="modal-card">
+      <button class="close-button" id="commentsClose">×</button>
+      <h2>Discussion</h2>
+      <div class="comment-list" id="postCommentList"></div>
+      <form id="postCommentForm" class="comment-form">
+        <input type="text" id="postCommentInput" placeholder="Write a comment..." />
+        <button type="submit">Post</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="libraryDocModal">
+    <div class="modal-card">
+      <button class="close-button" id="libraryDocClose">×</button>
+      <h2 id="libraryDocTitle"></h2>
+      <p id="libraryDocDescription" class="detail-description"></p>
+      <div class="detail-grid">
+        <div>
+          <span>Uploader</span>
+          <p id="libraryDocUploader"></p>
+        </div>
+        <div>
+          <span>Course</span>
+          <p id="libraryDocCourse"></p>
+        </div>
+        <div>
+          <span>Subject/Lesson</span>
+          <p id="libraryDocSubject"></p>
+        </div>
+      </div>
+      <button class="primary-button" id="libraryDocOpen">Open/View</button>
+    </div>
+  </div>
 
   <script src="/src/js/home.js"></script>
 </body>

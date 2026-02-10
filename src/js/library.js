@@ -4,7 +4,7 @@ const searchForm = document.getElementById('searchForm');
 const searchInput = document.getElementById('searchInput');
 const courseFilter = document.getElementById('courseFilter');
 const sortFilter = document.getElementById('sortFilter');
-const courseList = document.getElementById('courseList');
+const uploadCourse = document.getElementById('uploadCourse');
 const uploadToggle = document.getElementById('uploadToggle');
 const uploadModal = document.getElementById('uploadModal');
 const uploadClose = document.getElementById('uploadClose');
@@ -352,10 +352,11 @@ async function loadCourses() {
       option.value = course.course_name;
       option.textContent = course.course_name;
       courseFilter.appendChild(option);
-      if (courseList) {
-        const listOption = document.createElement('option');
-        listOption.value = course.course_name;
-        courseList.appendChild(listOption);
+      if (uploadCourse) {
+        const uploadOption = document.createElement('option');
+        uploadOption.value = course.course_name;
+        uploadOption.textContent = course.course_name;
+        uploadCourse.appendChild(uploadOption);
       }
     });
   } catch (error) {

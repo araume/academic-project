@@ -4,7 +4,7 @@ const multer = require('multer');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
-const { uploadToDrive } = require('../services/gdrive');
+const { uploadToDrive, deleteFromDrive } = require('../services/gdrive');
 
 const router = express.Router();
 const upload = multer({
@@ -121,6 +121,53 @@ router.get('/api/library/documents', async (req, res) => {
   } catch (error) {
     console.error('Document fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load documents.' });
+  }
+});
+
+router.get('/api/library/documents/:uuid', async (req, res) => {
+  const { uuid } = req.params;
+  if (!uuid) {
+    return res.status(400).json({ ok: false, message: 'Missing document id.' });
+  }
+  try {
+    const userCourse = req.user && req.user.course ? req.user.course : null;
+    const userUid = req.user && req.user.uid ? req.user.uid : null;
+    const filters = ['d.uuid = $1'];
+    const values = [uuid];
+
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      filters.push(
+        `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
+
+    const query = `
+      SELECT
+        d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
+        d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
+        COALESCE(a.display_name, a.username, a.email) AS uploader_name
+      FROM documents d
+      LEFT JOIN accounts a ON d.uploader_uid = a.uid
+      WHERE ${filters.join(' AND ')}
+      LIMIT 1
+    `;
+    const result = await pool.query(query, values);
+    if (!result.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+    return res.json({ ok: true, document: result.rows[0] });
+  } catch (error) {
+    console.error('Document fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load document.' });
   }
 });
 
@@ -294,13 +341,39 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
+    const docResult = await pool.query(
+      'SELECT link, thumbnail_link, uploader_uid FROM documents WHERE uuid = $1',
+      [uuid]
+    );
+    const doc = docResult.rows[0];
+    if (!doc || doc.uploader_uid !== req.user.uid) {
+      return res.status(403).json({ ok: false, message: 'Not allowed.' });
+    }
+
+    const deleteResult = await pool.query(
       'DELETE FROM documents WHERE uuid = $1 AND uploader_uid = $2 RETURNING uuid',
       [uuid, req.user.uid]
     );
-    if (!result.rowCount) {
-      return res.status(403).json({ ok: false, message: 'Not allowed.' });
+    if (!deleteResult.rowCount) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
     }
+
+    const linksToDelete = [doc.link, doc.thumbnail_link].filter(Boolean);
+    const ids = linksToDelete
+      .map((link) => {
+        const match = link.match(/[-\\w]{25,}/);
+        return match ? match[0] : null;
+      })
+      .filter(Boolean);
+
+    for (const fileId of ids) {
+      try {
+        await deleteFromDrive(fileId);
+      } catch (error) {
+        console.error('Drive delete failed:', error);
+      }
+    }
+
     return res.json({ ok: true });
   } catch (error) {
     console.error('Document delete failed:', error);

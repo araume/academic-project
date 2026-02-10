@@ -4,19 +4,115 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Profile</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/profile.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Profile</h1>
-      <p>Placeholder page. Content will be added later.</p>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home">Home</a>
+        <a href="/connections">Connections</a>
+        <a href="/personal">Personal</a>
+        <a href="/open-library">Open Library</a>
+        <a href="/community">Community</a>
+        <a href="/rooms">Rooms</a>
+      </nav>
     </div>
-  </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle">ML</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="profile-page">
+    <section class="profile-card">
+      <div class="profile-photo">
+        <img id="profileImage" src="/assets/LOGO.png" alt="Profile" />
+        <label class="photo-upload">
+          <input type="file" id="photoInput" accept="image/*" />
+          Change photo
+        </label>
+        <p class="hint">Max 5MB. Recommended square image.</p>
+      </div>
+      <div class="profile-meta">
+        <h1 id="profileName">Profile</h1>
+        <p id="profileCourse">Main course</p>
+      </div>
+    </section>
+
+    <section class="profile-form-card">
+      <form id="profileForm" class="profile-form">
+        <label>
+          <span>Display name</span>
+          <input type="text" name="display_name" />
+        </label>
+        <label>
+          <span>Bio</span>
+          <textarea name="bio" rows="3"></textarea>
+        </label>
+        <label>
+          <span>Main course</span>
+          <select name="main_course" id="mainCourseSelect">
+            <option value="">Select course</option>
+          </select>
+        </label>
+        <label>
+          <span>Sub course(s)</span>
+          <select name="sub_courses" id="subCoursesSelect" multiple></select>
+          <span class="hint">Hold Ctrl/Cmd to select multiple.</span>
+        </label>
+        <div class="grid-two">
+          <label>
+            <span>Facebook</span>
+            <input type="text" name="facebook" placeholder="username or link" />
+          </label>
+          <label>
+            <span>LinkedIn</span>
+            <input type="text" name="linkedin" placeholder="username or link" />
+          </label>
+          <label>
+            <span>Instagram</span>
+            <input type="text" name="instagram" placeholder="username or link" />
+          </label>
+          <label>
+            <span>GitHub</span>
+            <input type="text" name="github" placeholder="username or link" />
+          </label>
+        </div>
+        <label>
+          <span>Portfolio link</span>
+          <input type="url" name="portfolio" placeholder="https://..." />
+        </label>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" id="resetProfile">Reset</button>
+          <button type="submit" class="primary-button">Save changes</button>
+        </div>
+        <p class="form-message" id="profileMessage"></p>
+      </form>
+    </section>
+  </main>
+
+  <script src="/src/js/profile.js"></script>
 </body>
 </html>
