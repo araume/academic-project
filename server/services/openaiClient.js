@@ -1,6 +1,6 @@
 let clientPromise = null;
 
-const DEFAULT_MODEL = 'gpt-5';
+const DEFAULT_MODEL = 'gpt-4.1-mini';
 
 function sanitizeEnvValue(value) {
   if (!value) return '';

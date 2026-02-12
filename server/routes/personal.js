@@ -3,9 +3,11 @@ const { ObjectId } = require('mongodb');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
-const { getOpenAIClient, getOpenAIModel } = require('../services/openaiClient');
+const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const pdfParse = require('pdf-parse');
 const { downloadFromStorage } = require('../services/storage');
+
+const GCLOUD_MCP_SERVER_URL = (process.env.GCLOUD_MCP_SERVER_URL || '').trim();
 
 const router = express.Router();
 
@@ -36,6 +38,94 @@ function extractProposedTasks(text) {
   }));
 }
 
+function hasTaskIntent(text) {
+  if (!text) return false;
+  return /(create|add|make|generate|set up)\s+.*(tasks?|to-?dos?)/i.test(text) ||
+    /\b(tasks?|to-?dos?)\b.*\b(for|about|from)\b/i.test(text);
+}
+
+function parseTaskJson(text) {
+  if (!text) return [];
+  const cleaned = text.trim();
+  const candidates = [cleaned];
+  const firstBracket = cleaned.indexOf('[');
+  const lastBracket = cleaned.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    candidates.push(cleaned.slice(firstBracket, lastBracket + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      // try next candidate
+    }
+  }
+  return [];
+}
+
+function normalizeGeneratedTasks(tasks) {
+  return tasks
+    .filter((task) => task && typeof task === 'object')
+    .map((task) => {
+      const title = String(task.title || '').trim();
+      if (!title) return null;
+      const priority = ['low', 'normal', 'urgent'].includes(task.priority)
+        ? task.priority
+        : 'normal';
+      const dueDate =
+        typeof task.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(task.dueDate)
+          ? task.dueDate
+          : null;
+      return {
+        title,
+        description: String(task.description || '').trim(),
+        status: 'pending',
+        priority,
+        dueDate,
+        tags: normalizeTags(task.tags || []),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+async function inferTasksFromMessage(openai, text) {
+  const response = await openai.responses.create({
+    model: getOpenAIModel(),
+    max_output_tokens: 700,
+    input: [
+      {
+        role: 'system',
+        content:
+          'Extract actionable tasks from the user message. Return ONLY a JSON array. Each item must include: title, description, priority(low|normal|urgent), dueDate(YYYY-MM-DD or null), tags(string array). Return [] if no task should be created.',
+      },
+      { role: 'user', content: text },
+    ],
+  });
+  const outputText = extractTextFromOpenAIResponse(response);
+  return normalizeGeneratedTasks(parseTaskJson(outputText));
+}
+
+async function createTasksForUser(db, userUid, tasks) {
+  if (!tasks.length) return [];
+  const now = new Date();
+  const taskDocs = tasks.map((task) => ({
+    ...task,
+    userUid,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  const insertResult = await db.collection('personal_tasks').insertMany(taskDocs);
+  return taskDocs.map((task, index) => ({
+    ...task,
+    _id: insertResult.insertedIds[index],
+  }));
+}
+
 function deriveConversationTitle(text) {
   if (!text) return 'New conversation';
   const cleaned = text.replace(/\s+/g, ' ').trim();
@@ -43,6 +133,37 @@ function deriveConversationTitle(text) {
   const words = cleaned.split(' ');
   const title = words.slice(0, 6).join(' ');
   return title.length > 60 ? `${title.slice(0, 60).trim()}…` : title;
+}
+
+function extractTextFromOpenAIResponse(response) {
+  if (!response) return '';
+  if (typeof response.output_text === 'string' && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+
+  const chunks = [];
+  if (Array.isArray(response.output)) {
+    for (const item of response.output) {
+      if (!item || !Array.isArray(item.content)) continue;
+      for (const contentItem of item.content) {
+        const text =
+          typeof contentItem?.text === 'string' ? contentItem.text.trim() : '';
+        if (!text) continue;
+        if (contentItem.type === 'output_text' || contentItem.type === 'text') {
+          chunks.push(text);
+        }
+      }
+    }
+  }
+
+  return chunks.join('\n\n').trim();
+}
+
+function shouldRequireMcpTool(text) {
+  if (!text) return false;
+  return /(gcloud|google cloud|cloud run|gcs|bucket|project|service account|artifact registry|compute|sql|pub\/sub|bigquery|cloud functions|cloud storage)/i.test(
+    text
+  );
 }
 
 async function loadContextDocument(uuid) {
@@ -470,31 +591,41 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
       { $set: conversationUpdate }
     );
 
-    let assistantText =
-      'AI is not configured yet. Add OPENAI_API_KEY to enable responses. I can still store your conversation.';
+    const hasOpenAIKey = Boolean(getOpenAIKey());
+    let assistantText = hasOpenAIKey
+      ? 'AI is temporarily unavailable. Please retry in a moment.'
+      : 'AI is not configured yet. Add OPENAI_API_KEY to enable responses. I can still store your conversation.';
     let proposalId = null;
     let proposedTasks = [];
     let createdTasks = [];
 
     const proposed = extractProposedTasks(content);
     if (proposed.length) {
-      const taskDocs = proposed.map((task) => ({
-        ...task,
-        description: task.description || '',
-        userUid: req.user.uid,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }));
-      const insertResult = await db.collection('personal_tasks').insertMany(taskDocs);
-      createdTasks = taskDocs.map((task, index) => ({
-        ...task,
-        _id: insertResult.insertedIds[index],
-      }));
+      createdTasks = await createTasksForUser(
+        db,
+        req.user.uid,
+        proposed.map((task) => ({ ...task, description: task.description || '', tags: [] }))
+      );
       proposedTasks = proposed;
       assistantText = `Added ${proposed.length} task${proposed.length === 1 ? '' : 's'} to your tracker.`;
     } else {
       const openai = await getOpenAIClient();
       if (openai) {
+        if (hasTaskIntent(content)) {
+          try {
+            const inferredTasks = await inferTasksFromMessage(openai, content);
+            if (inferredTasks.length) {
+              createdTasks = await createTasksForUser(db, req.user.uid, inferredTasks);
+              assistantText = `Added ${inferredTasks.length} task${inferredTasks.length === 1 ? '' : 's'} to your tracker.`;
+            }
+          } catch (error) {
+            console.error('Task inference failed:', error);
+          }
+        }
+
+        if (createdTasks.length) {
+          // Task creation handled; skip generic assistant generation for this turn.
+        } else {
         const recentMessages = await db
           .collection('ai_messages')
           .find({ conversationId, userUid: req.user.uid })
@@ -510,6 +641,9 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
           'You are a private academic companion. Keep responses concise, helpful, and specific.',
           'If the user asks for plans or tasks, suggest a short, structured list.',
           'If you are unsure, ask a brief clarifying question.',
+          GCLOUD_MCP_SERVER_URL
+            ? 'When the user asks for Google Cloud environment state/actions, use the MCP tool and return concrete results from tool output. Do not ask for confirmation; tool access is already granted. The gcloud MCP tool run_gcloud accepts action values: run:services:list, projects:list, storage:buckets:list. For Cloud Run service listing, call run_gcloud with action run:services:list.'
+            : '',
         ].join(' ');
 
         const input = [{ role: 'system', content: systemPrompt }, ...history];
@@ -529,19 +663,76 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
         }
 
         try {
-          const response = await openai.responses.create({
+          const requestBody = {
             model: getOpenAIModel(),
             input,
-          });
-          const outputText =
-            (response && response.output_text && response.output_text.trim()) ||
-            '';
+            max_output_tokens: 700,
+          };
+          let response = null;
+          if (GCLOUD_MCP_SERVER_URL) {
+            const requireMcpTool = shouldRequireMcpTool(content);
+            requestBody.tools = [
+              {
+                type: 'mcp',
+                server_label: 'gcloud',
+                server_url: GCLOUD_MCP_SERVER_URL,
+                require_approval: 'never',
+              },
+            ];
+            requestBody.tool_choice = requireMcpTool ? 'required' : 'auto';
+          }
+
+          try {
+            response = await openai.responses.create(requestBody);
+          } catch (error) {
+            const isMcpToolError =
+              GCLOUD_MCP_SERVER_URL &&
+              (error?.status === 424 ||
+                /mcp|tool list|failed dependency/i.test(String(error?.message || '')));
+            if (!isMcpToolError) {
+              throw error;
+            }
+
+            // Fallback keeps chat functional when MCP endpoint is unreachable/misconfigured.
+            console.error('OpenAI MCP tool failed, retrying without MCP:', error?.message || error);
+            response = await openai.responses.create({
+              model: getOpenAIModel(),
+              input,
+            });
+          }
+
+          let outputText = extractTextFromOpenAIResponse(response);
+          if (!outputText) {
+            // Some runs can return tool-only output; force a plain-text retry.
+            const fallbackInput = [
+              { role: 'system', content: 'Reply in plain text only. Do not call tools.' },
+              ...input,
+            ];
+            const fallbackResponse = await openai.responses.create({
+              model: getOpenAIModel(),
+              input: fallbackInput,
+              max_output_tokens: 700,
+            });
+            outputText = extractTextFromOpenAIResponse(fallbackResponse);
+          }
+
           if (outputText) {
             assistantText = outputText;
+          } else {
+            assistantText =
+              'AI returned no text output for this request. Set OPENAI_MODEL to gpt-4.1-mini and retry.';
           }
         } catch (error) {
           console.error('OpenAI response failed:', error);
+          if (/model|does not exist|not found|unsupported/i.test(String(error?.message || ''))) {
+            assistantText =
+              'Model access/config issue detected. Set OPENAI_MODEL to an available model (for example: gpt-4.1-mini).';
+          }
         }
+        }
+      } else if (!hasOpenAIKey) {
+        assistantText =
+          'AI is not configured yet. Add OPENAI_API_KEY to enable responses. I can still store your conversation.';
       } else if (/not helpful|unsatisfied|confused|doesn\\'t help/i.test(content)) {
         assistantText =
           'I can suggest alternative documents or articles if you want. Tell me the topic or course.';
