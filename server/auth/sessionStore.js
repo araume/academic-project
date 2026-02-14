@@ -28,8 +28,18 @@ function deleteSession(sessionId) {
   sessions.delete(sessionId);
 }
 
+function deleteSessionsForUid(uid) {
+  if (!uid) return;
+  for (const [sessionId, session] of sessions.entries()) {
+    if (session && session.user && session.user.uid === uid) {
+      sessions.delete(sessionId);
+    }
+  }
+}
+
 module.exports = {
   createSession,
   getSession,
   deleteSession,
+  deleteSessionsForUid,
 };

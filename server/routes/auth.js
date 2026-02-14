@@ -63,6 +63,18 @@ async function ensureAuthSchema() {
     ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT false;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS banned_reason TEXT;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS banned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+
     CREATE TABLE IF NOT EXISTS email_verification_tokens (
       id BIGSERIAL PRIMARY KEY,
       uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
@@ -306,7 +318,19 @@ router.post('/api/login', async (req, res) => {
   try {
     await ensureAuthReady();
     const result = await pool.query(
-      'SELECT id, uid, email, password, username, display_name, course, email_verified FROM accounts WHERE lower(email) = lower($1)',
+      `SELECT
+        id,
+        uid,
+        email,
+        password,
+        username,
+        display_name,
+        course,
+        email_verified,
+        COALESCE(platform_role, 'member') AS platform_role,
+        COALESCE(is_banned, false) AS is_banned
+       FROM accounts
+       WHERE lower(email) = lower($1)`,
       [normalizedEmail]
     );
 
@@ -317,6 +341,9 @@ router.post('/api/login', async (req, res) => {
     const user = result.rows[0];
     if (!verifyPassword(password, user.password)) {
       return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
+    }
+    if (user.is_banned) {
+      return res.status(403).json({ ok: false, message: 'This account is banned.' });
     }
     if (!user.email_verified) {
       return res.status(403).json({
@@ -333,6 +360,7 @@ router.post('/api/login', async (req, res) => {
       username: user.username,
       displayName: user.display_name,
       course: user.course,
+      platformRole: user.platform_role || 'member',
     });
 
     const cookieOptions = {

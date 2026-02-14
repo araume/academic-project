@@ -13,7 +13,10 @@ const personalRoutes = require('./server/routes/personal');
 const connectionsRoutes = require('./server/routes/connections');
 const communityRoutes = require('./server/routes/community');
 const roomsRoutes = require('./server/routes/rooms');
+const adminRoutes = require('./server/routes/admin');
 const requireAuth = require('./server/middleware/requireAuth');
+const requireOwnerOrAdmin = require('./server/middleware/requireOwnerOrAdmin');
+const auditLogger = require('./server/middleware/auditLogger');
 const { getSession } = require('./server/auth/sessionStore');
 
 const app = express();
@@ -22,6 +25,7 @@ const PORT = Number(process.env.PORT || 3000);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+app.use(auditLogger);
 
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
 app.use('/src/styles', express.static(path.join(__dirname, 'src', 'styles')));
@@ -35,6 +39,7 @@ app.use(personalRoutes);
 app.use(connectionsRoutes);
 app.use(communityRoutes);
 app.use(roomsRoutes);
+app.use(adminRoutes);
 
 app.get('/', (req, res) => {
   const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;
@@ -95,6 +100,10 @@ app.get('/preferences', requireAuth, (req, res) => {
 
 app.get('/preferences/blocked-users', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'pages', 'blocked-users.html'));
+});
+
+app.get('/admin', requireAuth, requireOwnerOrAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'admin.html'));
 });
 
 app.listen(PORT, () => {
