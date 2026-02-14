@@ -8,6 +8,12 @@ CREATE TABLE IF NOT EXISTS accounts (
   course TEXT,
   platform_role TEXT NOT NULL DEFAULT 'member',
   recovery_email TEXT,
+  email_verified BOOLEAN NOT NULL DEFAULT false,
+  email_verified_at TIMESTAMPTZ,
+  is_banned BOOLEAN NOT NULL DEFAULT false,
+  banned_at TIMESTAMPTZ,
+  banned_reason TEXT,
+  banned_by_uid TEXT,
   datecreated TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -15,6 +21,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS accounts_uid_unique_idx ON accounts(uid);
 
 ALTER TABLE accounts
   ADD COLUMN IF NOT EXISTS platform_role TEXT NOT NULL DEFAULT 'member';
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS banned_reason TEXT;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS banned_by_uid TEXT;
 
 CREATE TABLE IF NOT EXISTS courses (
   id SERIAL PRIMARY KEY,
@@ -40,6 +64,36 @@ CREATE TABLE IF NOT EXISTS documents (
   thumbnail_link TEXT
 );
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'accounts_banned_by_uid_fkey'
+  ) THEN
+    ALTER TABLE accounts
+      ADD CONSTRAINT accounts_banned_by_uid_fkey
+      FOREIGN KEY (banned_by_uid)
+      REFERENCES accounts(uid)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  token_digest TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (uid)
+);
+
+CREATE TABLE IF NOT EXISTS auth_schema_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS document_likes (
   id SERIAL PRIMARY KEY,
   document_uuid UUID NOT NULL REFERENCES documents(uuid) ON DELETE CASCADE,
@@ -52,6 +106,8 @@ CREATE INDEX IF NOT EXISTS documents_course_idx ON documents(course);
 CREATE INDEX IF NOT EXISTS documents_uploaddate_idx ON documents(uploaddate);
 CREATE INDEX IF NOT EXISTS documents_popularity_idx ON documents(popularity);
 CREATE INDEX IF NOT EXISTS documents_views_idx ON documents(views);
+CREATE INDEX IF NOT EXISTS email_verification_tokens_uid_idx ON email_verification_tokens(uid);
+CREATE INDEX IF NOT EXISTS email_verification_tokens_expires_idx ON email_verification_tokens(expires_at);
 
 CREATE TABLE IF NOT EXISTS profiles (
   id SERIAL PRIMARY KEY,
@@ -454,6 +510,20 @@ CREATE TABLE IF NOT EXISTS room_moderation_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  executor_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  executor_role TEXT,
+  action_key TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  target_type TEXT,
+  target_id TEXT,
+  course TEXT,
+  source_path TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS rooms_state_scheduled_idx ON rooms(state, scheduled_at);
 CREATE INDEX IF NOT EXISTS rooms_visibility_created_idx ON rooms(visibility, created_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_community_created_idx ON rooms(community_id, created_at DESC);
@@ -467,3 +537,7 @@ CREATE INDEX IF NOT EXISTS room_invites_room_expires_idx ON room_invites(room_id
 CREATE INDEX IF NOT EXISTS room_participants_room_status_idx ON room_participants(room_id, status, joined_at DESC);
 CREATE INDEX IF NOT EXISTS room_chat_messages_room_created_idx ON room_chat_messages(room_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS room_moderation_events_room_created_idx ON room_moderation_events(room_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_logs_executor_idx ON admin_audit_logs(executor_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_logs_course_idx ON admin_audit_logs(course, created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_logs_action_idx ON admin_audit_logs(action_key, created_at DESC);

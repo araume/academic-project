@@ -11,6 +11,7 @@ const router = express.Router();
 const EMAIL_VERIFICATION_TTL_HOURS = Math.max(1, Number(process.env.EMAIL_VERIFICATION_TTL_HOURS || 24));
 let ensureAuthSchemaPromise = null;
 const LEGACY_BACKFILL_KEY = 'email_verification_legacy_backfill_done';
+const SKIP_SCHEMA_ENSURE = /^(1|true|yes)$/i.test(String(process.env.DB_SKIP_SCHEMA_ENSURE || '').trim());
 
 function buildUid() {
   if (crypto.randomUUID) {
@@ -53,6 +54,67 @@ function appBaseUrl(req) {
     return configured.replace(/\/+$/, '');
   }
   return `${req.protocol}://${req.get('host')}`;
+}
+
+function getClientIp(req) {
+  const forwarded = req.get('x-forwarded-for');
+  if (forwarded) {
+    return String(forwarded).split(',')[0].trim();
+  }
+  return req.ip || (req.socket && req.socket.remoteAddress) || null;
+}
+
+function sanitizeUserAgent(req) {
+  const value = req.get('user-agent') || '';
+  return String(value).slice(0, 300);
+}
+
+function maskEmail(value) {
+  const email = normalizeEmail(value);
+  if (!email || !email.includes('@')) return null;
+  const [local, domain] = email.split('@');
+  const head = local.slice(0, 2);
+  return `${head}${'*'.repeat(Math.max(0, local.length - 2))}@${domain}`;
+}
+
+function getTraceContext(req) {
+  const raw = req.get('x-cloud-trace-context') || '';
+  const [tracePart = '', spanPart = ''] = String(raw).split('/');
+  const spanId = spanPart.split(';')[0] || null;
+  return {
+    trace: tracePart || null,
+    spanId,
+  };
+}
+
+function serializeError(error) {
+  if (!error) return null;
+  return {
+    name: error.name || 'Error',
+    message: error.message || String(error),
+    code: error.code || null,
+    detail: error.detail || null,
+    hint: error.hint || null,
+    stack: error.stack ? String(error.stack).split('\n').slice(0, 8).join('\n') : null,
+  };
+}
+
+function authLog(level, event, payload = {}) {
+  const entry = {
+    component: 'auth',
+    event,
+    at: new Date().toISOString(),
+    ...payload,
+  };
+  if (level === 'error') {
+    console.error('[AUTH]', JSON.stringify(entry));
+    return;
+  }
+  if (level === 'warn') {
+    console.warn('[AUTH]', JSON.stringify(entry));
+    return;
+  }
+  console.log('[AUTH]', JSON.stringify(entry));
 }
 
 async function ensureAuthSchema() {
@@ -153,6 +215,9 @@ async function backfillLegacyVerifiedAccounts() {
 }
 
 async function ensureAuthReady() {
+  if (SKIP_SCHEMA_ENSURE) {
+    return;
+  }
   if (!ensureAuthSchemaPromise) {
     ensureAuthSchemaPromise = (async () => {
       await ensureAuthSchema();
@@ -311,12 +376,44 @@ router.post('/api/signup', async (req, res) => {
 router.post('/api/login', async (req, res) => {
   const { email, password } = req.body || {};
   const normalizedEmail = normalizeEmail(email);
+  const attemptId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+  const trace = getTraceContext(req);
+  const baseLog = {
+    attemptId,
+    route: '/api/login',
+    method: req.method,
+    ip: getClientIp(req),
+    userAgent: sanitizeUserAgent(req),
+    emailMasked: maskEmail(normalizedEmail),
+    emailHash: normalizedEmail ? sha256Hex(normalizedEmail) : null,
+    trace: trace.trace,
+    spanId: trace.spanId,
+  };
+  res.set('x-auth-attempt-id', attemptId);
+  authLog('info', 'login_attempt_received', baseLog);
+
   if (!normalizedEmail || !password) {
+    authLog('warn', 'login_rejected_missing_credentials', {
+      ...baseLog,
+      statusCode: 400,
+      reason: 'email_or_password_missing',
+    });
     return res.status(400).json({ ok: false, message: 'Email and password are required.' });
   }
 
   try {
-    await ensureAuthReady();
+    try {
+      await ensureAuthReady();
+    } catch (schemaError) {
+      authLog('error', 'login_schema_prepare_failed', {
+        ...baseLog,
+        statusCode: 500,
+        skipSchemaEnsure: SKIP_SCHEMA_ENSURE,
+        error: serializeError(schemaError),
+      });
+      throw schemaError;
+    }
+
     const result = await pool.query(
       `SELECT
         id,
@@ -335,17 +432,40 @@ router.post('/api/login', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      authLog('warn', 'login_rejected_user_not_found', {
+        ...baseLog,
+        statusCode: 401,
+        reason: 'user_not_found',
+      });
       return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
     }
 
     const user = result.rows[0];
     if (!verifyPassword(password, user.password)) {
+      authLog('warn', 'login_rejected_invalid_password', {
+        ...baseLog,
+        statusCode: 401,
+        reason: 'invalid_password',
+        uid: user.uid,
+      });
       return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
     }
     if (user.is_banned) {
+      authLog('warn', 'login_rejected_banned', {
+        ...baseLog,
+        statusCode: 403,
+        reason: 'account_banned',
+        uid: user.uid,
+      });
       return res.status(403).json({ ok: false, message: 'This account is banned.' });
     }
     if (!user.email_verified) {
+      authLog('warn', 'login_rejected_unverified_email', {
+        ...baseLog,
+        statusCode: 403,
+        reason: 'email_not_verified',
+        uid: user.uid,
+      });
       return res.status(403).json({
         ok: false,
         requiresVerification: true,
@@ -371,9 +491,23 @@ router.post('/api/login', async (req, res) => {
     };
     res.cookie('session_id', sessionId, cookieOptions);
 
+    authLog('info', 'login_succeeded', {
+      ...baseLog,
+      statusCode: 200,
+      uid: user.uid,
+      course: user.course || null,
+      role: user.platform_role || 'member',
+    });
+
     return res.json({ ok: true, user: { id: user.id, uid: user.uid, email: user.email, course: user.course }, token: sessionId });
   } catch (error) {
-    return res.status(500).json({ ok: false, message: 'Login failed.' });
+    authLog('error', 'login_failed_exception', {
+      ...baseLog,
+      statusCode: 500,
+      skipSchemaEnsure: SKIP_SCHEMA_ENSURE,
+      error: serializeError(error),
+    });
+    return res.status(500).json({ ok: false, message: 'Login failed.', debugId: attemptId });
   }
 });
 
