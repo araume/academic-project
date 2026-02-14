@@ -8,18 +8,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/home.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
 </head>
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
-        <a href="/home" class="is-active">Home</a>
-        <a href="/connections">Connections</a>
-        <a href="/personal">Personal</a>
-        <a href="/open-library">Open Library</a>
-        <a href="/community">Community</a>
-        <a href="/rooms">Rooms</a>
+        <a href="/home" class="is-active" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
     <div class="nav-actions">
@@ -48,7 +49,7 @@
   <main class="dashboard">
     <section class="feed">
       <div class="composer">
-        <div class="composer-avatar"></div>
+        <div class="composer-avatar" id="composerAvatar"></div>
         <button class="composer-button" id="createPostToggle">
           <img src="/assets/write-create.svg" alt="" />
           Create post
@@ -81,20 +82,20 @@
   </main>
 
   <div class="modal is-hidden" id="createPostModal">
-    <div class="modal-card">
+    <div class="modal-card create-post-card">
       <button class="close-button" id="createPostClose">×</button>
       <h2>Create a post</h2>
-      <form id="createPostForm" class="post-form">
-        <label>
-          <span>Title</span>
-          <input type="text" name="title" required />
+      <form id="createPostForm" class="post-form post-form--create">
+        <label class="field">
+          <span class="field-label">Title</span>
+          <input type="text" name="title" placeholder="What is this post about?" required />
         </label>
-        <label>
-          <span>Content</span>
-          <textarea name="content" rows="4" required></textarea>
+        <label class="field">
+          <span class="field-label">Content</span>
+          <textarea name="content" rows="4" placeholder="Share details with your classmates..." required></textarea>
         </label>
-        <label>
-          <span>Course</span>
+        <label class="field">
+          <span class="field-label">Course</span>
           <select name="course" id="postCourse">
             <option value="">Select course</option>
           </select>
@@ -103,30 +104,19 @@
           <input type="checkbox" id="postPublic" />
           <span>Public post (course not required)</span>
         </label>
-        <label>
-          <span>Attachment type</span>
-          <select name="attachmentType" id="attachmentType">
-            <option value="none">None</option>
-            <option value="image">Image</option>
-            <option value="video">Video</option>
-            <option value="link">Link</option>
-            <option value="library_doc">Open Library document</option>
-          </select>
+        <label class="field">
+          <span class="field-label">Upload file (optional)</span>
+          <input type="file" name="file" id="attachmentFile" accept="image/*,video/*" />
+          <span class="post-form-hint">File type is detected automatically based on what you upload.</span>
         </label>
-        <label id="attachmentFileRow" class="is-hidden">
-          <span>File</span>
-          <input type="file" name="file" id="attachmentFile" />
-        </label>
-        <label id="attachmentLinkRow" class="is-hidden">
-          <span>Attachment link</span>
-          <input type="url" name="attachmentLink" id="attachmentLink" placeholder="https://..." />
-        </label>
-        <label id="attachmentDocRow" class="is-hidden">
-          <span>Select document</span>
-          <select id="attachmentDoc">
-            <option value="">Select a document</option>
-          </select>
-        </label>
+        <div class="library-picker-row">
+          <button type="button" class="secondary-button" id="openLibraryPicker">Select from Open Library</button>
+          <div class="library-picked is-hidden" id="selectedLibraryDoc">
+            <span id="selectedLibraryDocTitle"></span>
+            <button type="button" id="clearLibraryDoc">Clear</button>
+          </div>
+          <span class="post-form-hint">Use one source only: upload a file or choose an Open Library document.</span>
+        </div>
         <button type="submit" class="primary-button">Post</button>
         <p class="form-message" id="createPostMessage"></p>
       </form>
@@ -194,6 +184,20 @@
         </div>
       </div>
       <button class="primary-button" id="libraryDocOpen">Open/View</button>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="libraryPickerModal">
+    <div class="modal-card library-picker-card">
+      <button class="close-button" id="libraryPickerClose">×</button>
+      <div class="picker-header">
+        <h2>Select Open Library document</h2>
+        <p class="detail-description">Browse and attach one document from your library feed.</p>
+      </div>
+      <div class="picker-search">
+        <input type="text" id="libraryPickerSearch" placeholder="Search title, course, or subject..." />
+      </div>
+      <div class="library-picker-list" id="libraryPickerList"></div>
     </div>
   </div>
 

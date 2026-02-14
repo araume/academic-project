@@ -35,14 +35,42 @@ async function ensureProfile(uid) {
   return insert.rows[0];
 }
 
+async function getProfileWithSignedPhoto(uid) {
+  const profile = await ensureProfile(uid);
+  let photoLink = profile.photo_link;
+  if (photoLink && !photoLink.startsWith('http')) {
+    photoLink = await getSignedUrl(photoLink, Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60));
+  }
+  return { ...profile, photo_link: photoLink };
+}
+
 router.get('/api/profile', async (req, res) => {
   try {
-    const profile = await ensureProfile(req.user.uid);
-    let photoLink = profile.photo_link;
-    if (photoLink && !photoLink.startsWith('http')) {
-      photoLink = await getSignedUrl(photoLink, Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60));
+    const profile = await getProfileWithSignedPhoto(req.user.uid);
+    return res.json({ ok: true, profile, is_self: true });
+  } catch (error) {
+    console.error('Profile fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load profile.' });
+  }
+});
+
+router.get('/api/profile/:uid', async (req, res) => {
+  const targetUid = (req.params.uid || '').trim();
+  if (!targetUid) {
+    return res.status(400).json({ ok: false, message: 'Missing user id.' });
+  }
+
+  try {
+    const accountResult = await pool.query(
+      'SELECT uid FROM accounts WHERE uid = $1 LIMIT 1',
+      [targetUid]
+    );
+    if (!accountResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Profile not found.' });
     }
-    return res.json({ ok: true, profile: { ...profile, photo_link: photoLink } });
+
+    const profile = await getProfileWithSignedPhoto(targetUid);
+    return res.json({ ok: true, profile, is_self: targetUid === req.user.uid });
   } catch (error) {
     console.error('Profile fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load profile.' });

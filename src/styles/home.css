@@ -22,11 +22,17 @@ body {
 }
 
 .top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 500;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 10px 48px;
-  background: transparent;
+  background: rgba(239, 238, 236, 0.92);
+  border-bottom: 1px solid rgba(15, 38, 57, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .nav-left {
@@ -93,6 +99,7 @@ body {
 
 .profile-wrap {
   position: relative;
+  z-index: 520;
 }
 
 .avatar-button {
@@ -126,6 +133,7 @@ body {
   display: grid;
   gap: 6px;
   min-width: 180px;
+  z-index: 600;
 }
 
 .profile-menu a,
@@ -155,6 +163,7 @@ body {
   grid-template-columns: 2fr 1fr;
   gap: 32px;
   padding: 12px 48px 60px;
+  align-items: start;
 }
 
 .feed {
@@ -178,6 +187,15 @@ body {
   height: 56px;
   border-radius: 50%;
   background: linear-gradient(135deg, #b9a79d, #e7e0db);
+  overflow: hidden;
+  flex: 0 0 56px;
+}
+
+.composer-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .composer-button {
@@ -232,6 +250,14 @@ body {
   border-radius: 50%;
   background: #1e2a3a;
   flex: 0 0 44px;
+  overflow: hidden;
+}
+
+.post-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .post-avatar.dark {
@@ -366,7 +392,7 @@ body {
   display: grid;
   place-items: center;
   padding: 24px;
-  z-index: 50;
+  z-index: 1000;
 }
 
 .modal-card {
@@ -391,29 +417,210 @@ body {
 
 .post-form {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .post-form label {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   font-size: 0.9rem;
   color: var(--ink-soft);
 }
 
-.post-form input,
+.create-post-card {
+  max-width: 720px;
+  background: linear-gradient(165deg, #ffffff 0%, #f9f5ef 55%, #f4eee7 100%);
+  border: 1px solid rgba(12, 46, 70, 0.08);
+}
+
+.post-form .field {
+  display: grid;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #355065;
+}
+
+.post-form input:not([type="checkbox"]),
 .post-form textarea,
 .post-form select {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid #d8d8d8;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #cdd8df;
+  background: #fff;
+  color: var(--ink);
   font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.post-form input:not([type="checkbox"])::placeholder,
+.post-form textarea::placeholder {
+  color: #8ca0ae;
+}
+
+.post-form input:not([type="checkbox"]):focus,
+.post-form textarea:focus,
+.post-form select:focus {
+  outline: none;
+  border-color: #2f5e7b;
+  box-shadow: 0 0 0 4px rgba(47, 94, 123, 0.14);
+}
+
+.post-form textarea {
+  min-height: 126px;
+  resize: vertical;
+}
+
+.post-form input[type="file"] {
+  padding: 8px;
+  background: #f8fbfd;
+}
+
+.post-form input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 600;
+  background: #dce8ef;
+  color: #1f3f55;
+  cursor: pointer;
 }
 
 .toggle {
-  display: inline-flex;
+  display: flex;
   gap: 8px;
   align-items: center;
+  padding: 11px 13px;
+  border: 1px solid #cad6df;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #2e4b61;
+  font-size: 0.9rem;
+}
+
+.toggle input {
+  accent-color: #1c3c5a;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.post-form-hint {
+  font-size: 0.78rem;
+  color: #6a7f8f;
+}
+
+.library-picker-row {
+  display: grid;
+  gap: 10px;
+}
+
+.library-picked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 12px;
+  border: 1px solid #bfd0db;
+  background: #edf4f8;
+  color: #17384d;
+  padding: 9px 12px;
+  font-size: 0.9rem;
+}
+
+.library-picked button {
+  border: none;
+  border-radius: 9px;
+  padding: 6px 10px;
+  background: #fff;
+  color: #1f3f55;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-button,
+.secondary-button {
+  border: none;
+  border-radius: 12px;
+  padding: 11px 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #1f4764 0%, #0f2f47 100%);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(15, 47, 71, 0.2);
+}
+
+.secondary-button {
+  background: #e4edf3;
+  color: #17384d;
+  justify-self: start;
+}
+
+.picker-header {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.library-picker-card {
+  max-width: 760px;
+}
+
+.picker-search input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #cfdbe2;
+  font-family: inherit;
+}
+
+.library-picker-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.library-picker-item {
+  border: 1px solid #d2dde4;
+  background: #fff;
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 7px;
+}
+
+.library-picker-item h4 {
+  margin: 0;
+}
+
+.library-picker-item p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #567084;
+}
+
+.library-picker-item button {
+  justify-self: start;
+  border: none;
+  border-radius: 10px;
+  padding: 7px 11px;
+  background: #e7f0f5;
+  color: #17384d;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .comment-list {
@@ -468,6 +675,12 @@ body {
 .sidebar {
   display: grid;
   gap: 22px;
+  align-content: start;
+  position: sticky;
+  top: 18px;
+  z-index: 1;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
 }
 
 .side-card {
@@ -475,11 +688,12 @@ body {
   border-radius: 18px;
   padding: 20px;
   box-shadow: var(--shadow);
-  min-height: 180px;
+  height: clamp(180px, 24vh, 240px);
+  overflow: hidden;
 }
 
 .side-card.large {
-  min-height: 240px;
+  height: clamp(240px, 32vh, 320px);
 }
 
 .side-card h3 {
@@ -507,6 +721,13 @@ body {
 @media (max-width: 1100px) {
   .dashboard {
     grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    top: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .side-grid {

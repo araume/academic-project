@@ -3,6 +3,7 @@ const multer = require('multer');
 const { ObjectId } = require('mongodb');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
+const pool = require('../db/pool');
 const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 
 const router = express.Router();
@@ -41,6 +42,76 @@ async function signAttachment(attachment) {
   return attachment;
 }
 
+async function loadUploaderProfiles(uids) {
+  if (!uids.length) {
+    return new Map();
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT uid, display_name, photo_link FROM profiles WHERE uid = ANY($1::text[])',
+      [uids]
+    );
+
+    const entries = await Promise.all(
+      result.rows.map(async (row) => {
+        let photoLink = row.photo_link || null;
+        if (photoLink && !photoLink.startsWith('http')) {
+          photoLink = await getSignedUrl(photoLink, SIGNED_TTL);
+        }
+        return [
+          row.uid,
+          {
+            displayName: row.display_name || null,
+            photoLink,
+          },
+        ];
+      })
+    );
+    return new Map(entries);
+  } catch (error) {
+    console.error('Uploader profiles fetch failed:', error);
+    return new Map();
+  }
+}
+
+async function loadExcludedAuthorUids(viewerUid) {
+  if (!viewerUid) return [];
+  try {
+    const blockedResult = await pool.query(
+      `SELECT blocked_uid AS uid
+       FROM blocked_users
+       WHERE blocker_uid = $1
+       UNION
+       SELECT blocker_uid AS uid
+       FROM blocked_users
+       WHERE blocked_uid = $1`,
+      [viewerUid]
+    );
+    const hiddenResult = await pool.query(
+      `SELECT hidden_uid AS uid
+       FROM hidden_post_authors
+       WHERE user_uid = $1`,
+      [viewerUid]
+    );
+
+    const excluded = new Set();
+    blockedResult.rows.forEach((row) => {
+      if (row && row.uid) excluded.add(row.uid);
+    });
+    hiddenResult.rows.forEach((row) => {
+      if (row && row.uid) excluded.add(row.uid);
+    });
+    excluded.delete(viewerUid);
+    return [...excluded];
+  } catch (error) {
+    if (error && error.code === '42P01') {
+      return [];
+    }
+    throw error;
+  }
+}
+
 router.get('/api/posts', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 10), 1), 50);
@@ -53,6 +124,10 @@ router.get('/api/posts', async (req, res) => {
     const bookmarksCollection = db.collection('post_bookmarks');
 
     const filter = buildVisibilityFilter(req.user);
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
     if (course && course !== 'all') {
       filter.course = course;
     }
@@ -64,6 +139,9 @@ router.get('/api/posts', async (req, res) => {
       .skip((page - 1) * pageSize)
       .limit(pageSize)
       .toArray();
+
+    const uploaderUids = [...new Set(posts.map((post) => post.uploaderUid).filter(Boolean))];
+    const uploaderProfiles = await loadUploaderProfiles(uploaderUids);
 
     const postIds = posts.map((post) => post._id);
     const userUid = req.user.uid;
@@ -78,21 +156,29 @@ router.get('/api/posts', async (req, res) => {
     const bookmarkSet = new Set(bookmarked.map((item) => item.postId.toString()));
 
     const response = await Promise.all(
-      posts.map(async (post) => ({
-        id: post._id.toString(),
-        title: post.title,
-        content: post.content,
-        course: post.course,
-        visibility: post.visibility,
-        attachment: await signAttachment(post.attachment || null),
-        uploadDate: post.uploadDate,
-        uploader: post.uploader,
-        likesCount: post.likesCount || 0,
-        commentsCount: post.commentsCount || 0,
-        liked: likedSet.has(post._id.toString()),
-        bookmarked: bookmarkSet.has(post._id.toString()),
-        isOwner: post.uploaderUid === userUid,
-      }))
+      posts.map(async (post) => {
+        const profile = uploaderProfiles.get(post.uploaderUid);
+        return {
+          id: post._id.toString(),
+          title: post.title,
+          content: post.content,
+          course: post.course,
+          visibility: post.visibility,
+          attachment: await signAttachment(post.attachment || null),
+          uploadDate: post.uploadDate,
+          uploader: {
+            ...(post.uploader || {}),
+            uid: post.uploaderUid || post.uploader?.uid || null,
+            displayName: profile?.displayName || post.uploader?.displayName || 'Member',
+            photoLink: profile?.photoLink || post.uploader?.photoLink || null,
+          },
+          likesCount: post.likesCount || 0,
+          commentsCount: post.commentsCount || 0,
+          liked: likedSet.has(post._id.toString()),
+          bookmarked: bookmarkSet.has(post._id.toString()),
+          isOwner: post.uploaderUid === userUid,
+        };
+      })
     );
 
     return res.json({ ok: true, total, page, pageSize, posts: response });
@@ -129,39 +215,62 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const postsCollection = db.collection('posts');
 
     let attachment = null;
-    if (attachmentType && attachmentType !== 'none') {
-      if ((attachmentType === 'image' || attachmentType === 'video') && file) {
-        const uploaded = await uploadToStorage({
-          buffer: file.buffer,
-          filename: file.originalname,
-          mimeType: file.mimetype,
-          prefix: 'posts',
-        });
-        attachment = {
-          type: attachmentType,
-          key: uploaded.key,
-          filename: file.originalname,
-          mimeType: file.mimetype,
-        };
-      } else if (attachmentType === 'library_doc') {
-        if (!libraryDocumentUuid) {
-          return res.status(400).json({ ok: false, message: 'Library document details required.' });
-        }
-        attachment = {
-          type: 'library_doc',
-          libraryDocumentUuid,
-          title: attachmentTitle || null,
-        };
-      } else if (attachmentType === 'link') {
-        if (!attachmentLink) {
-          return res.status(400).json({ ok: false, message: 'Attachment link required.' });
-        }
-        attachment = {
-          type: 'link',
-          link: attachmentLink,
-          title: attachmentTitle || null,
-        };
+    const requestedType = (attachmentType || '').trim();
+
+    if (file && libraryDocumentUuid) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Choose either an uploaded file or an Open Library document.',
+      });
+    }
+
+    if (file) {
+      const mimeType = (file.mimetype || '').toLowerCase();
+      let inferredType = null;
+      if (mimeType.startsWith('image/')) {
+        inferredType = 'image';
+      } else if (mimeType.startsWith('video/')) {
+        inferredType = 'video';
       }
+      if (!inferredType) {
+        return res.status(400).json({
+          ok: false,
+          message: 'Unsupported file type. Only image and video uploads are allowed.',
+        });
+      }
+
+      const uploaded = await uploadToStorage({
+        buffer: file.buffer,
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        prefix: 'posts',
+      });
+      attachment = {
+        type: inferredType,
+        key: uploaded.key,
+        filename: file.originalname,
+        mimeType: file.mimetype,
+      };
+    } else if (libraryDocumentUuid || requestedType === 'library_doc') {
+      if (!libraryDocumentUuid) {
+        return res.status(400).json({ ok: false, message: 'Library document details required.' });
+      }
+      attachment = {
+        type: 'library_doc',
+        libraryDocumentUuid,
+        title: attachmentTitle || null,
+      };
+    } else if (requestedType === 'link') {
+      if (!attachmentLink) {
+        return res.status(400).json({ ok: false, message: 'Attachment link required.' });
+      }
+      attachment = {
+        type: 'link',
+        link: attachmentLink,
+        title: attachmentTitle || null,
+      };
+    } else if (requestedType && requestedType !== 'none') {
+      return res.status(400).json({ ok: false, message: 'Invalid attachment payload.' });
     }
 
     const now = new Date();

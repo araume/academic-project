@@ -9,6 +9,9 @@ const journalForm = document.getElementById('journalForm');
 const journalMessage = document.getElementById('journalMessage');
 const resetJournal = document.getElementById('resetJournal');
 const newJournal = document.getElementById('newJournal');
+const journalModal = document.getElementById('journalModal');
+const journalModalClose = document.getElementById('journalModalClose');
+const journalModalTitle = document.getElementById('journalModalTitle');
 const journalFolderSelect = document.getElementById('journalFolderSelect');
 const newFolderName = document.getElementById('newFolderName');
 const createFolder = document.getElementById('createFolder');
@@ -47,6 +50,7 @@ const contextLabel = document.getElementById('contextLabel');
 const clearContext = document.getElementById('clearContext');
 
 let activeJournalId = null;
+let selectedJournalId = null;
 let activeConversationId = null;
 let activeProposalId = null;
 const openFolders = new Set();
@@ -263,6 +267,37 @@ tabButtons.forEach((button) => {
   });
 });
 
+function clearJournalView() {
+  if (journalViewTitle) journalViewTitle.textContent = 'Select an entry';
+  if (journalViewMeta) journalViewMeta.textContent = '';
+  if (journalViewContent) journalViewContent.textContent = 'Choose a journal entry from the left to read it here.';
+}
+
+function setJournalView(entry) {
+  selectedJournalId = String(entry._id);
+  journalViewTitle.textContent = entry.title;
+  journalViewMeta.textContent = `${entry.folder || 'Ungrouped'} • ${new Date(entry.updatedAt).toLocaleString()}`;
+  journalViewContent.textContent = entry.content || '';
+}
+
+function openJournalEditor(entry = null) {
+  journalMessage.textContent = '';
+  if (entry) {
+    activeJournalId = String(entry._id);
+    journalModalTitle.textContent = 'Edit journal entry';
+    journalForm.elements.title.value = entry.title || '';
+    journalFolderSelect.value = entry.folder || '';
+    journalForm.elements.tags.value = (entry.tags || []).join(', ');
+    journalForm.elements.content.value = entry.content || '';
+  } else {
+    activeJournalId = null;
+    journalModalTitle.textContent = 'New journal entry';
+    journalForm.reset();
+    journalFolderSelect.value = '';
+  }
+  openModal(journalModal);
+}
+
 function renderEntryItem(entry) {
   const item = document.createElement('div');
   item.className = 'entry-item';
@@ -275,34 +310,24 @@ function renderEntryItem(entry) {
       <button data-action="delete">Delete</button>
     </div>
   `;
-  item.querySelector('[data-action="view"]').addEventListener('click', () => {
-    journalViewTitle.textContent = entry.title;
-    journalViewMeta.textContent = `${entry.folder || 'Ungrouped'} • ${new Date(
-      entry.updatedAt
-    ).toLocaleString()}`;
-    journalViewContent.textContent = entry.content;
-  });
+  item.querySelector('[data-action="view"]').addEventListener('click', () => setJournalView(entry));
   item.querySelector('[data-action="edit"]').addEventListener('click', () => {
-    activeJournalId = entry._id;
-    journalForm.elements.title.value = entry.title;
-    journalFolderSelect.value = entry.folder || '';
-    journalForm.elements.tags.value = (entry.tags || []).join(', ');
-    journalForm.elements.content.value = entry.content;
-    journalViewTitle.textContent = entry.title;
-    journalViewMeta.textContent = `${entry.folder || 'Ungrouped'} • ${new Date(
-      entry.updatedAt
-    ).toLocaleString()}`;
-    journalViewContent.textContent = entry.content;
+    setJournalView(entry);
+    openJournalEditor(entry);
   });
   item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
     await fetch(`/api/personal/journals/${entry._id}`, { method: 'DELETE' });
-    if (activeJournalId === entry._id) {
+    if (activeJournalId === String(entry._id)) {
       activeJournalId = null;
       journalForm.reset();
       journalFolderSelect.value = '';
-      journalViewTitle.textContent = 'Select an entry';
-      journalViewMeta.textContent = '';
-      journalViewContent.textContent = '';
+      if (journalModal) {
+        closeModal(journalModal);
+      }
+    }
+    if (selectedJournalId === String(entry._id)) {
+      selectedJournalId = null;
+      clearJournalView();
     }
     loadJournalWorkspace();
   });
@@ -385,6 +410,7 @@ async function loadJournalWorkspace() {
 
   if (!foldersResponse.ok || !foldersData.ok || !journalsResponse.ok || !journalsData.ok) {
     folderList.innerHTML = '<p>Unable to load folders.</p>';
+    clearJournalView();
     return;
   }
 
@@ -445,11 +471,24 @@ async function loadJournalWorkspace() {
     });
     folderList.appendChild(card);
   });
+
+  const selectedEntry = entries.find((entry) => String(entry._id) === String(selectedJournalId));
+  if (selectedEntry) {
+    setJournalView(selectedEntry);
+    return;
+  }
+  if (entries.length) {
+    setJournalView(entries[0]);
+    return;
+  }
+  selectedJournalId = null;
+  clearJournalView();
 }
 
 async function saveJournal(event) {
   event.preventDefault();
   journalMessage.textContent = '';
+  const editingJournalId = activeJournalId;
   const payload = {
     title: journalForm.elements.title.value,
     folder: journalFolderSelect.value,
@@ -471,8 +510,14 @@ async function saveJournal(event) {
   }
   journalForm.reset();
   journalFolderSelect.value = '';
+  if (editingJournalId) {
+    selectedJournalId = editingJournalId;
+  } else if (data.entry && data.entry._id) {
+    selectedJournalId = String(data.entry._id);
+  }
   activeJournalId = null;
-  loadJournalWorkspace();
+  closeModal(journalModal);
+  await loadJournalWorkspace();
 }
 
 if (journalForm) {
@@ -482,6 +527,9 @@ if (journalForm) {
 if (resetJournal) {
   resetJournal.addEventListener('click', () => {
     activeJournalId = null;
+    if (journalModalTitle) {
+      journalModalTitle.textContent = 'New journal entry';
+    }
     journalForm.reset();
     journalFolderSelect.value = '';
     journalMessage.textContent = '';
@@ -490,9 +538,15 @@ if (resetJournal) {
 
 if (newJournal) {
   newJournal.addEventListener('click', () => {
+    openJournalEditor();
+  });
+}
+
+if (journalModalClose) {
+  journalModalClose.addEventListener('click', () => {
+    closeModal(journalModal);
     activeJournalId = null;
-    journalForm.reset();
-    journalFolderSelect.value = '';
+    journalMessage.textContent = '';
   });
 }
 
@@ -530,11 +584,13 @@ async function loadTasks() {
       <strong>${task.title}</strong>
       <p>${task.description || 'No description.'}</p>
       <div class="meta">${task.priority} • ${task.dueDate || 'No due date'} • ${tags}</div>
-      <select data-action="status">
-        <option value="pending" ${task.status === 'pending' ? 'selected' : ''}>Pending</option>
-        <option value="ongoing" ${task.status === 'ongoing' ? 'selected' : ''}>Ongoing</option>
-        <option value="complete" ${task.status === 'complete' ? 'selected' : ''}>Complete</option>
-      </select>
+      <div class="task-status-select">
+        <select data-action="status" aria-label="Task status">
+          <option value="pending" ${task.status === 'pending' ? 'selected' : ''}>Pending</option>
+          <option value="ongoing" ${task.status === 'ongoing' ? 'selected' : ''}>Ongoing</option>
+          <option value="complete" ${task.status === 'complete' ? 'selected' : ''}>Complete</option>
+        </select>
+      </div>
       <button data-action="delete">Delete</button>
     `;
     card.querySelector('[data-action="status"]').addEventListener('change', async (event) => {

@@ -10,6 +10,9 @@ const libraryRoutes = require('./server/routes/library');
 const postsRoutes = require('./server/routes/posts');
 const profileRoutes = require('./server/routes/profile');
 const personalRoutes = require('./server/routes/personal');
+const connectionsRoutes = require('./server/routes/connections');
+const communityRoutes = require('./server/routes/community');
+const roomsRoutes = require('./server/routes/rooms');
 const requireAuth = require('./server/middleware/requireAuth');
 const { getSession } = require('./server/auth/sessionStore');
 
@@ -29,6 +32,9 @@ app.use(libraryRoutes);
 app.use(postsRoutes);
 app.use(profileRoutes);
 app.use(personalRoutes);
+app.use(connectionsRoutes);
+app.use(communityRoutes);
+app.use(roomsRoutes);
 
 app.get('/', (req, res) => {
   const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;
@@ -85,6 +91,10 @@ app.get('/about', requireAuth, (req, res) => {
 
 app.get('/preferences', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'pages', 'preferences.html'));
+});
+
+app.get('/preferences/blocked-users', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'blocked-users.html'));
 });
 
 app.listen(PORT, () => {

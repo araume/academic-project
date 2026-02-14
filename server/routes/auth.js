@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const pool = require('../db/pool');
 const { hashPassword, verifyPassword } = require('../auth/password');
 const { createSession, deleteSession } = require('../auth/sessionStore');
+const { bootstrapCommunityForUser } = require('../services/communityService');
 
 const router = express.Router();
 
@@ -52,6 +53,13 @@ router.post('/api/signup', async (req, res) => {
 
     const result = await pool.query(query, values);
     const user = result.rows[0];
+    try {
+      await bootstrapCommunityForUser(user.uid);
+    } catch (communityError) {
+      // Keep signup non-blocking; community bootstrap also runs on community APIs.
+      console.error('Community bootstrap during signup failed:', communityError);
+    }
+
     const sessionId = createSession({
       id: user.id,
       uid: user.uid,

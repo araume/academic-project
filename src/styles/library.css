@@ -22,10 +22,17 @@ body {
 }
 
 .top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 120;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 22px 48px;
+  background: rgba(239, 238, 236, 0.92);
+  border-bottom: 1px solid rgba(15, 38, 57, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .nav-left {

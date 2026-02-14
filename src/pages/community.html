@@ -4,19 +4,216 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Community</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/community.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Community</h1>
-      <p>Placeholder page. Content will be added later.</p>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" class="is-active" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="community-shell">
+    <aside class="community-left">
+      <section class="card hero-card">
+        <p class="eyebrow">Course network</p>
+        <h1>Communities</h1>
+        <p class="subcopy">Join course spaces, share posts with members, and keep discussions scoped to each community.</p>
+      </section>
+
+      <section class="card community-list-card">
+        <div class="community-list-head">
+          <h2>All course communities</h2>
+          <span id="communityCount">0</span>
+        </div>
+        <label class="community-search-wrap">
+          <input type="text" id="communitySearch" placeholder="Search by course name or code" />
+        </label>
+        <div class="community-list" id="communityList"></div>
+      </section>
+    </aside>
+
+    <section class="community-main">
+      <section class="card community-workspace" id="selectedCommunityCard">
+        <div class="selected-placeholder" id="selectedPlaceholder">
+          <h2>Pick a community</h2>
+          <p>Select a course community on the left to open its dedicated feed workspace.</p>
+        </div>
+
+        <div class="selected-content is-hidden" id="selectedContent">
+          <header class="selected-head">
+            <div>
+              <p class="eyebrow" id="selectedCommunityCode">Course</p>
+              <h2 id="selectedCommunityName">Community</h2>
+              <p class="subcopy" id="selectedCommunityDescription">No description yet.</p>
+            </div>
+            <div class="selected-actions">
+              <button type="button" class="ghost-button" id="openRulesButton">Rules</button>
+              <button type="button" class="ghost-button" id="openCreatePostButton">Create post</button>
+              <button type="button" class="primary-button" id="membershipButton">Join</button>
+            </div>
+          </header>
+
+          <div class="selected-stats" id="selectedStats"></div>
+          <p class="inline-message" id="communityMessage"></p>
+
+          <section class="feed-card">
+            <div class="feed-head">
+              <h3>Community feed</h3>
+              <div class="feed-actions">
+                <span id="composeEligibility">Join a community to post.</span>
+                <button type="button" class="ghost-button" id="refreshFeedButton">Refresh</button>
+              </div>
+            </div>
+            <div class="feed-list" id="feedList"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="card moderation-card is-hidden" id="moderationCard">
+        <div class="moderation-head">
+          <h3>Moderator tools</h3>
+          <p>Approve community join requests and resolve issues quickly.</p>
+        </div>
+        <div class="moderation-grid">
+          <div>
+            <h4>Join requests</h4>
+            <div class="moderation-list" id="joinRequestsList"></div>
+          </div>
+          <div>
+            <h4>Members</h4>
+            <div class="moderation-list" id="membersList"></div>
+          </div>
+          <div>
+            <h4>Reports</h4>
+            <div class="moderation-list" id="reportsList"></div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="modal is-hidden" id="rulesModal">
+    <div class="modal-card">
+      <button type="button" class="close-button" id="rulesModalClose">×</button>
+      <h2>Community rules</h2>
+      <p class="subcopy" id="rulesVersionLabel">Latest rules</p>
+      <div class="rules-content" id="rulesContent"></div>
+      <label class="rules-acknowledge">
+        <input type="checkbox" id="rulesAcknowledge" />
+        <span>I have read and agree to the community rules.</span>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="ghost-button" id="rulesCancel">Cancel</button>
+        <button type="button" class="primary-button" id="rulesAcceptButton">Accept and continue</button>
+      </div>
+      <p class="inline-message" id="rulesMessage"></p>
     </div>
   </div>
+
+  <div class="modal is-hidden" id="commentsModal">
+    <div class="modal-card comments-modal-card">
+      <button type="button" class="close-button" id="commentsModalClose">×</button>
+      <h2 id="commentsModalTitle">Comments</h2>
+      <div class="comments-list" id="commentsList"></div>
+      <form id="commentForm" class="comment-form">
+        <input type="text" id="commentInput" maxlength="4000" placeholder="Write a comment..." required />
+        <button type="submit" class="primary-button">Post</button>
+      </form>
+      <p class="inline-message" id="commentMessage"></p>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="createPostModal">
+    <div class="modal-card create-post-modal-card">
+      <button type="button" class="close-button" id="createPostModalClose">×</button>
+      <h2>Create community post</h2>
+      <form id="communityPostForm" class="compose-form">
+        <label>
+          <span>Community course</span>
+          <input type="text" id="postCourseName" readonly />
+        </label>
+        <label>
+          <span>Title</span>
+          <input type="text" id="postTitle" maxlength="180" placeholder="Start with a clear title" required />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea id="postContent" rows="4" maxlength="8000" placeholder="Share updates, resources, or a question" required></textarea>
+        </label>
+        <label>
+          <span>Visibility</span>
+          <select id="postVisibility">
+            <option value="community">Visible to all members</option>
+            <option value="main_course_only">Main-course members only</option>
+          </select>
+        </label>
+        <label>
+          <span>Upload file (optional)</span>
+          <input type="file" id="attachmentFile" accept="image/*,video/*" />
+          <small class="field-hint">Attachment type is detected automatically from the uploaded file.</small>
+        </label>
+        <div class="library-picker-row">
+          <button type="button" class="ghost-button" id="openLibraryPicker">Attach from Open Library</button>
+          <div class="library-picked is-hidden" id="selectedLibraryDoc">
+            <span id="selectedLibraryDocTitle"></span>
+            <button type="button" id="clearLibraryDoc">Clear</button>
+          </div>
+          <small class="field-hint">Use one source only: uploaded file or Open Library document.</small>
+        </div>
+        <button type="submit" class="primary-button" id="postSubmitButton">Publish post</button>
+        <p class="inline-message" id="postMessage"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="libraryPickerModal">
+    <div class="modal-card library-picker-card">
+      <button type="button" class="close-button" id="libraryPickerClose">×</button>
+      <div class="picker-header">
+        <h2>Select Open Library document</h2>
+        <p class="subcopy">Browse and attach one document to this community post.</p>
+      </div>
+      <label class="library-search">
+        <input type="text" id="libraryPickerSearch" placeholder="Search by title, course, or subject..." />
+      </label>
+      <div class="library-picker-list" id="libraryPickerList"></div>
+    </div>
+  </div>
+
+  <script src="/src/js/community.js"></script>
 </body>
 </html>

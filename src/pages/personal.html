@@ -8,18 +8,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/personal.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
 </head>
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
-        <a href="/home">Home</a>
-        <a href="/connections">Connections</a>
-        <a href="/personal" class="is-active">Personal</a>
-        <a href="/open-library">Open Library</a>
-        <a href="/community">Community</a>
-        <a href="/rooms">Rooms</a>
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" class="is-active" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
     <div class="nav-actions">
@@ -61,37 +62,11 @@
           </div>
           <button class="ghost-button" id="newJournal">New entry</button>
         </div>
-        <div class="panel-grid">
-          <form id="journalForm" class="panel-card">
-            <label>
-              <span>Title</span>
-              <input type="text" name="title" required />
-            </label>
-            <label>
-              <span>Folder</span>
-              <select name="folder" id="journalFolderSelect">
-                <option value="">Select folder</option>
-              </select>
-            </label>
-            <label>
-              <span>Tags (comma separated)</span>
-              <input type="text" name="tags" placeholder="bridge, exam, notes" />
-            </label>
-            <label>
-              <span>Markdown content</span>
-              <textarea name="content" rows="8" required></textarea>
-            </label>
-            <div class="form-actions">
-              <button type="button" class="ghost-button" id="resetJournal">Reset</button>
-              <button type="submit" class="primary-button">Save entry</button>
-            </div>
-            <p class="form-message" id="journalMessage"></p>
-          </form>
-          <div class="panel-card">
+        <div class="journal-layout">
+          <aside class="panel-card journal-sidebar">
             <div class="folder-row">
               <div>
                 <h3>Folders</h3>
-                <p class="hint">Create folders and then select them for entries.</p>
               </div>
               <div class="folder-create">
                 <input type="text" id="newFolderName" placeholder="New folder name" />
@@ -99,16 +74,14 @@
               </div>
             </div>
             <div class="folder-section">
-              <h3>Folders</h3>
-              <p class="hint">Open a folder to view its entries.</p>
               <div id="folderList" class="folder-list"></div>
             </div>
-            <div class="entry-view" id="journalView">
-              <h4 id="journalViewTitle">Select an entry</h4>
-              <p id="journalViewMeta"></p>
-              <pre id="journalViewContent"></pre>
-            </div>
-          </div>
+          </aside>
+          <section class="panel-card journal-reader" id="journalView">
+            <h3 id="journalViewTitle">Select an entry</h3>
+            <p id="journalViewMeta"></p>
+            <pre id="journalViewContent">Choose a journal entry to view.</pre>
+          </section>
         </div>
       </div>
 
@@ -170,7 +143,7 @@
             <div id="messageList" class="chat-messages"></div>
             <form id="messageForm" class="chat-input">
               <input type="text" id="messageInput" placeholder="Send a message..." />
-              <button type="submit" aria-label="Send">
+              <button type="submit" aria-label="Send" class="ai-send">
                 <img src="/assets/send.svg" alt="" />
               </button>
             </form>
@@ -180,6 +153,38 @@
       </div>
     </section>
   </main>
+
+  <div class="modal is-hidden" id="journalModal">
+    <div class="modal-card journal-modal-card">
+      <button class="close-button" id="journalModalClose">×</button>
+      <h2 id="journalModalTitle">New journal entry</h2>
+      <form id="journalForm" class="panel-card journal-modal-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Folder</span>
+          <select name="folder" id="journalFolderSelect">
+            <option value="">Select folder</option>
+          </select>
+        </label>
+        <label>
+          <span>Tags (comma separated)</span>
+          <input type="text" name="tags" placeholder="bridge, exam, notes" />
+        </label>
+        <label>
+          <span>Markdown content</span>
+          <textarea name="content" rows="8" required></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" id="resetJournal">Reset</button>
+          <button type="submit" class="primary-button">Save entry</button>
+        </div>
+        <p class="form-message" id="journalMessage"></p>
+      </form>
+    </div>
+  </div>
 
   <div class="modal is-hidden" id="taskModal">
     <div class="modal-card">

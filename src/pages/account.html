@@ -4,19 +4,87 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Account</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/nav.css" />
   <style>
     body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); }
+    .wrap { min-height: calc(100vh - var(--app-nav-height)); display: grid; place-items: center; text-align: center; padding: 24px; }
+    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); width: min(560px, 100%); }
+    .card h1 { margin-top: 0; font-family: "Playfair Display", Georgia, serif; }
+    .profile-wrap { position: relative; }
   </style>
 </head>
 <body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
   <div class="wrap">
     <div class="card">
       <h1>Account</h1>
       <p>Placeholder page. Content will be added later.</p>
     </div>
   </div>
+
+  <script>
+    const profileToggle = document.getElementById('profileToggle');
+    const profileMenu = document.getElementById('profileMenu');
+    const logoutButton = document.getElementById('logoutButton');
+
+    if (profileToggle && profileMenu) {
+      profileToggle.addEventListener('click', () => {
+        profileMenu.classList.toggle('is-hidden');
+      });
+      document.addEventListener('click', (event) => {
+        if (!profileMenu.contains(event.target) && !profileToggle.contains(event.target)) {
+          profileMenu.classList.add('is-hidden');
+        }
+      });
+    }
+
+    if (logoutButton) {
+      logoutButton.addEventListener('click', async () => {
+        try {
+          await fetch('/api/logout', { method: 'POST' });
+        } catch (error) {
+          // best effort logout
+        }
+        window.location.href = '/login';
+      });
+    }
+  </script>
 </body>
 </html>

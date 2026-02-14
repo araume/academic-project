@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Preferences</title>
+  <title>Blocked Users</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/src/styles/preferences.css" />
+  <link rel="stylesheet" href="/src/styles/blocked-users.css" />
   <link rel="stylesheet" href="/src/styles/nav.css" />
 </head>
 <body>
@@ -46,59 +46,19 @@
     </div>
   </header>
 
-  <main class="preferences-page">
-    <section class="preferences-card">
-      <p class="eyebrow">Privacy & Presence</p>
-      <h1>Connection Preferences</h1>
-      <p class="subcopy">Control how others find and contact you from the Connections page.</p>
-
-      <form id="privacyForm" class="preferences-form">
-        <label class="setting-row">
-          <div>
-            <h2>Search visibility</h2>
-            <p>When enabled, your profile appears in connections search.</p>
-          </div>
-          <input type="checkbox" id="searchable" />
-        </label>
-
-        <label class="setting-row">
-          <div>
-            <h2>Require follow approval</h2>
-            <p>Users must send a follow request before they can follow you.</p>
-          </div>
-          <input type="checkbox" id="followApprovalRequired" />
-        </label>
-
-        <label class="setting-row">
-          <div>
-            <h2>Show active status</h2>
-            <p>When disabled, others see your status as hidden/inactive.</p>
-          </div>
-          <input type="checkbox" id="activeVisible" />
-        </label>
-
-        <label class="policy-field">
-          <span>Non-follower chat policy</span>
-          <select id="nonFollowerChatPolicy">
-            <option value="request">Allow requests (recommended)</option>
-            <option value="allow">Allow direct chats</option>
-            <option value="deny">Deny chats</option>
-          </select>
-          <small>
-            `request` lets non-followers send chat requests to your requests inbox. `deny` blocks them.
-          </small>
-        </label>
-
-        <div class="form-actions">
-          <button type="submit" class="primary-button">Save changes</button>
-          <a href="/preferences/blocked-users" class="secondary-link">Blocked users</a>
-          <a href="/connections" class="ghost-link">Back to Connections</a>
-        </div>
-        <p class="form-message" id="privacyMessage"></p>
-      </form>
+  <main class="blocked-page">
+    <section class="blocked-card">
+      <p class="eyebrow">Preferences</p>
+      <h1>Blocked users</h1>
+      <p class="subcopy">Manage users you blocked. Unblocking restores interaction eligibility.</p>
+      <div class="actions-row">
+        <a href="/preferences" class="ghost-link">Back to Preferences</a>
+      </div>
+      <div id="blockedList" class="blocked-list"></div>
+      <p id="blockedMessage" class="form-message"></p>
     </section>
   </main>
 
-  <script src="/src/js/preferences.js"></script>
+  <script src="/src/js/blocked-users.js"></script>
 </body>
 </html>
