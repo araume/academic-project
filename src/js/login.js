@@ -13,6 +13,18 @@ const resendVerificationButton = document.getElementById('resendVerificationButt
 
 let pendingVerificationEmail = '';
 
+async function parseApiResponse(response) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    return response.json();
+  }
+  const text = await response.text();
+  return {
+    ok: false,
+    message: text ? text.slice(0, 500) : 'Request failed.',
+  };
+}
+
 function setMessage(target, text, type = 'error') {
   if (!target) return;
   target.textContent = text || '';
@@ -105,7 +117,7 @@ async function handleLoginSubmit(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await parseApiResponse(response);
     if (!response.ok || !data.ok) {
       if (data && data.requiresVerification) {
         pendingVerificationEmail = currentLoginEmail();
@@ -135,7 +147,7 @@ async function handleSignupSubmit(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await parseApiResponse(response);
     if (!response.ok || !data.ok) {
       throw new Error((data && data.message) || 'Signup failed.');
     }
@@ -181,7 +193,7 @@ async function resendVerification() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     });
-    const data = await response.json();
+    const data = await parseApiResponse(response);
     if (!response.ok || !data.ok) {
       throw new Error((data && data.message) || 'Unable to resend verification.');
     }

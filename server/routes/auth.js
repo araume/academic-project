@@ -373,6 +373,13 @@ router.post('/api/signup', async (req, res) => {
   }
 });
 
+router.get('/api/login', (req, res) => {
+  return res.status(405).json({
+    ok: false,
+    message: 'Method not allowed. Use POST /api/login.',
+  });
+});
+
 router.post('/api/login', async (req, res) => {
   const { email, password } = req.body || {};
   const normalizedEmail = normalizeEmail(email);
