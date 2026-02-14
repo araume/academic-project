@@ -69,6 +69,145 @@ async function loadDisplayNamesByUid(uids) {
   return new Map(result.rows.map((row) => [row.uid, row.display_name || 'Member']));
 }
 
+const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq']);
+
+const DEFAULT_SITE_PAGES = {
+  about: {
+    title: 'About Open Library',
+    subtitle: 'Built to help students learn, collaborate, and ship work together.',
+    body: {
+      overview:
+        'Open Library is an academic collaboration space where students can share knowledge, publish course resources, discuss ideas, and work in live rooms. The platform combines social interaction, document intelligence, and practical productivity tools in one place.',
+      highlights: [
+        'Home feed with discussions, attachments, and AI-assisted post exploration',
+        'Open Library for course documents and reusable learning references',
+        'Communities and Rooms for real-time group coordination',
+      ],
+      commitments: [
+        'Student-first product decisions and practical workflows',
+        'Privacy-aware moderation and reporting controls',
+        'Continuous iteration based on course and community feedback',
+      ],
+      contactEmail: '',
+    },
+  },
+  faq: {
+    title: 'Frequently Asked Questions',
+    subtitle: 'Quick answers to common questions about using the platform.',
+    body: {
+      items: [
+        {
+          question: 'Who can access private posts or private documents?',
+          answer:
+            'Private content is restricted to users in the same course as the uploader, plus the uploader themselves.',
+        },
+        {
+          question: 'How does Ask AI use document context?',
+          answer:
+            'Ask AI uses document metadata and available extracted excerpts. If AI is disabled by the uploader, the feature is blocked.',
+        },
+        {
+          question: 'Can I control what notifications I receive?',
+          answer:
+            'Yes. Notification preferences can be managed in the Preferences page.',
+        },
+      ],
+    },
+  },
+};
+
+let ensureSitePagesReadyPromise = null;
+
+async function ensureSitePagesReady() {
+  if (ensureSitePagesReadyPromise) return ensureSitePagesReadyPromise;
+  ensureSitePagesReadyPromise = (async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS site_page_content (
+        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq')),
+        title TEXT NOT NULL,
+        subtitle TEXT NOT NULL DEFAULT '',
+        body JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+  })().catch((error) => {
+    ensureSitePagesReadyPromise = null;
+    throw error;
+  });
+  return ensureSitePagesReadyPromise;
+}
+
+function normalizeSitePageSlug(value) {
+  const slug = sanitizeText(value, 40).toLowerCase();
+  return ALLOWED_SITE_PAGE_SLUGS.has(slug) ? slug : '';
+}
+
+function normalizeAboutBody(body = {}) {
+  const highlights = Array.isArray(body.highlights)
+    ? body.highlights.map((item) => sanitizeText(item, 240)).filter(Boolean).slice(0, 12)
+    : [];
+  const commitments = Array.isArray(body.commitments)
+    ? body.commitments.map((item) => sanitizeText(item, 240)).filter(Boolean).slice(0, 12)
+    : [];
+
+  return {
+    overview: sanitizeText(body.overview, 7000),
+    highlights,
+    commitments,
+    contactEmail: sanitizeText(body.contactEmail, 320),
+  };
+}
+
+function normalizeFaqBody(body = {}) {
+  const rawItems = Array.isArray(body.items) ? body.items : [];
+  const items = rawItems
+    .map((item) => ({
+      question: sanitizeText(item && item.question, 300),
+      answer: sanitizeText(item && item.answer, 3000),
+    }))
+    .filter((item) => item.question && item.answer)
+    .slice(0, 40);
+
+  return { items };
+}
+
+function normalizeSitePageBody(slug, body = {}) {
+  if (slug === 'about') {
+    return normalizeAboutBody(body);
+  }
+  return normalizeFaqBody(body);
+}
+
+function getDefaultSitePage(slug) {
+  const base = DEFAULT_SITE_PAGES[slug];
+  if (!base) return null;
+  return {
+    slug,
+    title: base.title,
+    subtitle: base.subtitle,
+    body: normalizeSitePageBody(slug, base.body || {}),
+    updatedAt: null,
+    updatedByUid: null,
+    isDefault: true,
+  };
+}
+
+function normalizeSitePageResult(slug, row) {
+  if (!row) {
+    return getDefaultSitePage(slug);
+  }
+  return {
+    slug,
+    title: sanitizeText(row.title, 180) || getDefaultSitePage(slug).title,
+    subtitle: sanitizeText(row.subtitle, 500),
+    body: normalizeSitePageBody(slug, row.body || {}),
+    updatedAt: row.updated_at || null,
+    updatedByUid: row.updated_by_uid || null,
+    isDefault: false,
+  };
+}
+
 router.get('/api/admin/me', requireAuthApi, async (req, res) => {
   try {
     await ensureAuditReady();
@@ -85,6 +224,29 @@ router.get('/api/admin/me', requireAuthApi, async (req, res) => {
   } catch (error) {
     console.error('Admin me failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load admin context.' });
+  }
+});
+
+router.get('/api/site-pages/:slug', requireAuthApi, async (req, res) => {
+  const slug = normalizeSitePageSlug(req.params.slug);
+  if (!slug) {
+    return res.status(400).json({ ok: false, message: 'Invalid page slug.' });
+  }
+
+  try {
+    await ensureSitePagesReady();
+    const result = await pool.query(
+      `SELECT slug, title, subtitle, body, updated_by_uid, updated_at
+       FROM site_page_content
+       WHERE slug = $1
+       LIMIT 1`,
+      [slug]
+    );
+    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    return res.json({ ok: true, page });
+  } catch (error) {
+    console.error('Site page fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load page content.' });
   }
 });
 
@@ -1198,6 +1360,67 @@ router.delete('/api/admin/content/library-documents/:uuid', async (req, res) => 
   } catch (error) {
     console.error('Admin delete library document failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to delete document.' });
+  }
+});
+
+router.get('/api/admin/site-pages/:slug', async (req, res) => {
+  const slug = normalizeSitePageSlug(req.params.slug);
+  if (!slug) {
+    return res.status(400).json({ ok: false, message: 'Invalid page slug.' });
+  }
+
+  try {
+    await ensureSitePagesReady();
+    const result = await pool.query(
+      `SELECT slug, title, subtitle, body, updated_by_uid, updated_at
+       FROM site_page_content
+       WHERE slug = $1
+       LIMIT 1`,
+      [slug]
+    );
+    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    return res.json({ ok: true, page });
+  } catch (error) {
+    console.error('Admin site page fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load site page content.' });
+  }
+});
+
+router.patch('/api/admin/site-pages/:slug', async (req, res) => {
+  const slug = normalizeSitePageSlug(req.params.slug);
+  if (!slug) {
+    return res.status(400).json({ ok: false, message: 'Invalid page slug.' });
+  }
+
+  const defaultPage = getDefaultSitePage(slug);
+  const title = sanitizeText(req.body && req.body.title, 180) || defaultPage.title;
+  const subtitle = sanitizeText(req.body && req.body.subtitle, 500);
+  const body = normalizeSitePageBody(slug, (req.body && req.body.body) || {});
+
+  if (slug === 'faq' && (!Array.isArray(body.items) || !body.items.length)) {
+    return res.status(400).json({ ok: false, message: 'FAQ requires at least one item.' });
+  }
+
+  try {
+    await ensureSitePagesReady();
+    const result = await pool.query(
+      `INSERT INTO site_page_content (slug, title, subtitle, body, updated_by_uid, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, NOW())
+       ON CONFLICT (slug)
+       DO UPDATE SET
+         title = EXCLUDED.title,
+         subtitle = EXCLUDED.subtitle,
+         body = EXCLUDED.body,
+         updated_by_uid = EXCLUDED.updated_by_uid,
+         updated_at = NOW()
+       RETURNING slug, title, subtitle, body, updated_by_uid, updated_at`,
+      [slug, title, subtitle, JSON.stringify(body), req.adminViewer.uid]
+    );
+    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    return res.json({ ok: true, page });
+  } catch (error) {
+    console.error('Admin site page update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update site page content.' });
   }
 });
 

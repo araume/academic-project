@@ -78,6 +78,9 @@
             </div>
           </div>
         </div>
+        <div class="profile-own-actions is-hidden" id="profileOwnActions">
+          <button type="button" class="ghost-button" id="viewBookmarksButton">Bookmarked posts</button>
+        </div>
         <p class="form-message" id="profileActionMessage"></p>
       </div>
     </section>
@@ -164,6 +167,17 @@
   </main>
 
   <button type="button" class="mode-toggle-button" id="toggleEditMode">Edit profile</button>
+
+  <div class="floating-modal is-hidden" id="bookmarksModal" role="dialog" aria-modal="true" aria-labelledby="bookmarksModalTitle">
+    <div class="floating-modal-card">
+      <div class="floating-modal-head">
+        <h3 id="bookmarksModalTitle">Bookmarked posts</h3>
+        <button type="button" class="floating-close" id="bookmarksModalClose" aria-label="Close">×</button>
+      </div>
+      <p class="floating-modal-message" id="bookmarksMessage"></p>
+      <div class="bookmarks-list" id="bookmarksList"></div>
+    </div>
+  </div>
 
   <script src="/src/js/profile.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>

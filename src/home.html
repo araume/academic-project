@@ -170,6 +170,20 @@
     </div>
   </div>
 
+  <div class="modal is-hidden" id="postAiModal">
+    <div class="modal-card post-ai-modal-card">
+      <button class="close-button" id="postAiClose">×</button>
+      <h2 id="postAiTitle">Ask AI about this post</h2>
+      <p class="detail-description" id="postAiSubtitle">Post context is automatically included.</p>
+      <div class="post-ai-messages" id="postAiMessages"></div>
+      <form id="postAiForm" class="post-ai-form">
+        <input type="text" id="postAiInput" placeholder="Ask about this post..." />
+        <button type="submit" class="primary-button">Send</button>
+      </form>
+      <p class="form-message" id="postAiMessage"></p>
+    </div>
+  </div>
+
   <div class="modal is-hidden" id="postSpotlightModal">
     <div class="modal-card spotlight-modal-card">
       <button class="close-button" id="postSpotlightClose">×</button>

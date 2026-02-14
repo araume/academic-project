@@ -19,6 +19,8 @@ const toggleBlockButton = document.getElementById('toggleBlockButton');
 const profileActionMessage = document.getElementById('profileActionMessage');
 const profilePresence = document.getElementById('profilePresence');
 const profilePresenceLabel = document.getElementById('profilePresenceLabel');
+const profileOwnActions = document.getElementById('profileOwnActions');
+const viewBookmarksButton = document.getElementById('viewBookmarksButton');
 const profileSubCourses = document.getElementById('profileSubCourses');
 const profileFacebook = document.getElementById('profileFacebook');
 const profileLinkedin = document.getElementById('profileLinkedin');
@@ -31,6 +33,10 @@ const photoUploadLabel = document.getElementById('photoUploadLabel');
 const photoInput = document.getElementById('photoInput');
 const mainCourseSelect = document.getElementById('mainCourseSelect');
 const subCoursesSelect = document.getElementById('subCoursesSelect');
+const bookmarksModal = document.getElementById('bookmarksModal');
+const bookmarksModalClose = document.getElementById('bookmarksModalClose');
+const bookmarksMessage = document.getElementById('bookmarksMessage');
+const bookmarksList = document.getElementById('bookmarksList');
 
 let savedProfile = null;
 let isEditMode = false;
@@ -150,6 +156,9 @@ function setOwnProfileControlsVisible(visible) {
   if (toggleEditMode) {
     toggleEditMode.classList.toggle('is-hidden', !visible);
   }
+  if (profileOwnActions) {
+    profileOwnActions.classList.toggle('is-hidden', !visible);
+  }
   if (profileViewActions) {
     profileViewActions.classList.toggle('is-hidden', visible);
   }
@@ -168,6 +177,122 @@ function setActionMessage(text, type = 'error') {
   if (!profileActionMessage) return;
   profileActionMessage.textContent = text || '';
   profileActionMessage.style.color = type === 'success' ? '#2f9e68' : '#b0554a';
+}
+
+function formatDateValue(value) {
+  if (!value) return 'Unknown date';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function clearElement(element) {
+  if (!element) return;
+  while (element.firstChild) {
+    element.removeChild(element.firstChild);
+  }
+}
+
+function setBookmarksMessage(message) {
+  if (!bookmarksMessage) return;
+  bookmarksMessage.textContent = message || '';
+}
+
+function closeBookmarksModal() {
+  if (!bookmarksModal) return;
+  bookmarksModal.classList.add('is-hidden');
+}
+
+function openBookmarksModal() {
+  if (!bookmarksModal) return;
+  bookmarksModal.classList.remove('is-hidden');
+}
+
+function renderBookmarkedPosts(posts) {
+  if (!bookmarksList) return;
+  clearElement(bookmarksList);
+
+  if (!Array.isArray(posts) || !posts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'bookmarks-empty';
+    empty.textContent = 'No bookmarked posts yet.';
+    bookmarksList.appendChild(empty);
+    return;
+  }
+
+  posts.forEach((post) => {
+    const card = document.createElement('article');
+    card.className = 'bookmark-card';
+
+    const title = document.createElement('h4');
+    title.textContent = post.title || 'Untitled post';
+
+    const meta = document.createElement('p');
+    meta.className = 'bookmark-meta';
+    const uploaderName = post.uploader && post.uploader.displayName
+      ? post.uploader.displayName
+      : 'Member';
+    const bookmarkedAt = post.bookmarkedAt ? formatDateValue(post.bookmarkedAt) : formatDateValue(post.uploadDate);
+    meta.textContent = `${uploaderName} • saved ${bookmarkedAt}`;
+
+    const preview = document.createElement('p');
+    preview.className = 'bookmark-preview';
+    const content = typeof post.content === 'string' ? post.content.trim() : '';
+    preview.textContent = content ? content.slice(0, 180) : 'No content preview.';
+
+    const footer = document.createElement('div');
+    footer.className = 'bookmark-footer';
+
+    const stats = document.createElement('span');
+    stats.textContent = `${Number(post.likesCount || 0)} likes • ${Number(post.commentsCount || 0)} comments`;
+
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'ghost-button';
+    openButton.textContent = 'Open post';
+    openButton.addEventListener('click', () => {
+      const postId = post && post.id ? String(post.id) : '';
+      if (!postId) return;
+      window.location.href = `/home?post=${encodeURIComponent(postId)}`;
+    });
+
+    footer.appendChild(stats);
+    footer.appendChild(openButton);
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.appendChild(preview);
+    card.appendChild(footer);
+    bookmarksList.appendChild(card);
+  });
+}
+
+async function loadBookmarkedPosts() {
+  if (!isOwnProfile) return;
+  if (!bookmarksList) return;
+  setBookmarksMessage('');
+  clearElement(bookmarksList);
+
+  const loading = document.createElement('p');
+  loading.className = 'bookmarks-empty';
+  loading.textContent = 'Loading bookmarked posts...';
+  bookmarksList.appendChild(loading);
+
+  try {
+    const data = await apiRequest('/api/posts/bookmarks?limit=30');
+    renderBookmarkedPosts(data.posts || []);
+    if (!data.posts || !data.posts.length) {
+      setBookmarksMessage('Save posts from Home to see them here.');
+    }
+  } catch (error) {
+    clearElement(bookmarksList);
+    setBookmarksMessage(error.message || 'Failed to load bookmarked posts.');
+  }
 }
 
 function closeProfileOptionsMenu() {
@@ -507,6 +632,32 @@ if (toggleEditMode) {
     }
   });
 }
+
+if (viewBookmarksButton) {
+  viewBookmarksButton.addEventListener('click', async () => {
+    if (!isOwnProfile) return;
+    openBookmarksModal();
+    await loadBookmarkedPosts();
+  });
+}
+
+if (bookmarksModalClose) {
+  bookmarksModalClose.addEventListener('click', closeBookmarksModal);
+}
+
+if (bookmarksModal) {
+  bookmarksModal.addEventListener('click', (event) => {
+    if (event.target === bookmarksModal) {
+      closeBookmarksModal();
+    }
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && bookmarksModal && !bookmarksModal.classList.contains('is-hidden')) {
+    closeBookmarksModal();
+  }
+});
 
 if (profileFollowButton) {
   profileFollowButton.addEventListener('click', handleFollowAction);

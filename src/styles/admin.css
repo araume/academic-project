@@ -217,6 +217,72 @@ body {
   border-color: #adc6da;
 }
 
+.site-pages-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.site-editor-card {
+  border: 1px solid #dbe6ee;
+  border-radius: 14px;
+  background: #fbfdff;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.site-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.site-editor-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.site-editor-body {
+  display: grid;
+  gap: 10px;
+}
+
+.site-editor-body label {
+  display: grid;
+  gap: 6px;
+}
+
+.site-editor-body span {
+  font-size: 0.83rem;
+  color: #315066;
+  font-weight: 600;
+}
+
+.site-editor-body input,
+.site-editor-body textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 9px 10px;
+  font: inherit;
+  color: var(--ink);
+}
+
+.site-editor-body input:focus,
+.site-editor-body textarea:focus {
+  outline: none;
+  border-color: #3a6a89;
+  box-shadow: 0 0 0 3px rgba(58, 106, 137, 0.14);
+}
+
+.site-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .table-wrap {
   width: 100%;
   overflow: auto;
@@ -278,5 +344,9 @@ tbody tr:last-child td {
 @media (max-width: 860px) {
   .admin-page {
     padding: 15px 14px 30px;
+  }
+
+  .site-pages-grid {
+    grid-template-columns: 1fr;
   }
 }

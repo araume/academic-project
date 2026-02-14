@@ -509,30 +509,179 @@ body {
   border: 1px solid #d8d8d8;
 }
 
+.doc-ai-modal-card {
+  max-width: 760px;
+  display: grid;
+  gap: 12px;
+}
+
+.doc-ai-messages {
+  margin-top: 2px;
+  border: 1px solid #dde4ea;
+  border-radius: 14px;
+  background: #fafbfc;
+  min-height: 220px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.doc-ai-empty {
+  margin: 0;
+  color: #5e7484;
+  font-size: 0.9rem;
+}
+
+.doc-ai-bubble {
+  max-width: 86%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.92rem;
+}
+
+.doc-ai-bubble.user {
+  align-self: flex-end;
+  background: #1f425d;
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+
+.doc-ai-bubble.assistant {
+  align-self: flex-start;
+  background: #eef2f5;
+  color: #19384d;
+  border: 1px solid #d8e1e8;
+  border-bottom-left-radius: 5px;
+}
+
+.doc-ai-bubble.pending {
+  opacity: 0.82;
+}
+
+.doc-ai-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.doc-ai-form input {
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid #ccd8e0;
+  font-family: inherit;
+}
+
 .upload-form {
   display: grid;
   gap: 14px;
+}
+
+.upload-modal-card {
+  max-width: 760px;
+  background: linear-gradient(165deg, #ffffff 0%, #f7fbff 58%, #f0f6fb 100%);
+  border: 1px solid #d9e5ee;
+  display: grid;
+  gap: 12px;
+}
+
+.upload-modal-card h2 {
+  margin: 0;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 1.7rem;
+  color: #14364f;
 }
 
 .upload-form label {
   display: grid;
   gap: 6px;
   font-size: 0.9rem;
-  color: var(--ink-soft);
+  color: #26465d;
+  font-weight: 600;
+}
+
+.upload-form label > span {
+  font-size: 0.83rem;
+  letter-spacing: 0.01em;
+  color: #3c5c72;
 }
 
 .upload-form input,
-.upload-form textarea {
-  padding: 10px 12px;
+.upload-form textarea,
+.upload-form select {
+  padding: 11px 12px;
   border-radius: 12px;
-  border: 1px solid #d8d8d8;
+  border: 1px solid #cfdde7;
+  background: #fff;
   font-family: inherit;
+  color: #16364b;
 }
 
-.toggle {
-  display: inline-flex;
+.upload-form input:focus,
+.upload-form textarea:focus,
+.upload-form select:focus {
+  outline: none;
+  border-color: #3d6b88;
+  box-shadow: 0 0 0 3px rgba(61, 107, 136, 0.14);
+}
+
+.upload-form input[type="file"] {
+  padding: 8px 10px;
+  border-style: dashed;
+  border-width: 1.5px;
+  border-color: #b8ccda;
+  background: #f9fcff;
+}
+
+.upload-form input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  border: 1px solid #adc2d1;
+  border-radius: 9px;
+  background: #eef4f9;
+  color: #204660;
+  padding: 7px 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.upload-toggles {
+  display: grid;
   gap: 8px;
+}
+
+.upload-form label.toggle {
+  display: flex;
+  gap: 10px;
   align-items: center;
+  border: 1px solid #d8e4ed;
+  background: #f8fbfe;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-weight: 500;
+  color: #294e66;
+}
+
+.upload-form label.toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #2b5c7a;
+  flex: 0 0 auto;
+}
+
+.upload-form label.toggle span {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #294e66;
+}
+
+.upload-form button[type="submit"] {
+  justify-self: end;
 }
 
 .form-message {

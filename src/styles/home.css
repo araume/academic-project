@@ -723,6 +723,74 @@ body {
   border: 1px solid #d8d8d8;
 }
 
+.post-ai-modal-card {
+  max-width: 760px;
+  display: grid;
+  gap: 12px;
+}
+
+.post-ai-messages {
+  margin-top: 2px;
+  border: 1px solid #dde4ea;
+  border-radius: 14px;
+  background: #fafbfc;
+  min-height: 220px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.post-ai-empty {
+  margin: 0;
+  color: #5e7484;
+  font-size: 0.9rem;
+}
+
+.post-ai-bubble {
+  max-width: 86%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.92rem;
+}
+
+.post-ai-bubble.user {
+  align-self: flex-end;
+  background: #1f425d;
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+
+.post-ai-bubble.assistant {
+  align-self: flex-start;
+  background: #eef2f5;
+  color: #19384d;
+  border: 1px solid #d8e1e8;
+  border-bottom-left-radius: 5px;
+}
+
+.post-ai-bubble.pending {
+  opacity: 0.82;
+}
+
+.post-ai-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.post-ai-form input {
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid #ccd8e0;
+  font-family: inherit;
+}
+
 .detail-description {
   color: var(--ink-soft);
 }

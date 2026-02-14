@@ -125,7 +125,7 @@
       <div class="detail-actions">
         <button class="ghost-button" id="detailLike">Like</button>
         <button class="ghost-button">Discuss</button>
-        <button class="ghost-button">Ask AI</button>
+        <button class="ghost-button" id="detailAskAi">Ask AI</button>
         <div class="menu-wrap">
           <button class="menu-button" id="detailMenuToggle">⋯</button>
           <div class="menu-pop is-hidden" id="detailMenu">
@@ -176,8 +176,22 @@
     </div>
   </div>
 
+  <div class="modal is-hidden" id="docAiModal">
+    <div class="modal-card doc-ai-modal-card">
+      <button class="close-button" id="docAiClose">×</button>
+      <h2 id="docAiTitle">Ask AI about this document</h2>
+      <p class="detail-description" id="docAiSubtitle">Document context is automatically included.</p>
+      <div class="doc-ai-messages" id="docAiMessages"></div>
+      <form id="docAiForm" class="doc-ai-form">
+        <input type="text" id="docAiInput" placeholder="Ask about this document..." />
+        <button type="submit" class="primary-button">Send</button>
+      </form>
+      <p class="form-message" id="docAiMessage"></p>
+    </div>
+  </div>
+
   <div class="modal is-hidden" id="uploadModal">
-    <div class="modal-card">
+    <div class="modal-card upload-modal-card">
       <button class="close-button" id="uploadClose">×</button>
       <h2>Upload a document</h2>
       <form id="uploadForm" class="upload-form">
@@ -207,14 +221,16 @@
           <span>Subject/Lesson</span>
           <input type="text" name="subject" required />
         </label>
-        <label class="toggle">
-          <input type="checkbox" name="visibility" value="private" />
-          <span>Private (course members only)</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" name="aiallowed" />
-          <span>Allow AI conversation</span>
-        </label>
+        <div class="upload-toggles">
+          <label class="toggle">
+            <input type="checkbox" name="visibility" value="private" />
+            <span>Private (course members only)</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" name="aiallowed" />
+            <span>Allow AI conversation</span>
+          </label>
+        </div>
         <button type="submit" class="primary-button">Upload</button>
         <p class="form-message" id="uploadMessage"></p>
       </form>

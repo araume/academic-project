@@ -38,6 +38,21 @@ const refreshContent = document.getElementById('refreshContent');
 const contentTabButtons = document.querySelectorAll('.content-tab');
 const contentTableHead = document.getElementById('contentTableHead');
 const contentTableBody = document.getElementById('contentTableBody');
+const aboutTitle = document.getElementById('aboutTitle');
+const aboutSubtitle = document.getElementById('aboutSubtitle');
+const aboutOverview = document.getElementById('aboutOverview');
+const aboutHighlights = document.getElementById('aboutHighlights');
+const aboutCommitments = document.getElementById('aboutCommitments');
+const aboutContactEmail = document.getElementById('aboutContactEmail');
+const saveAboutPage = document.getElementById('saveAboutPage');
+const reloadAboutPage = document.getElementById('reloadAboutPage');
+const aboutPageMessage = document.getElementById('aboutPageMessage');
+const faqTitle = document.getElementById('faqTitle');
+const faqSubtitle = document.getElementById('faqSubtitle');
+const faqItems = document.getElementById('faqItems');
+const saveFaqPage = document.getElementById('saveFaqPage');
+const reloadFaqPage = document.getElementById('reloadFaqPage');
+const faqPageMessage = document.getElementById('faqPageMessage');
 
 let viewerRole = 'member';
 let currentContentTab = 'main-posts';
@@ -446,6 +461,137 @@ async function loadContent() {
   }
 }
 
+function toLinesText(values) {
+  if (!Array.isArray(values)) return '';
+  return values
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function parseLines(value) {
+  return String(value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function formatFaqItems(items) {
+  if (!Array.isArray(items) || !items.length) return '';
+  return items
+    .map((item) => {
+      const question = String(item?.question || '').trim();
+      const answer = String(item?.answer || '').trim();
+      if (!question || !answer) return '';
+      return `${question} | ${answer}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function parseFaqItems(raw) {
+  const lines = parseLines(raw);
+  const parsed = [];
+  lines.forEach((line) => {
+    const separatorIndex = line.indexOf('|');
+    if (separatorIndex < 1) return;
+    const question = line.slice(0, separatorIndex).trim();
+    const answer = line.slice(separatorIndex + 1).trim();
+    if (!question || !answer) return;
+    parsed.push({ question, answer });
+  });
+  return parsed;
+}
+
+async function loadAboutPageEditor() {
+  if (!aboutTitle) return;
+  try {
+    setInlineMessage(aboutPageMessage, '');
+    const data = await apiRequest('/api/admin/site-pages/about');
+    const page = data.page || {};
+    const body = page.body || {};
+    aboutTitle.value = page.title || '';
+    aboutSubtitle.value = page.subtitle || '';
+    aboutOverview.value = body.overview || '';
+    aboutHighlights.value = toLinesText(body.highlights || []);
+    aboutCommitments.value = toLinesText(body.commitments || []);
+    aboutContactEmail.value = body.contactEmail || '';
+  } catch (error) {
+    setInlineMessage(aboutPageMessage, error.message);
+  }
+}
+
+async function loadFaqPageEditor() {
+  if (!faqTitle) return;
+  try {
+    setInlineMessage(faqPageMessage, '');
+    const data = await apiRequest('/api/admin/site-pages/faq');
+    const page = data.page || {};
+    const body = page.body || {};
+    faqTitle.value = page.title || '';
+    faqSubtitle.value = page.subtitle || '';
+    faqItems.value = formatFaqItems(body.items || []);
+  } catch (error) {
+    setInlineMessage(faqPageMessage, error.message);
+  }
+}
+
+async function saveAboutPageEditor() {
+  if (!aboutTitle) return;
+  try {
+    setInlineMessage(aboutPageMessage, '');
+    const payload = {
+      title: aboutTitle.value,
+      subtitle: aboutSubtitle.value,
+      body: {
+        overview: aboutOverview.value,
+        highlights: parseLines(aboutHighlights.value),
+        commitments: parseLines(aboutCommitments.value),
+        contactEmail: aboutContactEmail.value,
+      },
+    };
+    await apiRequest('/api/admin/site-pages/about', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setInlineMessage(aboutPageMessage, 'About page updated.', 'success');
+    setPageMessage('Site page content updated.', 'success');
+    await loadAboutPageEditor();
+  } catch (error) {
+    setInlineMessage(aboutPageMessage, error.message);
+  }
+}
+
+async function saveFaqPageEditor() {
+  if (!faqTitle) return;
+  try {
+    setInlineMessage(faqPageMessage, '');
+    const items = parseFaqItems(faqItems.value);
+    if (!items.length) {
+      setInlineMessage(faqPageMessage, 'Add at least one FAQ item using: Question | Answer');
+      return;
+    }
+    const payload = {
+      title: faqTitle.value,
+      subtitle: faqSubtitle.value,
+      body: {
+        items,
+      },
+    };
+    await apiRequest('/api/admin/site-pages/faq', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setInlineMessage(faqPageMessage, 'FAQ page updated.', 'success');
+    setPageMessage('Site page content updated.', 'success');
+    await loadFaqPageEditor();
+  } catch (error) {
+    setInlineMessage(faqPageMessage, error.message);
+  }
+}
+
 accountsTableBody.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -563,10 +709,33 @@ if (removeModerator) {
   removeModerator.addEventListener('click', () => handleModeratorAction('remove'));
 }
 
+if (saveAboutPage) {
+  saveAboutPage.addEventListener('click', saveAboutPageEditor);
+}
+
+if (reloadAboutPage) {
+  reloadAboutPage.addEventListener('click', loadAboutPageEditor);
+}
+
+if (saveFaqPage) {
+  saveFaqPage.addEventListener('click', saveFaqPageEditor);
+}
+
+if (reloadFaqPage) {
+  reloadFaqPage.addEventListener('click', loadFaqPageEditor);
+}
+
 async function init() {
   try {
     await loadAdminContext();
-    await Promise.all([loadCommunities(), loadLogs(), loadReports(), loadAccounts()]);
+    await Promise.all([
+      loadCommunities(),
+      loadLogs(),
+      loadReports(),
+      loadAccounts(),
+      loadAboutPageEditor(),
+      loadFaqPageEditor(),
+    ]);
     setContentHeaders(currentContentTab);
     await loadContent();
   } catch (error) {

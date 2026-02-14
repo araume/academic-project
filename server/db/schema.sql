@@ -459,6 +459,9 @@ CREATE INDEX IF NOT EXISTS blocked_users_blocked_idx ON blocked_users(blocked_ui
 CREATE INDEX IF NOT EXISTS hidden_post_authors_user_idx ON hidden_post_authors(user_uid);
 CREATE INDEX IF NOT EXISTS hidden_post_authors_hidden_idx ON hidden_post_authors(hidden_uid);
 CREATE INDEX IF NOT EXISTS user_profile_reports_target_idx ON user_profile_reports(target_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS accounts_uid_text_idx ON accounts(uid);
+CREATE INDEX IF NOT EXISTS accounts_display_name_lower_idx ON accounts((lower(COALESCE(display_name, username, email))));
+CREATE INDEX IF NOT EXISTS profiles_display_name_lower_idx ON profiles((lower(COALESCE(display_name, ''))));
 CREATE INDEX IF NOT EXISTS communities_course_name_idx ON communities(course_name);
 CREATE INDEX IF NOT EXISTS community_memberships_user_state_idx ON community_memberships(user_uid, state);
 CREATE INDEX IF NOT EXISTS community_memberships_community_state_idx ON community_memberships(community_id, state);
@@ -583,6 +586,15 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS site_page_content (
+  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq')),
+  title TEXT NOT NULL,
+  subtitle TEXT NOT NULL DEFAULT '',
+  body JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS rooms_state_scheduled_idx ON rooms(state, scheduled_at);
 CREATE INDEX IF NOT EXISTS rooms_visibility_created_idx ON rooms(visibility, created_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_community_created_idx ON rooms(community_id, created_at DESC);
@@ -600,3 +612,4 @@ CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs(crea
 CREATE INDEX IF NOT EXISTS admin_audit_logs_executor_idx ON admin_audit_logs(executor_uid, created_at DESC);
 CREATE INDEX IF NOT EXISTS admin_audit_logs_course_idx ON admin_audit_logs(course, created_at DESC);
 CREATE INDEX IF NOT EXISTS admin_audit_logs_action_idx ON admin_audit_logs(action_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS site_page_content_updated_idx ON site_page_content(updated_at DESC);

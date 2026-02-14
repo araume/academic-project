@@ -6,17 +6,11 @@
   <title>About</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/nav.css" />
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: calc(100vh - var(--app-nav-height)); display: grid; place-items: center; text-align: center; padding: 24px; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); width: min(560px, 100%); }
-    .card h1 { margin-top: 0; font-family: "Playfair Display", Georgia, serif; }
-    .profile-wrap { position: relative; }
-  </style>
+  <link rel="stylesheet" href="/src/styles/site-pages.css" />
 </head>
-<body>
+<body data-page-slug="about">
   <header class="top-nav">
     <div class="nav-left">
       <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
@@ -30,12 +24,8 @@
       </nav>
     </div>
     <div class="nav-actions">
-      <button class="icon-button" aria-label="Search">
-        <img src="/assets/search.svg" alt="" />
-      </button>
-      <button class="icon-button" aria-label="Notifications">
-        <img src="/assets/notif.svg" alt="" />
-      </button>
+      <button class="icon-button" aria-label="Search"><img src="/assets/search.svg" alt="" /></button>
+      <button class="icon-button" aria-label="Notifications"><img src="/assets/notif.svg" alt="" /></button>
       <div class="profile-wrap">
         <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
           <span class="avatar-circle" id="navAvatarLabel">ME</span>
@@ -52,14 +42,10 @@
     </div>
   </header>
 
-  <div class="wrap">
-    <div class="card">
-      <h1>About</h1>
-      <p>Placeholder page. Content will be added later.</p>
-    </div>
-  </div>
+  <main class="site-page-shell" id="sitePageRoot"></main>
 
   <script src="/src/js/nav-basic.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
+  <script src="/src/js/site-page.js"></script>
 </body>
 </html>

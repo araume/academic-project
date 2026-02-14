@@ -34,6 +34,14 @@ const commentsClose = document.getElementById('commentsClose');
 const postCommentList = document.getElementById('postCommentList');
 const postCommentForm = document.getElementById('postCommentForm');
 const postCommentInput = document.getElementById('postCommentInput');
+const postAiModal = document.getElementById('postAiModal');
+const postAiClose = document.getElementById('postAiClose');
+const postAiTitle = document.getElementById('postAiTitle');
+const postAiSubtitle = document.getElementById('postAiSubtitle');
+const postAiMessages = document.getElementById('postAiMessages');
+const postAiForm = document.getElementById('postAiForm');
+const postAiInput = document.getElementById('postAiInput');
+const postAiMessage = document.getElementById('postAiMessage');
 const postSpotlightModal = document.getElementById('postSpotlightModal');
 const postSpotlightClose = document.getElementById('postSpotlightClose');
 const postSpotlightContainer = document.getElementById('postSpotlightContainer');
@@ -56,6 +64,8 @@ let currentEditPost = null;
 let selectedLibraryDocument = null;
 let libraryPickerSearchTimer = null;
 let postCache = new Map();
+let activePostAiPostId = null;
+let isSendingPostAi = false;
 const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
 
 const state = {
@@ -336,6 +346,118 @@ function openModal(modal) {
 function closeModal(modal) {
   if (modal) {
     modal.classList.add('is-hidden');
+  }
+}
+
+function appendPostAiBubble(role, text, { pending = false } = {}) {
+  if (!postAiMessages) return null;
+  const empty = postAiMessages.querySelector('.post-ai-empty');
+  if (empty) empty.remove();
+  const bubble = document.createElement('div');
+  bubble.className = `post-ai-bubble ${role}${pending ? ' pending' : ''}`;
+  bubble.textContent = text || '';
+  postAiMessages.appendChild(bubble);
+  postAiMessages.scrollTop = postAiMessages.scrollHeight;
+  return bubble;
+}
+
+function renderPostAiMessages(messages) {
+  if (!postAiMessages) return;
+  clearElement(postAiMessages);
+  if (!Array.isArray(messages) || !messages.length) {
+    const empty = document.createElement('p');
+    empty.className = 'post-ai-empty';
+    empty.textContent = 'Start by asking a question about this post.';
+    postAiMessages.appendChild(empty);
+    return;
+  }
+  messages.forEach((message) => {
+    appendPostAiBubble(message.role === 'user' ? 'user' : 'assistant', message.content || '');
+  });
+}
+
+async function openPostAiModal(post) {
+  if (!post || !post.id || !postAiModal) return;
+  activePostAiPostId = post.id;
+  if (postAiMessage) postAiMessage.textContent = '';
+  if (postAiTitle) {
+    postAiTitle.textContent = `Ask AI: ${post.title || 'Untitled post'}`;
+  }
+  if (postAiSubtitle) {
+    postAiSubtitle.textContent = 'Loading post context...';
+  }
+  renderPostAiMessages([]);
+  openModal(postAiModal);
+
+  try {
+    const response = await fetch(`/api/posts/${encodeURIComponent(post.id)}/ask-ai/bootstrap`);
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to load post AI conversation.');
+    }
+    const attachmentSummary = data.context && data.context.attachmentSummary
+      ? data.context.attachmentSummary
+      : 'No attachment.';
+    if (postAiSubtitle) {
+      const shortSummary = attachmentSummary.length > 180
+        ? `${attachmentSummary.slice(0, 180).trim()}...`
+        : attachmentSummary;
+      postAiSubtitle.textContent = `Context: ${shortSummary}`;
+    }
+    renderPostAiMessages(data.messages || []);
+  } catch (error) {
+    if (postAiSubtitle) {
+      postAiSubtitle.textContent = 'Post context could not be loaded.';
+    }
+    if (postAiMessage) {
+      postAiMessage.textContent = error.message || 'Unable to load post AI conversation.';
+    }
+  }
+}
+
+async function sendPostAiMessage(event) {
+  event.preventDefault();
+  if (isSendingPostAi || !activePostAiPostId || !postAiInput) return;
+  const content = postAiInput.value.trim();
+  if (!content) return;
+  isSendingPostAi = true;
+  if (postAiMessage) postAiMessage.textContent = '';
+  postAiInput.value = '';
+  postAiInput.disabled = true;
+  const userBubble = appendPostAiBubble('user', content);
+  const pendingBubble = appendPostAiBubble('assistant', 'Thinking...', { pending: true });
+
+  try {
+    const response = await fetch(`/api/posts/${encodeURIComponent(activePostAiPostId)}/ask-ai/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to send message.');
+    }
+    if (pendingBubble) {
+      pendingBubble.classList.remove('pending');
+      pendingBubble.textContent = data.message && data.message.content
+        ? data.message.content
+        : 'No response generated.';
+    }
+  } catch (error) {
+    if (pendingBubble) pendingBubble.remove();
+    if (!userBubble || !userBubble.parentElement) {
+      appendPostAiBubble('user', content);
+    }
+    if (postAiMessage) {
+      postAiMessage.textContent = error.message || 'Unable to send message.';
+    }
+  } finally {
+    isSendingPostAi = false;
+    postAiInput.disabled = false;
+    postAiInput.focus();
+    if (postAiMessages) {
+      postAiMessages.scrollTop = postAiMessages.scrollHeight;
+    }
   }
 }
 
@@ -655,7 +777,7 @@ function renderPost(post, index) {
   actions.innerHTML = `
     <button data-action="like"><img src="/assets/heart.svg" alt="" />${post.likesCount} Like</button>
     <button data-action="comments"><img src="/assets/comment-discussion.svg" alt="" />Discussion</button>
-    <button disabled><img src="/assets/AI-star.svg" alt="" />Ask AI</button>
+    <button data-action="ask-ai"><img src="/assets/AI-star.svg" alt="" />Ask AI</button>
   `;
 
   article.appendChild(header);
@@ -797,6 +919,8 @@ async function handleAction(action, post) {
     currentPostId = post.id;
     await loadPostComments(post.id);
     openModal(commentsModal);
+  } else if (action === 'ask-ai') {
+    await openPostAiModal(post);
   }
 }
 
@@ -1025,6 +1149,19 @@ if (postCommentForm) {
   postCommentForm.addEventListener('submit', submitPostComment);
 }
 
+if (postAiClose) {
+  postAiClose.addEventListener('click', () => {
+    closeModal(postAiModal);
+    activePostAiPostId = null;
+    if (postAiInput) postAiInput.value = '';
+    if (postAiMessage) postAiMessage.textContent = '';
+  });
+}
+
+if (postAiForm) {
+  postAiForm.addEventListener('submit', sendPostAiMessage);
+}
+
 if (createPostToggle) {
   createPostToggle.addEventListener('click', () => openModal(createPostModal));
 }
@@ -1092,6 +1229,17 @@ if (postSpotlightModal) {
   postSpotlightModal.addEventListener('click', (event) => {
     if (event.target === postSpotlightModal) {
       closeModal(postSpotlightModal);
+    }
+  });
+}
+
+if (postAiModal) {
+  postAiModal.addEventListener('click', (event) => {
+    if (event.target === postAiModal) {
+      closeModal(postAiModal);
+      activePostAiPostId = null;
+      if (postAiInput) postAiInput.value = '';
+      if (postAiMessage) postAiMessage.textContent = '';
     }
   });
 }

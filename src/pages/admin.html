@@ -56,6 +56,7 @@
       <button class="tab-button" data-tab="reports">Reports</button>
       <button class="tab-button" data-tab="accounts">Accounts</button>
       <button class="tab-button" data-tab="content">Content</button>
+      <button class="tab-button" data-tab="site-pages">Site pages</button>
     </section>
 
     <section class="tab-panel is-active" id="panel-logs">
@@ -217,6 +218,79 @@
             <thead id="contentTableHead"></thead>
             <tbody id="contentTableBody"></tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-site-pages">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Public pages content</h2>
+          <p class="subcopy">Edit what users see in FAQ and About pages.</p>
+        </div>
+
+        <div class="site-pages-grid">
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>About page</h3>
+              <button type="button" class="secondary-button" id="reloadAboutPage">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Title</span>
+                <input type="text" id="aboutTitle" maxlength="180" />
+              </label>
+              <label>
+                <span>Subtitle</span>
+                <textarea id="aboutSubtitle" rows="2" maxlength="400"></textarea>
+              </label>
+              <label>
+                <span>Overview</span>
+                <textarea id="aboutOverview" rows="4" maxlength="5000"></textarea>
+              </label>
+              <label>
+                <span>Highlights (one per line)</span>
+                <textarea id="aboutHighlights" rows="4" maxlength="5000"></textarea>
+              </label>
+              <label>
+                <span>Commitments (one per line)</span>
+                <textarea id="aboutCommitments" rows="4" maxlength="5000"></textarea>
+              </label>
+              <label>
+                <span>Contact email</span>
+                <input type="email" id="aboutContactEmail" maxlength="320" />
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveAboutPage">Save About</button>
+              </div>
+              <p class="inline-message" id="aboutPageMessage"></p>
+            </div>
+          </article>
+
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>FAQ page</h3>
+              <button type="button" class="secondary-button" id="reloadFaqPage">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Title</span>
+                <input type="text" id="faqTitle" maxlength="180" />
+              </label>
+              <label>
+                <span>Subtitle</span>
+                <textarea id="faqSubtitle" rows="2" maxlength="400"></textarea>
+              </label>
+              <label>
+                <span>FAQ entries (format: Question | Answer per line)</span>
+                <textarea id="faqItems" rows="12" maxlength="12000"></textarea>
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveFaqPage">Save FAQ</button>
+              </div>
+              <p class="inline-message" id="faqPageMessage"></p>
+            </div>
+          </article>
         </div>
       </div>
     </section>

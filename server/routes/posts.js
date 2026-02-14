@@ -1,10 +1,13 @@
 const express = require('express');
 const multer = require('multer');
 const { ObjectId } = require('mongodb');
+const path = require('path');
+const pdfParse = require('pdf-parse');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
-const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
+const { uploadToStorage, deleteFromStorage, getSignedUrl, downloadFromStorage } = require('../services/storage');
+const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const {
   createNotification,
   createNotificationsForRecipients,
@@ -57,6 +60,160 @@ async function signIfNeeded(value) {
     console.error('Sidecard signing failed:', error);
     return null;
   }
+}
+
+function extractTextFromOpenAIResponse(response) {
+  if (!response) return '';
+  if (typeof response.output_text === 'string' && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+
+  const chunks = [];
+  if (Array.isArray(response.output)) {
+    for (const item of response.output) {
+      if (!item || !Array.isArray(item.content)) continue;
+      for (const contentItem of item.content) {
+        const text = typeof contentItem?.text === 'string' ? contentItem.text.trim() : '';
+        if (!text) continue;
+        if (contentItem.type === 'output_text' || contentItem.type === 'text') {
+          chunks.push(text);
+        }
+      }
+    }
+  }
+
+  return chunks.join('\n\n').trim();
+}
+
+function normalizeContextText(text) {
+  if (!text) return '';
+  return String(text).replace(/\r/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function truncateContextText(text, maxChars = 2500) {
+  const normalized = normalizeContextText(text);
+  if (!normalized) return '';
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars).trim()}...` : normalized;
+}
+
+function getFileExtension(filenameOrPath) {
+  if (!filenameOrPath) return '';
+  const normalized = String(filenameOrPath).split('?')[0].split('#')[0];
+  return path.extname(normalized).toLowerCase();
+}
+
+async function extractLibraryDocumentExcerpt(document) {
+  if (!document || !document.link || document.link.startsWith('http')) return '';
+  if (document.aiallowed === false) return '';
+  try {
+    const buffer = await downloadFromStorage(document.link);
+    if (!buffer || !buffer.length) return '';
+    if (buffer.length > 6 * 1024 * 1024) return '';
+    const ext = getFileExtension(document.filename || document.link);
+    if (ext === '.md' || ext === '.markdown' || ext === '.txt') {
+      return truncateContextText(buffer.toString('utf8'), 2200);
+    }
+    if (ext === '.pdf') {
+      const parsed = await pdfParse(buffer);
+      return truncateContextText(parsed?.text || '', 2200);
+    }
+    return '';
+  } catch (error) {
+    console.error('Library doc context parse failed:', error);
+    return '';
+  }
+}
+
+async function loadLibraryDocumentContext(uuid) {
+  if (!uuid) return null;
+  try {
+    const result = await pool.query(
+      `SELECT uuid, title, description, course, subject, filename, link, aiallowed
+       FROM documents
+       WHERE uuid = $1
+       LIMIT 1`,
+      [uuid]
+    );
+    const document = result.rows[0] || null;
+    if (!document) return null;
+    const excerpt = await extractLibraryDocumentExcerpt(document);
+    return { ...document, excerpt };
+  } catch (error) {
+    console.error('Library doc context load failed:', error);
+    return null;
+  }
+}
+
+async function getAccessiblePostForUser(req, postId) {
+  const db = await getMongoDb();
+  const postsCollection = db.collection('posts');
+  const filter = {
+    ...buildVisibilityFilter(req.user),
+    _id: postId,
+  };
+  const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+  if (excludedAuthors.length) {
+    filter.uploaderUid = { $nin: excludedAuthors };
+  }
+  const post = await postsCollection.findOne(filter);
+  return { db, postsCollection, post };
+}
+
+async function buildPostAttachmentContext(attachment) {
+  if (!attachment || typeof attachment !== 'object') {
+    return { summary: 'No attachment.', imageUrl: null };
+  }
+
+  if (attachment.type === 'library_doc' && attachment.libraryDocumentUuid) {
+    const doc = await loadLibraryDocumentContext(attachment.libraryDocumentUuid);
+    if (!doc) {
+      return {
+        summary: `Attached Open Library document UUID: ${attachment.libraryDocumentUuid}.`,
+        imageUrl: null,
+      };
+    }
+    const parts = [
+      `Attached document title: ${doc.title || attachment.title || 'Untitled document'}`,
+      `Course: ${doc.course || 'N/A'}`,
+      `Subject: ${doc.subject || 'N/A'}`,
+      `Filename: ${doc.filename || 'N/A'}`,
+      `Description: ${doc.description || 'N/A'}`,
+    ];
+    if (doc.excerpt) {
+      parts.push(`Attachment excerpt:\n${doc.excerpt}`);
+    } else if (doc.aiallowed === false) {
+      parts.push('Document AI usage is disabled; do not infer from full file content.');
+    }
+    return {
+      summary: parts.join('\n'),
+      imageUrl: null,
+    };
+  }
+
+  if (attachment.type === 'image') {
+    const keyOrLink = attachment.key || attachment.link || null;
+    const imageUrl = keyOrLink ? await signIfNeeded(keyOrLink) : null;
+    return {
+      summary: `Attached image${attachment.filename ? `: ${attachment.filename}` : ''}.`,
+      imageUrl,
+    };
+  }
+
+  if (attachment.type === 'video') {
+    return {
+      summary: `Attached video${attachment.filename ? `: ${attachment.filename}` : ''}. Analyze only metadata/text context unless user provides specific timestamps.`,
+      imageUrl: null,
+    };
+  }
+
+  if (attachment.type === 'link') {
+    return {
+      summary: `Attached link: ${attachment.link || 'N/A'}${attachment.title ? `\nAttachment title: ${attachment.title}` : ''}`,
+      imageUrl: null,
+    };
+  }
+
+  return { summary: 'Attachment present but unsupported for direct parsing.', imageUrl: null };
 }
 
 async function loadUploaderProfiles(uids) {
@@ -129,7 +286,109 @@ async function loadExcludedAuthorUids(viewerUid) {
   }
 }
 
+async function loadFollowingUids(viewerUid) {
+  if (!viewerUid) return [];
+  try {
+    const result = await pool.query(
+      `SELECT target_uid AS uid
+       FROM follows
+       WHERE follower_uid = $1`,
+      [viewerUid]
+    );
+    return result.rows.map((row) => row.uid).filter(Boolean);
+  } catch (error) {
+    if (error && error.code === '42P01') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function buildFeedRankingPipeline({
+  filter,
+  skip,
+  pageSize,
+  now,
+  userCourse,
+  followedUids,
+}) {
+  const followed = Array.isArray(followedUids) ? followedUids : [];
+  const courseBoostExpr = userCourse
+    ? { $cond: [{ $eq: ['$course', userCourse] }, 0.8, 0] }
+    : 0;
+
+  return [
+    { $match: filter },
+    {
+      $addFields: {
+        _hoursSincePost: {
+          $max: [
+            1,
+            {
+              $divide: [
+                { $subtract: [now, { $ifNull: ['$uploadDate', now] }] },
+                1000 * 60 * 60,
+              ],
+            },
+          ],
+        },
+        _engagementRaw: {
+          $add: [
+            { $multiply: [{ $ifNull: ['$likesCount', 0] }, 2] },
+            { $multiply: [{ $ifNull: ['$commentsCount', 0] }, 3] },
+          ],
+        },
+        _followBoost: { $cond: [{ $in: ['$uploaderUid', followed] }, 1.4, 0] },
+        _courseBoost: courseBoostExpr,
+        _freshBoost: { $cond: [{ $lte: ['$_hoursSincePost', 6] }, 0.45, 0] },
+      },
+    },
+    {
+      $addFields: {
+        _engagementScore: { $ln: { $add: [1, '$_engagementRaw'] } },
+        _recencyScore: {
+          $divide: [1, { $pow: [{ $add: ['$_hoursSincePost', 2] }, 0.75] }],
+        },
+      },
+    },
+    {
+      $addFields: {
+        _feedScore: {
+          $add: [
+            { $multiply: ['$_engagementScore', 3.6] },
+            { $multiply: ['$_recencyScore', 8.8] },
+            '$_followBoost',
+            '$_courseBoost',
+            '$_freshBoost',
+          ],
+        },
+      },
+    },
+    { $sort: { _feedScore: -1, uploadDate: -1, _id: -1 } },
+    { $skip: skip },
+    { $limit: pageSize },
+    {
+      $project: {
+        _hoursSincePost: 0,
+        _engagementRaw: 0,
+        _followBoost: 0,
+        _courseBoost: 0,
+        _freshBoost: 0,
+        _engagementScore: 0,
+        _recencyScore: 0,
+        _feedScore: 0,
+      },
+    },
+  ];
+}
+
 function parseSidecardLimit(value, fallback = 5, max = 10) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
+function parseBookmarksLimit(value, fallback = 24, max = 100) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, max);
@@ -347,12 +606,19 @@ router.get('/api/posts', async (req, res) => {
       filter.course = course;
     }
 
+    const followedUids = await loadFollowingUids(req.user.uid);
     const total = await postsCollection.countDocuments(filter);
     const posts = await postsCollection
-      .find(filter)
-      .sort({ uploadDate: -1 })
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
+      .aggregate(
+        buildFeedRankingPipeline({
+          filter,
+          skip: (page - 1) * pageSize,
+          pageSize,
+          now: new Date(),
+          userCourse: req.user?.course || '',
+          followedUids,
+        })
+      )
       .toArray();
 
     const uploaderUids = [...new Set(posts.map((post) => post.uploaderUid).filter(Boolean))];
@@ -400,6 +666,98 @@ router.get('/api/posts', async (req, res) => {
   } catch (error) {
     console.error('Posts fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load posts.' });
+  }
+});
+
+router.get('/api/posts/bookmarks', async (req, res) => {
+  const limit = parseBookmarksLimit(req.query.limit, 24, 100);
+
+  try {
+    const db = await getMongoDb();
+    const postsCollection = db.collection('posts');
+    const likesCollection = db.collection('post_likes');
+    const bookmarksCollection = db.collection('post_bookmarks');
+
+    const bookmarks = await bookmarksCollection
+      .find({ userUid: req.user.uid })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit)
+      .toArray();
+
+    const bookmarkedPostIds = bookmarks
+      .map((item) => item && item.postId)
+      .filter((postId) => postId instanceof ObjectId);
+
+    if (!bookmarkedPostIds.length) {
+      return res.json({ ok: true, posts: [], total: 0, limit });
+    }
+
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: { $in: bookmarkedPostIds },
+    };
+
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
+
+    const posts = await postsCollection.find(filter).toArray();
+    if (!posts.length) {
+      return res.json({ ok: true, posts: [], total: 0, limit });
+    }
+
+    const postById = new Map(posts.map((post) => [post._id.toString(), post]));
+    const orderedPosts = [];
+    for (const bookmark of bookmarks) {
+      const postIdText = bookmark.postId && bookmark.postId.toString();
+      const post = postById.get(postIdText);
+      if (!post) continue;
+      orderedPosts.push({ post, bookmarkedAt: bookmark.createdAt || null });
+    }
+
+    const orderedPostIds = orderedPosts.map((item) => item.post._id);
+    const liked = await likesCollection
+      .find({ postId: { $in: orderedPostIds }, userUid: req.user.uid })
+      .toArray();
+    const likedSet = new Set(liked.map((item) => item.postId.toString()));
+
+    const uploaderUids = [
+      ...new Set(orderedPosts.map((item) => item.post.uploaderUid).filter(Boolean)),
+    ];
+    const uploaderProfiles = await loadUploaderProfiles(uploaderUids);
+
+    const response = await Promise.all(
+      orderedPosts.map(async ({ post, bookmarkedAt }) => {
+        const profile = uploaderProfiles.get(post.uploaderUid);
+        return {
+          id: post._id.toString(),
+          title: post.title,
+          content: post.content,
+          course: post.course,
+          visibility: post.visibility,
+          attachment: await signAttachment(post.attachment || null),
+          uploadDate: post.uploadDate,
+          bookmarkedAt,
+          uploader: {
+            ...(post.uploader || {}),
+            uid: post.uploaderUid || post.uploader?.uid || null,
+            displayName: profile?.displayName || post.uploader?.displayName || 'Member',
+            photoLink: profile?.photoLink || post.uploader?.photoLink || null,
+          },
+          likesCount: Number(post.likesCount || 0),
+          commentsCount: Number(post.commentsCount || 0),
+          liked: likedSet.has(post._id.toString()),
+          bookmarked: true,
+          isOwner: post.uploaderUid === req.user.uid,
+        };
+      })
+    );
+
+    return res.json({ ok: true, posts: response, total: response.length, limit });
+  } catch (error) {
+    console.error('Bookmarks fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load bookmarked posts.' });
   }
 });
 
@@ -463,6 +821,217 @@ router.get('/api/posts/:id', async (req, res) => {
   } catch (error) {
     console.error('Post fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load post.' });
+  }
+});
+
+router.get('/api/posts/:id/ask-ai/bootstrap', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ ok: false, message: 'Invalid post id.' });
+  }
+
+  try {
+    const postId = new ObjectId(id);
+    const { db, post } = await getAccessiblePostForUser(req, postId);
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+
+    const conversations = db.collection('post_ai_conversations');
+    const messagesCollection = db.collection('post_ai_messages');
+    const now = new Date();
+
+    let conversation = await conversations.findOne({ postId, userUid: req.user.uid });
+    if (!conversation) {
+      const conversationDoc = {
+        postId,
+        userUid: req.user.uid,
+        title: `Ask AI: ${post.title || 'Post'}`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const insert = await conversations.insertOne(conversationDoc);
+      conversation = { ...conversationDoc, _id: insert.insertedId };
+    }
+
+    const messages = await messagesCollection
+      .find({ conversationId: conversation._id, userUid: req.user.uid })
+      .sort({ createdAt: 1 })
+      .limit(120)
+      .toArray();
+
+    const attachmentContext = await buildPostAttachmentContext(post.attachment || null);
+
+    return res.json({
+      ok: true,
+      conversation: {
+        id: conversation._id.toString(),
+        title: conversation.title,
+        postId: postId.toString(),
+      },
+      context: {
+        postTitle: post.title || 'Untitled post',
+        postCourse: post.course || null,
+        visibility: post.visibility || 'public',
+        attachmentSummary: attachmentContext.summary || 'No attachment.',
+      },
+      messages: messages.map((message) => ({
+        id: message._id.toString(),
+        role: message.role,
+        content: message.content || '',
+        createdAt: message.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error('Post AI bootstrap failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load post AI conversation.' });
+  }
+});
+
+router.post('/api/posts/:id/ask-ai/messages', async (req, res) => {
+  const { id } = req.params;
+  const { content } = req.body || {};
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ ok: false, message: 'Invalid post id.' });
+  }
+  if (!content || !String(content).trim()) {
+    return res.status(400).json({ ok: false, message: 'Message content required.' });
+  }
+
+  try {
+    const postId = new ObjectId(id);
+    const { db, post } = await getAccessiblePostForUser(req, postId);
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+
+    const conversations = db.collection('post_ai_conversations');
+    const messagesCollection = db.collection('post_ai_messages');
+    const now = new Date();
+    let conversation = await conversations.findOne({ postId, userUid: req.user.uid });
+    if (!conversation) {
+      const conversationDoc = {
+        postId,
+        userUid: req.user.uid,
+        title: `Ask AI: ${post.title || 'Post'}`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const insert = await conversations.insertOne(conversationDoc);
+      conversation = { ...conversationDoc, _id: insert.insertedId };
+    }
+
+    const userMessage = {
+      conversationId: conversation._id,
+      postId,
+      userUid: req.user.uid,
+      role: 'user',
+      content: String(content).trim(),
+      createdAt: now,
+    };
+    const insertedUser = await messagesCollection.insertOne(userMessage);
+    const userMessageId = insertedUser.insertedId.toString();
+
+    let assistantText = Boolean(getOpenAIKey())
+      ? 'AI is temporarily unavailable. Please retry in a moment.'
+      : 'AI is not configured yet. Add OPENAI_API_KEY to enable responses.';
+
+    const openai = await getOpenAIClient();
+    const attachmentContext = await buildPostAttachmentContext(post.attachment || null);
+    if (openai) {
+      const recentMessages = await messagesCollection
+        .find({ conversationId: conversation._id, userUid: req.user.uid })
+        .sort({ createdAt: -1 })
+        .limit(14)
+        .toArray();
+
+      const postContextLines = [
+        `Post title: ${post.title || 'Untitled post'}`,
+        `Post author: ${post.uploader?.displayName || 'Member'}`,
+        `Course: ${post.course || 'N/A'}`,
+        `Visibility: ${post.visibility || 'public'}`,
+        `Created: ${post.uploadDate ? new Date(post.uploadDate).toISOString() : 'N/A'}`,
+        `Post body:\n${truncateContextText(post.content || '', 3500)}`,
+        `Attachment context:\n${attachmentContext.summary || 'No attachment.'}`,
+      ];
+
+      const history = [...recentMessages].reverse().map((message) => {
+        const base = {
+          role: message.role,
+          content: message.content || '',
+        };
+        if (
+          attachmentContext.imageUrl &&
+          message.role === 'user' &&
+          String(message._id) === userMessageId
+        ) {
+          return {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: message.content || '' },
+              { type: 'input_image', image_url: attachmentContext.imageUrl },
+            ],
+          };
+        }
+        return base;
+      });
+
+      try {
+        const response = await openai.responses.create({
+          model: getOpenAIModel(),
+          max_output_tokens: 900,
+          input: [
+            {
+              role: 'system',
+              content:
+                'You are an academic assistant helping discuss a specific post. Stay grounded in the post context and clearly state assumptions when uncertain.',
+            },
+            {
+              role: 'system',
+              content: postContextLines.join('\n\n'),
+            },
+            ...history,
+          ],
+        });
+        const outputText = extractTextFromOpenAIResponse(response);
+        if (outputText) {
+          assistantText = outputText;
+        }
+      } catch (error) {
+        console.error('Post AI response failed:', error);
+        if (/model|does not exist|not found|unsupported/i.test(String(error?.message || ''))) {
+          assistantText = 'Model access/config issue detected. Set OPENAI_MODEL to an available model and retry.';
+        }
+      }
+    }
+
+    const assistantMessage = {
+      conversationId: conversation._id,
+      postId,
+      userUid: req.user.uid,
+      role: 'assistant',
+      content: assistantText,
+      createdAt: new Date(),
+    };
+    const insertedAssistant = await messagesCollection.insertOne(assistantMessage);
+    await conversations.updateOne(
+      { _id: conversation._id },
+      { $set: { updatedAt: new Date() } }
+    );
+
+    return res.json({
+      ok: true,
+      conversationId: conversation._id.toString(),
+      message: {
+        id: insertedAssistant.insertedId.toString(),
+        role: assistantMessage.role,
+        content: assistantMessage.content,
+        createdAt: assistantMessage.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Post AI message failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to send post AI message.' });
   }
 });
 
