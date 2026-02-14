@@ -69,6 +69,109 @@ async function loadDisplayNamesByUid(uids) {
   return new Map(result.rows.map((row) => [row.uid, row.display_name || 'Member']));
 }
 
+async function cleanupMongoDataForAccount(uid) {
+  if (!uid) return;
+  const db = await getMongoDb();
+  const postsCollection = db.collection('posts');
+
+  const userPosts = await postsCollection
+    .find({ uploaderUid: uid })
+    .project({ _id: 1, attachment: 1 })
+    .toArray();
+  const userPostIds = userPosts.map((post) => post && post._id).filter(Boolean);
+  let postLinkedAiConversationIds = [];
+
+  if (userPosts.length) {
+    await Promise.all(
+      userPosts.map(async (post) => {
+        const key =
+          post &&
+          post.attachment &&
+          (post.attachment.type === 'image' || post.attachment.type === 'video')
+            ? post.attachment.key
+            : null;
+        if (!key || String(key).startsWith('http')) return;
+        try {
+          await deleteFromStorage(key);
+        } catch (storageError) {
+          console.error('Admin account delete attachment cleanup failed:', storageError);
+        }
+      })
+    );
+  }
+
+  if (userPostIds.length) {
+    const postLinkedAiConversations = await db
+      .collection('post_ai_conversations')
+      .find({ postId: { $in: userPostIds } })
+      .project({ _id: 1 })
+      .toArray();
+    postLinkedAiConversationIds = postLinkedAiConversations
+      .map((item) => item && item._id)
+      .filter(Boolean);
+  }
+
+  const [postAiConversations, libraryAiConversations, personalAiConversations] = await Promise.all([
+    db.collection('post_ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
+    db.collection('library_ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
+    db.collection('ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
+  ]);
+
+  const postAiConversationIds = postAiConversations.map((item) => item && item._id).filter(Boolean);
+  const libraryAiConversationIds = libraryAiConversations.map((item) => item && item._id).filter(Boolean);
+  const personalAiConversationIds = personalAiConversations.map((item) => item && item._id).filter(Boolean);
+
+  const cleanupOps = [
+    db.collection('post_likes').deleteMany({ userUid: uid }),
+    db.collection('post_comments').deleteMany({ userUid: uid }),
+    db.collection('post_bookmarks').deleteMany({ userUid: uid }),
+    db.collection('post_reports').deleteMany({ userUid: uid }),
+    db.collection('doccomment').deleteMany({ userUid: uid }),
+    db.collection('personal_journal_folders').deleteMany({ userUid: uid }),
+    db.collection('personal_journals').deleteMany({ userUid: uid }),
+    db.collection('personal_tasks').deleteMany({ userUid: uid }),
+    db.collection('ai_task_proposals').deleteMany({ userUid: uid }),
+    db.collection('ai_messages').deleteMany({ userUid: uid }),
+    db.collection('ai_conversations').deleteMany({ userUid: uid }),
+    db.collection('post_ai_messages').deleteMany({ userUid: uid }),
+    db.collection('post_ai_conversations').deleteMany({ userUid: uid }),
+    db.collection('library_ai_messages').deleteMany({ userUid: uid }),
+    db.collection('library_ai_conversations').deleteMany({ userUid: uid }),
+  ];
+
+  if (userPostIds.length) {
+    cleanupOps.push(postsCollection.deleteMany({ _id: { $in: userPostIds } }));
+    cleanupOps.push(db.collection('post_likes').deleteMany({ postId: { $in: userPostIds } }));
+    cleanupOps.push(db.collection('post_comments').deleteMany({ postId: { $in: userPostIds } }));
+    cleanupOps.push(db.collection('post_bookmarks').deleteMany({ postId: { $in: userPostIds } }));
+    cleanupOps.push(db.collection('post_reports').deleteMany({ postId: { $in: userPostIds } }));
+    cleanupOps.push(db.collection('post_ai_conversations').deleteMany({ postId: { $in: userPostIds } }));
+  }
+  const postMessageConversationIds = Array.from(
+    new Set([...postAiConversationIds, ...postLinkedAiConversationIds].map((value) => String(value)))
+  ).map((value) => new ObjectId(value));
+  if (postMessageConversationIds.length) {
+    cleanupOps.push(
+      db.collection('post_ai_messages').deleteMany({ conversationId: { $in: postMessageConversationIds } })
+    );
+  }
+  if (libraryAiConversationIds.length) {
+    cleanupOps.push(
+      db.collection('library_ai_messages').deleteMany({ conversationId: { $in: libraryAiConversationIds } })
+    );
+  }
+  if (personalAiConversationIds.length) {
+    cleanupOps.push(
+      db.collection('ai_messages').deleteMany({ conversationId: { $in: personalAiConversationIds } })
+    );
+    cleanupOps.push(
+      db.collection('ai_task_proposals').deleteMany({ conversationId: { $in: personalAiConversationIds } })
+    );
+  }
+
+  await Promise.all(cleanupOps);
+}
+
 const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq']);
 
 const DEFAULT_SITE_PAGES = {
@@ -760,6 +863,47 @@ router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
   } catch (error) {
     console.error('Admin ban update failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to update ban status.' });
+  }
+});
+
+router.delete('/api/admin/accounts/:uid', async (req, res) => {
+  const targetUid = sanitizeText(req.params.uid, 120);
+
+  if (!targetUid) {
+    return res.status(400).json({ ok: false, message: 'Invalid target user.' });
+  }
+  if (targetUid === req.adminViewer.uid) {
+    return res.status(400).json({ ok: false, message: 'Cannot delete your own account.' });
+  }
+
+  try {
+    const targetResult = await pool.query(
+      `SELECT uid, COALESCE(platform_role, 'member') AS platform_role
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1`,
+      [targetUid]
+    );
+    if (!targetResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Target user not found.' });
+    }
+    const target = targetResult.rows[0];
+
+    if (target.platform_role === 'owner') {
+      return res.status(403).json({ ok: false, message: 'Owner account cannot be deleted.' });
+    }
+    if (req.adminViewer.platform_role === 'admin' && target.platform_role !== 'member') {
+      return res.status(403).json({ ok: false, message: 'Admins can only delete member accounts.' });
+    }
+
+    await cleanupMongoDataForAccount(targetUid);
+    await pool.query('DELETE FROM accounts WHERE uid = $1', [targetUid]);
+    deleteSessionsForUid(targetUid);
+
+    return res.json({ ok: true, message: 'Account deleted.' });
+  } catch (error) {
+    console.error('Admin account delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to delete account.' });
   }
 });
 

@@ -55,6 +55,7 @@ const reloadFaqPage = document.getElementById('reloadFaqPage');
 const faqPageMessage = document.getElementById('faqPageMessage');
 
 let viewerRole = 'member';
+let viewerUid = '';
 let currentContentTab = 'main-posts';
 
 function escapeHtml(value) {
@@ -104,6 +105,7 @@ async function loadAdminContext() {
     return;
   }
   viewerRole = data.role || 'member';
+  viewerUid = data.uid || '';
   if (adminRoleBadge) {
     adminRoleBadge.textContent = `Role: ${viewerRole}`;
   }
@@ -210,6 +212,18 @@ function buildBanControl(uid, status, userType) {
   `;
 }
 
+function buildDeleteControl(uid, userType) {
+  if (!uid || uid === viewerUid || userType === 'owner') {
+    return '';
+  }
+  const canDelete =
+    viewerRole === 'owner' || (viewerRole === 'admin' && userType === 'member');
+  if (!canDelete) {
+    return '';
+  }
+  return `<button class="danger-button" data-action="delete-account" data-uid="${escapeHtml(uid)}">Delete account</button>`;
+}
+
 async function loadAccounts() {
   const params = new URLSearchParams({
     page: '1',
@@ -231,6 +245,8 @@ async function loadAccounts() {
       .map((account) => {
         const roleControl = buildRoleControl(account.uid, account.userType);
         const banControl = buildBanControl(account.uid, account.status, account.userType);
+        const deleteControl = buildDeleteControl(account.uid, account.userType);
+        const actions = [banControl, deleteControl].filter(Boolean).join('');
         return `
           <tr>
             <td>${escapeHtml(account.uid)}</td>
@@ -241,7 +257,7 @@ async function loadAccounts() {
             <td>${escapeHtml(account.recoveryEmail || '-')}</td>
             <td>${escapeHtml(account.status)}</td>
             <td>${escapeHtml(new Date(account.dateRegistered).toLocaleString())}</td>
-            <td><div class="row-actions">${banControl}</div></td>
+            <td><div class="row-actions">${actions || '<span>-</span>'}</div></td>
           </tr>
         `;
       })
@@ -633,6 +649,30 @@ accountsTableBody.addEventListener('click', async (event) => {
         body: JSON.stringify({ banned: shouldBan, reason }),
       });
       setPageMessage(shouldBan ? 'Account banned.' : 'Account unbanned.', 'success');
+      loadAccounts();
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+    return;
+  }
+
+  if (action === 'delete-account') {
+    const confirmed = window.confirm(
+      'Delete this account permanently? This cannot be undone and removes associated user data.'
+    );
+    if (!confirmed) return;
+
+    const finalCheck = window.prompt('Type DELETE to confirm:', '');
+    if (finalCheck !== 'DELETE') {
+      setPageMessage('Account deletion cancelled.');
+      return;
+    }
+
+    try {
+      await apiRequest(`/api/admin/accounts/${encodeURIComponent(uid)}`, {
+        method: 'DELETE',
+      });
+      setPageMessage('Account deleted.', 'success');
       loadAccounts();
     } catch (error) {
       setPageMessage(error.message);

@@ -474,16 +474,24 @@ body {
   box-shadow: 0 0 0 3px rgba(47, 94, 123, 0.14);
 }
 
-.checkbox-label {
+.workspace-filters .checkbox-label {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.1;
 }
 
-.checkbox-label input {
+.workspace-filters .checkbox-label input {
   width: 16px;
   height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.workspace-filters .checkbox-label span {
+  margin: 0;
 }
 
 .rooms-list {
@@ -647,55 +655,101 @@ body {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(15, 26, 39, 0.44);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(90, 147, 191, 0.2), transparent 38%),
+    rgba(9, 20, 30, 0.58);
   display: grid;
   place-items: center;
   padding: 18px;
   z-index: 1200;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
 }
 
 .modal-card {
   width: min(700px, 100%);
   max-height: calc(100vh - 60px);
   overflow-y: auto;
-  background: #fff;
-  border-radius: 20px;
-  padding: 22px;
+  background:
+    linear-gradient(165deg, rgba(240, 247, 254, 0.7), rgba(255, 255, 255, 0.96) 38%),
+    #fff;
+  border-radius: 24px;
+  padding: 24px;
   position: relative;
-  box-shadow: 0 30px 70px rgba(15, 38, 57, 0.34);
+  border: 1px solid rgba(32, 72, 102, 0.2);
+  box-shadow:
+    0 34px 90px rgba(8, 23, 38, 0.4),
+    0 8px 26px rgba(27, 63, 90, 0.18);
 }
 
 .modal-card h2 {
-  margin: 0 0 14px;
+  margin: 0 0 18px;
   font-family: "Playfair Display", Georgia, serif;
+  font-size: clamp(1.5rem, 2.2vw, 1.9rem);
+  letter-spacing: 0.01em;
 }
 
 .close-button {
   position: absolute;
-  top: 12px;
-  right: 14px;
-  border: none;
-  background: transparent;
-  font-size: 1.44rem;
+  top: 14px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(15, 38, 57, 0.16);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 1.3rem;
+  line-height: 1;
   cursor: pointer;
   color: var(--ink-soft);
+  display: grid;
+  place-items: center;
+}
+
+.close-button:hover {
+  background: #f4f8fb;
 }
 
 .room-form {
   display: grid;
-  gap: 12px;
+  gap: 13px;
 }
 
 .room-form label {
   display: grid;
-  gap: 6px;
+  gap: 7px;
   color: var(--muted);
   font-size: 0.82rem;
 }
 
+.room-form > label > span,
+.room-grid label > span {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #4d5f6e;
+}
+
+.room-form input,
+.room-form select {
+  border-radius: 14px;
+  border: 1px solid rgba(21, 63, 94, 0.2);
+  background: #f9fbfd;
+  padding: 11px 12px;
+}
+
 .room-form input[readonly] {
   color: #6b7885;
-  background: #f7f8fa;
+  background: linear-gradient(180deg, #f4f7fa, #f9fbfd);
+  border-style: dashed;
+}
+
+.private-only {
+  padding: 10px 12px;
+  border: 1px dashed rgba(24, 75, 112, 0.28);
+  border-radius: 14px;
+  background: rgba(241, 248, 255, 0.55);
 }
 
 .room-grid {
@@ -706,32 +760,62 @@ body {
 
 .toggle-set {
   margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 14px;
+  border: 1px solid rgba(24, 75, 112, 0.2);
+  border-radius: 16px;
   padding: 12px;
+  background: linear-gradient(180deg, #f8fbff, #f5f8fb);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .toggle-set legend {
   padding: 0 6px;
-  color: var(--ink-soft);
+  color: #4d5f6e;
   font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.toggle-pill {
+.room-form .toggle-pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgba(15, 38, 57, 0.16);
+  border: 1px solid rgba(15, 38, 57, 0.2);
   border-radius: 999px;
-  padding: 7px 11px;
-  margin: 4px 6px 0 0;
+  padding: 8px 12px;
+  margin: 0;
   color: var(--ink);
   background: #fff;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
 }
 
-.toggle-pill input {
+.room-form .toggle-pill:hover {
+  background: #f2f7fc;
+}
+
+.room-form .toggle-pill input {
   width: 15px;
   height: 15px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.room-form .toggle-pill span {
+  margin: 0;
+  line-height: 1.15;
+}
+
+.room-form .primary-button {
+  width: 100%;
+  min-height: 46px;
+  font-size: 0.96rem;
+  letter-spacing: 0.02em;
 }
 
 .invite-result {
