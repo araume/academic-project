@@ -62,20 +62,26 @@
     <aside class="sidebar">
       <section class="side-card large">
         <h3>Trending Discussions</h3>
-        <div class="placeholder-line"></div>
-        <div class="placeholder-line wide"></div>
-        <div class="placeholder-line"></div>
+        <div class="side-card-content side-card-content--large" id="trendingDiscussionsList">
+          <div class="placeholder-line"></div>
+          <div class="placeholder-line wide"></div>
+          <div class="placeholder-line"></div>
+        </div>
       </section>
       <div class="side-grid">
         <section class="side-card">
           <h3>Course materials</h3>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
+          <div class="side-card-content" id="courseMaterialsList">
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+          </div>
         </section>
         <section class="side-card">
           <h3>Suggested Rooms</h3>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
+          <div class="side-card-content" id="suggestedRoomsList">
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+          </div>
         </section>
       </div>
     </aside>
@@ -102,7 +108,7 @@
         </label>
         <label class="toggle">
           <input type="checkbox" id="postPublic" />
-          <span>Public post (course not required)</span>
+          <span>Public post</span>
         </label>
         <label class="field">
           <span class="field-label">Upload file (optional)</span>
@@ -161,6 +167,14 @@
         <input type="text" id="postCommentInput" placeholder="Write a comment..." />
         <button type="submit">Post</button>
       </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="postSpotlightModal">
+    <div class="modal-card spotlight-modal-card">
+      <button class="close-button" id="postSpotlightClose">×</button>
+      <h2>Post</h2>
+      <div id="postSpotlightContainer" class="spotlight-post-wrap"></div>
     </div>
   </div>
 

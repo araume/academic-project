@@ -52,6 +52,7 @@ const openCallTab = document.getElementById('openCallTab');
 const initialSearchParams = new URLSearchParams(window.location.search);
 const inviteTokenFromUrl = (initialSearchParams.get('invite') || '').trim();
 const inviteRoomMeetIdFromUrl = (initialSearchParams.get('room') || '').trim().toUpperCase();
+const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
 
 const state = {
   viewer: null,
@@ -61,6 +62,31 @@ const state = {
   pendingRequests: [],
   currentCall: null,
 };
+
+function consumePrejoinedRoom() {
+  try {
+    const raw = sessionStorage.getItem(ROOMS_PREJOIN_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(ROOMS_PREJOIN_KEY);
+    const parsed = JSON.parse(raw);
+    const createdAt = Number(parsed && parsed.createdAt) || 0;
+    if (!createdAt || Date.now() - createdAt > 5 * 60 * 1000) return null;
+    if (!parsed.joinUrl || typeof parsed.joinUrl !== 'string') return null;
+    return {
+      roomId: parsed.roomId ? Number(parsed.roomId) : null,
+      meetId: parsed.meetId ? String(parsed.meetId) : '',
+      meetName: parsed.meetName ? String(parsed.meetName) : 'Live room',
+      joinUrl: parsed.joinUrl,
+    };
+  } catch (error) {
+    try {
+      sessionStorage.removeItem(ROOMS_PREJOIN_KEY);
+    } catch (cleanupError) {
+      // ignore storage cleanup failures
+    }
+    return null;
+  }
+}
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
@@ -840,9 +866,18 @@ if (leaveCallButton) {
 }
 
 async function init() {
+  const prejoinedRoom = consumePrejoinedRoom();
   try {
     await loadBootstrap();
     await loadRooms();
+    if (prejoinedRoom && prejoinedRoom.joinUrl) {
+      openCallPanel(prejoinedRoom.joinUrl, {
+        id: prejoinedRoom.roomId,
+        meetId: prejoinedRoom.meetId,
+        meetName: prejoinedRoom.meetName,
+      });
+      showMessage(workspaceMessage, 'Joined room from Home sidecard.', 'success');
+    }
     if (state.viewer && state.viewer.canReviewRequests) {
       await loadPendingRequests();
     }

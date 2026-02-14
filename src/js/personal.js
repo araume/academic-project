@@ -56,6 +56,7 @@ let activeConversationId = null;
 let activeProposalId = null;
 const openFolders = new Set();
 let selectedContext = null;
+let isSendingMessage = false;
 
 function setConversationHeader(title, subtitle) {
   if (conversationTitle) {
@@ -72,6 +73,64 @@ function renderEmptyChat(message = 'Start a new chat to see responses.') {
   empty.className = 'chat-empty';
   empty.textContent = message;
   messageList.appendChild(empty);
+}
+
+function removeEmptyChatState() {
+  const empty = messageList.querySelector('.chat-empty');
+  if (empty) {
+    empty.remove();
+  }
+}
+
+function appendMessageBubble(role, text = '') {
+  removeEmptyChatState();
+  const item = document.createElement('div');
+  item.className = `message ${role}`;
+  item.innerHTML = text ? renderMarkdown(text) : '';
+  messageList.appendChild(item);
+  messageList.scrollTop = messageList.scrollHeight;
+  return item;
+}
+
+function updateMessageBubble(item, text) {
+  if (!item) return;
+  item.innerHTML = text ? renderMarkdown(text) : '';
+  messageList.scrollTop = messageList.scrollHeight;
+}
+
+async function consumeNdjsonStream(response, onEvent) {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex = buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        try {
+          const payload = JSON.parse(line);
+          onEvent(payload);
+        } catch (error) {
+          // Ignore malformed stream chunk.
+        }
+      }
+      newlineIndex = buffer.indexOf('\n');
+    }
+  }
+  const tail = buffer.trim();
+  if (tail) {
+    try {
+      const payload = JSON.parse(tail);
+      onEvent(payload);
+    } catch (error) {
+      // Ignore malformed final chunk.
+    }
+  }
 }
 
 function escapeHtml(value) {
@@ -799,45 +858,133 @@ async function loadMessages(conversationId) {
 
 async function sendMessage(event) {
   event.preventDefault();
+  if (isSendingMessage) return;
   const content = messageInput.value.trim();
   if (!content) return;
+  isSendingMessage = true;
   aiMessage.textContent = '';
-
-  if (!activeConversationId) {
-    await createConversation();
-  }
-  if (!activeConversationId) {
-    aiMessage.textContent = 'Unable to start a new conversation.';
-    return;
-  }
-
-  const context = selectedContext ? { uuid: selectedContext.uuid } : null;
-  const response = await fetch(`/api/personal/conversations/${activeConversationId}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, contextDoc: context }),
-  });
-  const data = await response.json();
-  if (!response.ok || !data.ok) {
-    aiMessage.textContent = data.message || 'Unable to send message.';
-    return;
-  }
+  const sendButton = messageForm ? messageForm.querySelector('button[type="submit"]') : null;
   messageInput.value = '';
-  await loadMessages(activeConversationId);
-  if (data.conversationTitle) {
-    setConversationHeader(data.conversationTitle, 'Private conversation');
-  }
-  await loadConversations();
-  if (data.proposalId) {
-    activeProposalId = data.proposalId;
-    proposalActions.classList.remove('is-hidden');
-  } else {
-    proposalActions.classList.add('is-hidden');
-  }
-  if (data.createdTasks && data.createdTasks.length) {
-    activeProposalId = null;
-    proposalActions.classList.add('is-hidden');
-    loadTasks();
+  messageInput.disabled = true;
+  if (sendButton) sendButton.disabled = true;
+
+  let userBubble = null;
+  let assistantBubble = null;
+  let assistantText = '';
+  let streamError = null;
+  let streamMeta = {
+    conversationTitle: null,
+    proposalId: null,
+    createdTasks: [],
+  };
+
+  try {
+    if (!activeConversationId) {
+      await createConversation();
+    }
+    if (!activeConversationId) {
+      throw new Error('Unable to start a new conversation.');
+    }
+
+    userBubble = appendMessageBubble('user', content);
+    assistantBubble = appendMessageBubble('assistant', '');
+
+    const context = selectedContext ? { uuid: selectedContext.uuid } : null;
+    const response = await fetch(`/api/personal/conversations/${activeConversationId}/messages?stream=1`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/x-ndjson',
+      },
+      body: JSON.stringify({ content, contextDoc: context }),
+    });
+
+    if (!response.ok) {
+      let failedMessage = 'Unable to send message.';
+      try {
+        const maybeJson = await response.json();
+        failedMessage = maybeJson.message || failedMessage;
+      } catch (error) {
+        // keep generic message
+      }
+      throw new Error(failedMessage);
+    }
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('application/x-ndjson') && response.body) {
+      await consumeNdjsonStream(response, (payload) => {
+        if (!payload || typeof payload !== 'object') return;
+        if (payload.type === 'delta') {
+          assistantText += String(payload.delta || '');
+          updateMessageBubble(assistantBubble, assistantText);
+          return;
+        }
+        if (payload.type === 'meta') {
+          streamMeta = {
+            ...streamMeta,
+            conversationTitle: payload.conversationTitle || null,
+            proposalId: payload.proposalId || null,
+            createdTasks: Array.isArray(payload.createdTasks) ? payload.createdTasks : [],
+          };
+          return;
+        }
+        if (payload.type === 'error') {
+          streamError = payload.message || 'Unable to send message.';
+        }
+      });
+    } else {
+      const data = await response.json();
+      if (!data || !data.ok) {
+        throw new Error((data && data.message) || 'Unable to send message.');
+      }
+      assistantText = String(data.message?.content || '');
+      updateMessageBubble(assistantBubble, assistantText);
+      streamMeta = {
+        conversationTitle: data.conversationTitle || null,
+        proposalId: data.proposalId || null,
+        createdTasks: Array.isArray(data.createdTasks) ? data.createdTasks : [],
+      };
+    }
+
+    if (streamError) {
+      throw new Error(streamError);
+    }
+
+    if (!assistantText.trim()) {
+      updateMessageBubble(assistantBubble, 'I could not generate a reply for this request.');
+    }
+
+    if (streamMeta.conversationTitle) {
+      setConversationHeader(streamMeta.conversationTitle, 'Private conversation');
+    }
+    await loadConversations();
+    if (streamMeta.proposalId) {
+      activeProposalId = streamMeta.proposalId;
+      proposalActions.classList.remove('is-hidden');
+    } else {
+      activeProposalId = null;
+      proposalActions.classList.add('is-hidden');
+    }
+    if (streamMeta.createdTasks && streamMeta.createdTasks.length) {
+      activeProposalId = null;
+      proposalActions.classList.add('is-hidden');
+      loadTasks();
+    }
+  } catch (error) {
+    aiMessage.textContent = error.message || 'Unable to send message.';
+    if (assistantBubble && !assistantText.trim()) {
+      assistantBubble.remove();
+    } else if (assistantBubble) {
+      updateMessageBubble(assistantBubble, assistantText);
+    }
+    if (!userBubble || !userBubble.parentElement) {
+      appendMessageBubble('user', content);
+    }
+  } finally {
+    isSendingMessage = false;
+    messageInput.disabled = false;
+    if (sendButton) sendButton.disabled = false;
+    messageInput.focus();
   }
 }
 

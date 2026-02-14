@@ -212,6 +212,22 @@ body {
   cursor: pointer;
 }
 
+.settings-group {
+  margin-top: 8px;
+  padding: 2px 2px 0;
+}
+
+.settings-group h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.settings-group p {
+  margin: 6px 0 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
 .policy-field {
   display: grid;
   gap: 8px;

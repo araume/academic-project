@@ -187,24 +187,28 @@ body {
   flex-wrap: wrap;
 }
 
-.checkbox {
+.form-stack label.checkbox {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
   color: var(--ink-soft);
   flex-direction: row;
+  justify-self: start;
+  width: auto;
 }
 
-.checkbox input {
+.form-stack label.checkbox input {
   margin: 0;
   width: 16px;
   height: 16px;
+  flex: 0 0 auto;
 }
 
-.checkbox span {
+.form-stack label.checkbox span {
   display: inline-block;
   line-height: 1.2;
+  margin: 0;
 }
 
 .primary-button,
@@ -289,6 +293,24 @@ body {
   padding: 30px 28px 26px;
   position: relative;
   animation: panelSlide 0.25s ease-out both;
+}
+
+.forgot-modal-card {
+  width: min(500px, 100%);
+}
+
+.reset-step {
+  display: grid;
+  gap: 14px;
+}
+
+.reset-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.reset-actions .link-button {
+  justify-self: start;
 }
 
 .modal-close {

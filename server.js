@@ -14,6 +14,8 @@ const connectionsRoutes = require('./server/routes/connections');
 const communityRoutes = require('./server/routes/community');
 const roomsRoutes = require('./server/routes/rooms');
 const adminRoutes = require('./server/routes/admin');
+const notificationsRoutes = require('./server/routes/notifications');
+const searchRoutes = require('./server/routes/search');
 const requireAuth = require('./server/middleware/requireAuth');
 const requireOwnerOrAdmin = require('./server/middleware/requireOwnerOrAdmin');
 const auditLogger = require('./server/middleware/auditLogger');
@@ -40,6 +42,8 @@ app.use(connectionsRoutes);
 app.use(communityRoutes);
 app.use(roomsRoutes);
 app.use(adminRoutes);
+app.use(notificationsRoutes);
+app.use(searchRoutes);
 
 app.get('/', (req, res) => {
   const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;

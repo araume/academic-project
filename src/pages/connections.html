@@ -53,14 +53,14 @@
         <h1>Connections</h1>
         <p class="subcopy">Find peers, follow updates, and start direct or group chats from one place.</p>
         <div class="stats-row" id="statsRow">
-          <div>
+          <button type="button" class="stat-button" data-quick-list="following">
             <span class="stat-label">Following</span>
             <strong id="followingCount">0</strong>
-          </div>
-          <div>
+          </button>
+          <button type="button" class="stat-button" data-quick-list="followers">
             <span class="stat-label">Followers</span>
             <strong id="followersCount">0</strong>
-          </div>
+          </button>
           <div>
             <span class="stat-label">Pending</span>
             <strong id="pendingCount">0</strong>
@@ -78,13 +78,11 @@
           <button type="submit">Search</button>
         </form>
         <div class="chips-row">
-          <button type="button" class="chip is-active" data-list-type="following">Following</button>
+          <button type="button" class="chip" data-list-type="following">Following</button>
           <button type="button" class="chip" data-list-type="followers">Followers</button>
           <button type="button" class="chip" data-list-type="mutual">Mutual</button>
         </div>
       </article>
-
-      <section class="results-list" id="userResults"></section>
     </section>
 
     <section class="connections-right">
@@ -122,6 +120,15 @@
       </article>
     </section>
   </main>
+
+  <div class="modal is-hidden" id="userListModal">
+    <div class="modal-card user-list-modal-card">
+      <button type="button" class="close-button" id="userListModalClose">×</button>
+      <h2 id="userListModalTitle">Connections</h2>
+      <p class="user-list-modal-meta" id="userListModalMeta">Choose a list or run a search to view users.</p>
+      <section class="results-list modal-results-list" id="userResults"></section>
+    </div>
+  </div>
 
   <div class="modal is-hidden" id="groupModal">
     <div class="modal-card">

@@ -6,12 +6,17 @@ const navAvatarLabel = document.getElementById('navAvatarLabel');
 const followingCount = document.getElementById('followingCount');
 const followersCount = document.getElementById('followersCount');
 const pendingCount = document.getElementById('pendingCount');
+const quickListButtons = Array.from(document.querySelectorAll('[data-quick-list]'));
 
 const searchForm = document.getElementById('searchForm');
 const searchInput = document.getElementById('searchInput');
 const userResults = document.getElementById('userResults');
 const searchResultCount = document.getElementById('searchResultCount');
 const listTypeChips = Array.from(document.querySelectorAll('.chip[data-list-type]'));
+const userListModal = document.getElementById('userListModal');
+const userListModalClose = document.getElementById('userListModalClose');
+const userListModalTitle = document.getElementById('userListModalTitle');
+const userListModalMeta = document.getElementById('userListModalMeta');
 
 const requestTabs = Array.from(document.querySelectorAll('.request-tab'));
 const requestList = document.getElementById('requestList');
@@ -38,7 +43,8 @@ const DEFAULT_AVATAR = '/assets/LOGO.png';
 const state = {
   me: null,
   searchQuery: '',
-  listType: 'following',
+  listType: null,
+  userListVisible: false,
   activeRequestTab: 'follow',
   users: [],
   requests: [],
@@ -137,16 +143,48 @@ function renderEmptyState(target, text) {
   target.appendChild(empty);
 }
 
+function updateUserListModalHeader(count = 0) {
+  if (!userListModalTitle || !userListModalMeta) return;
+
+  if (state.searchQuery) {
+    userListModalTitle.textContent = `Search: "${state.searchQuery}"`;
+    userListModalMeta.textContent = `${count} result${count === 1 ? '' : 's'}`;
+    return;
+  }
+
+  const labelMap = {
+    following: 'Following',
+    followers: 'Followers',
+    mutual: 'Mutual',
+  };
+  const label = labelMap[state.listType] || 'Connections';
+  userListModalTitle.textContent = label;
+  if (state.listType) {
+    userListModalMeta.textContent = `${count} user${count === 1 ? '' : 's'}`;
+  } else {
+    userListModalMeta.textContent = 'Choose a list or run a search to view users.';
+  }
+}
+
 function renderUserCards() {
   if (!userResults) return;
   userResults.innerHTML = '';
 
+  if (!state.userListVisible && !state.searchQuery) {
+    updateUserListModalHeader(0);
+    renderEmptyState(userResults, 'Select Following or Followers to view the list.');
+    searchResultCount.textContent = '0 results';
+    return;
+  }
+
   if (!state.users.length) {
+    updateUserListModalHeader(0);
     renderEmptyState(userResults, state.searchQuery ? 'No users found for this search.' : `No ${state.listType} users to display yet.`);
     searchResultCount.textContent = '0 results';
     return;
   }
 
+  updateUserListModalHeader(state.users.length);
   searchResultCount.textContent = `${state.users.length} result${state.users.length === 1 ? '' : 's'}`;
 
   state.users.forEach((user) => {
@@ -407,9 +445,16 @@ async function loadUsers() {
   if (state.searchQuery) {
     const data = await apiRequest(`/api/connections/search?q=${encodeURIComponent(state.searchQuery)}&page=1&pageSize=24`);
     state.users = data.users || [];
+    state.userListVisible = true;
   } else {
+    if (!state.listType) {
+      state.users = [];
+      renderUserCards();
+      return;
+    }
     const data = await apiRequest(`/api/connections/list?type=${encodeURIComponent(state.listType)}&page=1&pageSize=24`);
     state.users = data.users || [];
+    state.userListVisible = true;
   }
 
   renderUserCards();
@@ -676,9 +721,13 @@ if (searchForm) {
   searchForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     state.searchQuery = (searchInput.value || '').trim();
+    state.userListVisible = Boolean(state.searchQuery);
 
     try {
       await loadUsers();
+      if (state.userListVisible || state.searchQuery) {
+        openModal(userListModal);
+      }
     } catch (error) {
       renderEmptyState(userResults, error.message);
     }
@@ -690,6 +739,10 @@ if (searchInput) {
     const value = (searchInput.value || '').trim();
     if (!value) {
       state.searchQuery = '';
+      if (!state.listType) {
+        state.userListVisible = false;
+        closeModal(userListModal);
+      }
       await loadUsers().catch((error) => {
         renderEmptyState(userResults, error.message);
       });
@@ -700,11 +753,34 @@ if (searchInput) {
 listTypeChips.forEach((chip) => {
   chip.addEventListener('click', async () => {
     setActiveListChip(chip.dataset.listType);
+    state.userListVisible = true;
+    state.searchQuery = '';
+    if (searchInput) {
+      searchInput.value = '';
+    }
     if (!state.searchQuery) {
       await loadUsers().catch((error) => {
         renderEmptyState(userResults, error.message);
       });
+      openModal(userListModal);
     }
+  });
+});
+
+quickListButtons.forEach((button) => {
+  button.addEventListener('click', async () => {
+    const type = button.dataset.quickList || '';
+    if (!type) return;
+    setActiveListChip(type);
+    state.userListVisible = true;
+    state.searchQuery = '';
+    if (searchInput) {
+      searchInput.value = '';
+    }
+    await loadUsers().catch((error) => {
+      renderEmptyState(userResults, error.message);
+    });
+    openModal(userListModal);
   });
 });
 
@@ -792,13 +868,24 @@ if (groupForm) {
   groupForm.addEventListener('submit', createGroup);
 }
 
+if (userListModalClose) {
+  userListModalClose.addEventListener('click', () => closeModal(userListModal));
+}
+
+if (userListModal) {
+  userListModal.addEventListener('click', (event) => {
+    if (event.target === userListModal) {
+      closeModal(userListModal);
+    }
+  });
+}
+
 async function init() {
   try {
     await loadBootstrap();
-    setActiveListChip(state.listType);
+    renderUserCards();
     setActiveRequestTab(state.activeRequestTab);
     await Promise.all([
-      loadUsers(),
       loadRequests(),
     ]);
     await loadConversations(true);

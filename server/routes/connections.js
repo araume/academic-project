@@ -81,9 +81,19 @@ async function ensureConnectionsTables() {
       non_follower_chat_policy TEXT NOT NULL DEFAULT 'request'
         CHECK (non_follower_chat_policy IN ('allow', 'request', 'deny')),
       active_visible BOOLEAN NOT NULL DEFAULT true,
+      notify_new_posts_from_following BOOLEAN NOT NULL DEFAULT true,
+      notify_post_activity BOOLEAN NOT NULL DEFAULT true,
+      notify_document_activity BOOLEAN NOT NULL DEFAULT true,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE user_privacy_settings
+      ADD COLUMN IF NOT EXISTS notify_new_posts_from_following BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE user_privacy_settings
+      ADD COLUMN IF NOT EXISTS notify_post_activity BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE user_privacy_settings
+      ADD COLUMN IF NOT EXISTS notify_document_activity BOOLEAN NOT NULL DEFAULT true;
 
     CREATE TABLE IF NOT EXISTS user_presence (
       uid TEXT PRIMARY KEY REFERENCES accounts(uid) ON DELETE CASCADE,
@@ -223,6 +233,7 @@ async function ensurePrivacySettings(uid) {
 
   const result = await pool.query(
     `SELECT uid, searchable, follow_approval_required, non_follower_chat_policy, active_visible,
+            notify_new_posts_from_following, notify_post_activity, notify_document_activity,
             created_at, updated_at
      FROM user_privacy_settings
      WHERE uid = $1`,
@@ -560,6 +571,30 @@ router.patch('/api/preferences/privacy', async (req, res) => {
     updates.push(`active_visible = $${values.length}`);
   }
 
+  if (payload.notify_new_posts_from_following !== undefined) {
+    if (typeof payload.notify_new_posts_from_following !== 'boolean') {
+      return res.status(400).json({ ok: false, message: 'notify_new_posts_from_following must be boolean.' });
+    }
+    values.push(payload.notify_new_posts_from_following);
+    updates.push(`notify_new_posts_from_following = $${values.length}`);
+  }
+
+  if (payload.notify_post_activity !== undefined) {
+    if (typeof payload.notify_post_activity !== 'boolean') {
+      return res.status(400).json({ ok: false, message: 'notify_post_activity must be boolean.' });
+    }
+    values.push(payload.notify_post_activity);
+    updates.push(`notify_post_activity = $${values.length}`);
+  }
+
+  if (payload.notify_document_activity !== undefined) {
+    if (typeof payload.notify_document_activity !== 'boolean') {
+      return res.status(400).json({ ok: false, message: 'notify_document_activity must be boolean.' });
+    }
+    values.push(payload.notify_document_activity);
+    updates.push(`notify_document_activity = $${values.length}`);
+  }
+
   if (!updates.length) {
     return res.status(400).json({ ok: false, message: 'No valid fields to update.' });
   }
@@ -570,7 +605,8 @@ router.patch('/api/preferences/privacy', async (req, res) => {
       `UPDATE user_privacy_settings
        SET ${updates.join(', ')}, updated_at = NOW()
        WHERE uid = $${values.length}
-       RETURNING uid, searchable, follow_approval_required, non_follower_chat_policy, active_visible, updated_at`,
+       RETURNING uid, searchable, follow_approval_required, non_follower_chat_policy, active_visible,
+                 notify_new_posts_from_following, notify_post_activity, notify_document_activity, updated_at`,
       values
     );
 

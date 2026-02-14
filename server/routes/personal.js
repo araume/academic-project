@@ -1,5 +1,7 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
+const path = require('path');
+const zlib = require('zlib');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
@@ -8,6 +10,9 @@ const pdfParse = require('pdf-parse');
 const { downloadFromStorage } = require('../services/storage');
 
 const GCLOUD_MCP_SERVER_URL = (process.env.GCLOUD_MCP_SERVER_URL || '').trim();
+const CONTEXT_PARSE_MAX_BYTES = 8 * 1024 * 1024;
+const CONTEXT_EXCERPT_MAX_CHARS = 3500;
+const PDF_OCR_MIN_TEXT_CHARS = 140;
 
 const router = express.Router();
 
@@ -25,23 +30,46 @@ function normalizeTags(value) {
 }
 
 function extractProposedTasks(text) {
-  const match = text.match(/tasks?:\s*([\s\S]+)/i);
+  if (!text) return [];
+  const match = text.match(
+    /(?:^|\n)\s*(?:(?:create|add|make|generate|set up)\s+)?(?:tasks?|to-?dos?|checklist)\s*[:\-]\s*([\s\S]+)/i
+  );
   if (!match) return [];
   const raw = match[1]
     .split(/\n|;/)
     .map((line) => line.replace(/^[-*]\s*/, '').trim())
     .filter(Boolean);
-  return raw.slice(0, 10).map((title) => ({
+  const parsed = raw.slice(0, 10).map((title) => ({
     title,
     status: 'pending',
     priority: 'normal',
   }));
+  if (parsed.length) return parsed;
+
+  const singleMatch = text.match(
+    /(?:^|\n)\s*(?:create|add|make|generate|set up)\s+(?:a\s+)?(?:task|to-?do)\s*[:\-]?\s*(.+)$/i
+  );
+  if (!singleMatch) return [];
+  const singleTitle = String(singleMatch[1] || '').trim();
+  if (!singleTitle) return [];
+  return [{ title: singleTitle, status: 'pending', priority: 'normal' }];
 }
 
 function hasTaskIntent(text) {
   if (!text) return false;
-  return /(create|add|make|generate|set up)\s+.*(tasks?|to-?dos?)/i.test(text) ||
-    /\b(tasks?|to-?dos?)\b.*\b(for|about|from)\b/i.test(text);
+  const normalized = String(text).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+
+  if (/\b(do not|don't|dont|not now)\b.{0,30}\b(create|add|make|generate)\b.{0,30}\b(task|to-?do|checklist)\b/i.test(normalized)) {
+    return false;
+  }
+
+  return (
+    /\b(create|add|make|generate|set up|prepare|draft|organize|break down)\b[\s\S]{0,80}\b(task|tasks|to-?do|to-?dos|checklist|action items?|study plan|plan|schedule|roadmap)\b/i.test(normalized) ||
+    /\b(task|tasks|to-?do|to-?dos|checklist|action items?|study plan|schedule|roadmap)\b[\s\S]{0,60}\b(for|about|from|based on|using)\b/i.test(normalized) ||
+    /\b(remind me|next steps|what should i do|help me plan|help me organize|help me schedule)\b/i.test(normalized) ||
+    /\b(can you|could you|please|i need|i want|let's)\b[\s\S]{0,80}\b(task|to-?do|checklist|action items?|study plan|schedule)\b/i.test(normalized)
+  );
 }
 
 function parseTaskJson(text) {
@@ -65,6 +93,29 @@ function parseTaskJson(text) {
     }
   }
   return [];
+}
+
+function parseJsonObject(text) {
+  if (!text) return null;
+  const cleaned = String(text).trim();
+  if (!cleaned) return null;
+  const candidates = [cleaned];
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    candidates.push(cleaned.slice(firstBrace, lastBrace + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      // try next candidate
+    }
+  }
+  return null;
 }
 
 function normalizeGeneratedTasks(tasks) {
@@ -93,7 +144,24 @@ function normalizeGeneratedTasks(tasks) {
     .slice(0, 10);
 }
 
-async function inferTasksFromMessage(openai, text) {
+async function analyzeTaskOrderIntent(openai, { content, history = [], contextDocument = null, contextExcerpt = '' }) {
+  if (!openai || !content) return { isTaskOrder: false, tasks: [] };
+  const historyText = history
+    .filter((item) => item && item.role && item.content)
+    .slice(-6)
+    .map((item) => `${item.role}: ${String(item.content).slice(0, 600)}`)
+    .join('\n');
+  const contextBlock = contextDocument
+    ? [
+        `Context title: ${contextDocument.title || 'N/A'}`,
+        `Context course: ${contextDocument.course || 'N/A'}`,
+        `Context subject: ${contextDocument.subject || 'N/A'}`,
+        contextExcerpt ? `Context excerpt: ${String(contextExcerpt).slice(0, 1800)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : 'No linked context document.';
+
   const response = await openai.responses.create({
     model: getOpenAIModel(),
     max_output_tokens: 700,
@@ -101,13 +169,72 @@ async function inferTasksFromMessage(openai, text) {
       {
         role: 'system',
         content:
-          'Extract actionable tasks from the user message. Return ONLY a JSON array. Each item must include: title, description, priority(low|normal|urgent), dueDate(YYYY-MM-DD or null), tags(string array). Return [] if no task should be created.',
+          'Classify if the latest user message is a request to create tasks in the app. Return ONLY JSON object with keys: isTaskOrder(boolean), tasks(array). For tasks, each item must include: title, description, priority(low|normal|urgent), dueDate(YYYY-MM-DD or null), tags(string array). If not a task order, return {"isTaskOrder":false,"tasks":[]}.',
       },
-      { role: 'user', content: text },
+      {
+        role: 'user',
+        content: [
+          'Conversation history:',
+          historyText || '(none)',
+          '',
+          'Linked document context:',
+          contextBlock,
+          '',
+          'Latest user message:',
+          String(content).slice(0, 2500),
+        ].join('\n'),
+      },
     ],
   });
-  const outputText = extractTextFromOpenAIResponse(response);
-  return normalizeGeneratedTasks(parseTaskJson(outputText));
+
+  const payload = parseJsonObject(extractTextFromOpenAIResponse(response)) || {};
+  const isTaskOrder = Boolean(payload.isTaskOrder);
+  const tasks = normalizeGeneratedTasks(payload.tasks || []);
+  return { isTaskOrder, tasks };
+}
+
+async function inferTasksFromConversation(openai, { content, history = [], contextDocument = null, contextExcerpt = '' }) {
+  const historyText = history
+    .filter((item) => item && item.role && item.content)
+    .slice(-6)
+    .map((item) => `${item.role}: ${String(item.content).slice(0, 600)}`)
+    .join('\n');
+  const contextBlock = contextDocument
+    ? [
+        `Context title: ${contextDocument.title || 'N/A'}`,
+        `Context course: ${contextDocument.course || 'N/A'}`,
+        `Context subject: ${contextDocument.subject || 'N/A'}`,
+        contextExcerpt ? `Context excerpt: ${String(contextExcerpt).slice(0, 1800)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : 'No linked context document.';
+
+  const response = await openai.responses.create({
+    model: getOpenAIModel(),
+    max_output_tokens: 800,
+    input: [
+      {
+        role: 'system',
+        content:
+          'Extract actionable tasks that the user wants added to the app task board. Use the latest message, history, and context document. Return ONLY a JSON array. Each item must include: title, description, priority(low|normal|urgent), dueDate(YYYY-MM-DD or null), tags(string array). Return [] if no task should be created.',
+      },
+      {
+        role: 'user',
+        content: [
+          'Conversation history:',
+          historyText || '(none)',
+          '',
+          'Linked document context:',
+          contextBlock,
+          '',
+          'Latest user message:',
+          String(content || '').slice(0, 2500),
+        ].join('\n'),
+      },
+    ],
+  });
+  return normalizeGeneratedTasks(parseTaskJson(extractTextFromOpenAIResponse(response)));
 }
 
 async function createTasksForUser(db, userUid, tasks) {
@@ -124,6 +251,49 @@ async function createTasksForUser(db, userUid, tasks) {
     ...task,
     _id: insertResult.insertedIds[index],
   }));
+}
+
+async function createTaskProposalForUser(db, { conversationId, userUid, tasks, sourceMessage }) {
+  const normalizedTasks = normalizeGeneratedTasks(tasks || []);
+  if (!normalizedTasks.length) return null;
+  const now = new Date();
+  const proposal = {
+    conversationId,
+    userUid,
+    tasks: normalizedTasks,
+    sourceMessage: String(sourceMessage || '').slice(0, 4000),
+    status: 'pending',
+    intentType: 'mcp_task_order',
+    createdAt: now,
+    updatedAt: now,
+  };
+  const result = await db.collection('ai_task_proposals').insertOne(proposal);
+  return { ...proposal, _id: result.insertedId };
+}
+
+function buildTaskProposalMessage(tasks) {
+  const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
+  if (!safeTasks.length) {
+    return 'I can draft tasks, but I need one more detail. Tell me what you want to prioritize first.';
+  }
+  const preview = safeTasks
+    .slice(0, 6)
+    .map((task, index) => `${index + 1}. ${task.title}`)
+    .join('\n');
+  const remainder =
+    safeTasks.length > 6
+      ? `\n…and ${safeTasks.length - 6} more task${safeTasks.length - 6 === 1 ? '' : 's'}.`
+      : '';
+  return [
+    `I prepared an MCP task order draft with ${safeTasks.length} task${safeTasks.length === 1 ? '' : 's'}:`,
+    preview,
+    remainder,
+    '',
+    'Do you want me to add these to your task board?',
+    'Use `Confirm tasks` to save them or `Reject tasks` to discard.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function deriveConversationTitle(text) {
@@ -159,11 +329,320 @@ function extractTextFromOpenAIResponse(response) {
   return chunks.join('\n\n').trim();
 }
 
+function wantsMessageStream(req) {
+  const queryValue = String(req.query?.stream || '').trim().toLowerCase();
+  if (queryValue === '1' || queryValue === 'true' || queryValue === 'yes') {
+    return true;
+  }
+  const accept = String(req.headers?.accept || '').toLowerCase();
+  return accept.includes('application/x-ndjson');
+}
+
+function beginNdjsonStream(res) {
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+}
+
+function writeNdjsonEvent(res, payload) {
+  if (!res || res.writableEnded || !payload) return;
+  try {
+    res.write(`${JSON.stringify(payload)}\n`);
+  } catch (error) {
+    // Ignore write errors caused by client disconnects.
+  }
+}
+
+function isMcpToolError(error) {
+  return (
+    error?.status === 424 ||
+    /mcp|tool list|failed dependency/i.test(String(error?.message || ''))
+  );
+}
+
+async function getOpenAIOutputText({
+  openai,
+  requestBody,
+  streamToClient = false,
+  onDelta = null,
+}) {
+  if (!streamToClient) {
+    const response = await openai.responses.create(requestBody);
+    return extractTextFromOpenAIResponse(response);
+  }
+
+  const stream = openai.responses.stream(requestBody);
+  let streamedText = '';
+  for await (const event of stream) {
+    if (event?.type === 'response.output_text.delta' && event.delta) {
+      streamedText += event.delta;
+      if (typeof onDelta === 'function') {
+        onDelta(event.delta);
+      }
+      continue;
+    }
+    if (event?.type === 'response.output_text.done' && !streamedText && event.text) {
+      streamedText = event.text;
+    }
+  }
+
+  let finalText = '';
+  try {
+    const finalResponse = await stream.finalResponse();
+    finalText = extractTextFromOpenAIResponse(finalResponse);
+  } catch (error) {
+    // If final aggregation fails, keep whatever arrived through deltas.
+  }
+  const resolvedText = finalText || streamedText;
+
+  if (
+    finalText &&
+    streamedText &&
+    finalText.startsWith(streamedText) &&
+    finalText.length > streamedText.length &&
+    typeof onDelta === 'function'
+  ) {
+    onDelta(finalText.slice(streamedText.length));
+  }
+
+  return resolvedText;
+}
+
 function shouldRequireMcpTool(text) {
   if (!text) return false;
   return /(gcloud|google cloud|cloud run|gcs|bucket|project|service account|artifact registry|compute|sql|pub\/sub|bigquery|cloud functions|cloud storage)/i.test(
     text
   );
+}
+
+function getFileExtension(filenameOrPath) {
+  if (!filenameOrPath) return '';
+  const normalized = String(filenameOrPath).split('?')[0].split('#')[0];
+  return path.extname(normalized).toLowerCase();
+}
+
+function classifyContextDocument(document = {}) {
+  const extension = getFileExtension(document.filename || document.link || '');
+  if (extension === '.pdf') return { type: 'pdf', mimeType: 'application/pdf' };
+  if (extension === '.md' || extension === '.markdown') {
+    return { type: 'markdown', mimeType: 'text/markdown' };
+  }
+  if (extension === '.docx') {
+    return {
+      type: 'docx',
+      mimeType:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+  }
+  if (extension === '.pptx') {
+    return {
+      type: 'pptx',
+      mimeType:
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    };
+  }
+  if (extension === '.txt') return { type: 'text', mimeType: 'text/plain' };
+  return { type: 'unknown', mimeType: 'application/octet-stream' };
+}
+
+function normalizeExtractedText(text) {
+  if (!text) return '';
+  return String(text).replace(/\r/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function truncateExcerpt(text, maxChars = CONTEXT_EXCERPT_MAX_CHARS) {
+  if (!text) return null;
+  const normalized = normalizeExtractedText(text);
+  if (!normalized) return null;
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars).trim()}…` : normalized;
+}
+
+function decodeXmlEntities(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#10;/g, '\n')
+    .replace(/&#13;/g, '\n')
+    .replace(/&#9;/g, '\t')
+    .replace(/&nbsp;/g, ' ');
+}
+
+function extractDocxXmlText(xml) {
+  if (!xml) return '';
+  const withBreaks = String(xml)
+    .replace(/<w:tab[^>]*\/>/g, '\t')
+    .replace(/<w:br[^>]*\/>/g, '\n')
+    .replace(/<w:cr[^>]*\/>/g, '\n')
+    .replace(/<\/w:p>/g, '\n');
+  return decodeXmlEntities(withBreaks.replace(/<[^>]+>/g, ' '));
+}
+
+function extractPptxXmlText(xml) {
+  if (!xml) return '';
+  const withBreaks = String(xml)
+    .replace(/<a:br[^>]*\/>/g, '\n')
+    .replace(/<\/a:p>/g, '\n')
+    .replace(/<\/p:txBody>/g, '\n\n');
+  return decodeXmlEntities(withBreaks.replace(/<[^>]+>/g, ' '));
+}
+
+function sortNumberedXmlEntries(entries, pattern) {
+  return entries
+    .filter((entry) => pattern.test(entry))
+    .sort((a, b) => {
+      const aNum = Number((a.match(/\d+/g) || ['0']).slice(-1)[0]);
+      const bNum = Number((b.match(/\d+/g) || ['0']).slice(-1)[0]);
+      return aNum - bNum;
+    });
+}
+
+function findZipEocdOffset(buffer) {
+  const minOffset = Math.max(0, buffer.length - 65557);
+  for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) {
+      return offset;
+    }
+  }
+  return -1;
+}
+
+function readZipEntries(buffer) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return new Map();
+  const eocdOffset = findZipEocdOffset(buffer);
+  if (eocdOffset < 0) return new Map();
+
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  const centralDirOffset = buffer.readUInt32LE(eocdOffset + 16);
+  let cursor = centralDirOffset;
+  const entries = new Map();
+
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (cursor + 46 > buffer.length) break;
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
+
+    const compressionMethod = buffer.readUInt16LE(cursor + 10);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+
+    const nameStart = cursor + 46;
+    const nameEnd = nameStart + fileNameLength;
+    if (nameEnd > buffer.length) break;
+    const entryName = buffer.toString('utf8', nameStart, nameEnd);
+
+    cursor = nameEnd + extraLength + commentLength;
+    if (!entryName || entryName.endsWith('/')) continue;
+    if (
+      compressedSize === 0xffffffff ||
+      localHeaderOffset + 30 > buffer.length ||
+      buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50
+    ) {
+      continue;
+    }
+
+    const localNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataStart < 0 || dataEnd > buffer.length || dataEnd < dataStart) continue;
+
+    const compressed = buffer.subarray(dataStart, dataEnd);
+    try {
+      const content =
+        compressionMethod === 0
+          ? compressed
+          : compressionMethod === 8
+            ? zlib.inflateRawSync(compressed)
+            : null;
+      if (!content) continue;
+      entries.set(entryName, content);
+    } catch (error) {
+      // Skip unreadable zip entry.
+    }
+  }
+  return entries;
+}
+
+async function extractDocxTextFromBuffer(buffer) {
+  const zipEntries = readZipEntries(buffer);
+  const docParts = sortNumberedXmlEntries(
+    Array.from(zipEntries.keys()),
+    /^(word\/document\.xml|word\/header\d+\.xml|word\/footer\d+\.xml)$/i
+  );
+  if (!docParts.length) return null;
+  const chunks = docParts
+    .map((part) => zipEntries.get(part)?.toString('utf8') || '')
+    .map((xml) => extractDocxXmlText(xml))
+    .filter(Boolean);
+  return normalizeExtractedText(chunks.join('\n\n'));
+}
+
+async function extractPptxTextFromBuffer(buffer) {
+  const zipEntries = readZipEntries(buffer);
+  const allEntries = Array.from(zipEntries.keys());
+  const slideEntries = sortNumberedXmlEntries(allEntries, /^ppt\/slides\/slide\d+\.xml$/i);
+  const noteEntries = sortNumberedXmlEntries(allEntries, /^ppt\/notesSlides\/notesSlide\d+\.xml$/i);
+  const selected = [...slideEntries, ...noteEntries];
+  if (!selected.length) return null;
+  const chunks = selected
+    .map((part) => zipEntries.get(part)?.toString('utf8') || '')
+    .map((xml) => extractPptxXmlText(xml))
+    .filter(Boolean);
+  return normalizeExtractedText(chunks.join('\n\n'));
+}
+
+async function extractTextFromFileWithOpenAI({ openai, buffer, filename, mimeType, ocrMode = false }) {
+  if (!openai || !buffer || !buffer.length) return null;
+  if (buffer.length > CONTEXT_PARSE_MAX_BYTES) {
+    return `Document is larger than ${Math.round(CONTEXT_PARSE_MAX_BYTES / 1024 / 1024)}MB.`;
+  }
+
+  try {
+    const fileData = `data:${mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`;
+    const response = await openai.responses.create({
+      model: getOpenAIModel(),
+      max_output_tokens: 1300,
+      input: [
+        {
+          role: 'system',
+          content:
+            'Extract readable text from the provided file. Output only plain text with no commentary.',
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: ocrMode
+                ? 'Run OCR on this PDF and return the extracted readable text.'
+                : 'Return the key readable text content from this file.',
+            },
+            {
+              type: 'input_file',
+              filename: filename || 'context-file',
+              file_data: fileData,
+            },
+          ],
+        },
+      ],
+    });
+    return normalizeExtractedText(extractTextFromOpenAIResponse(response));
+  } catch (error) {
+    console.error('OpenAI file extraction failed:', error);
+    return null;
+  }
 }
 
 async function loadContextDocument(uuid) {
@@ -188,16 +667,43 @@ async function extractContextExcerpt(document) {
   try {
     const buffer = await downloadFromStorage(document.link);
     if (!buffer) return null;
-    const maxBytes = 5 * 1024 * 1024;
-    if (buffer.length > maxBytes) {
-      return `Document is larger than ${Math.round(maxBytes / 1024 / 1024)}MB.`;
+    if (buffer.length > CONTEXT_PARSE_MAX_BYTES) {
+      return `Document is larger than ${Math.round(CONTEXT_PARSE_MAX_BYTES / 1024 / 1024)}MB.`;
     }
-    const data = await pdfParse(buffer);
-    if (!data || !data.text) return null;
-    const text = data.text.replace(/\s+/g, ' ').trim();
-    if (!text) return null;
-    const maxChars = 3500;
-    return text.length > maxChars ? `${text.slice(0, maxChars).trim()}…` : text;
+    const typeInfo = classifyContextDocument(document);
+    if (typeInfo.type === 'markdown' || typeInfo.type === 'text') {
+      return truncateExcerpt(buffer.toString('utf8'));
+    }
+
+    if (typeInfo.type === 'pdf') {
+      const data = await pdfParse(buffer);
+      const parsed = normalizeExtractedText(data?.text || '');
+      if (parsed.length >= PDF_OCR_MIN_TEXT_CHARS) {
+        return truncateExcerpt(parsed);
+      }
+
+      const openai = await getOpenAIClient();
+      const ocrText = await extractTextFromFileWithOpenAI({
+        openai,
+        buffer,
+        filename: document.filename || 'document.pdf',
+        mimeType: typeInfo.mimeType,
+        ocrMode: true,
+      });
+      return truncateExcerpt(ocrText);
+    }
+
+    if (typeInfo.type === 'docx') {
+      const extracted = await extractDocxTextFromBuffer(buffer);
+      return truncateExcerpt(extracted);
+    }
+
+    if (typeInfo.type === 'pptx') {
+      const extracted = await extractPptxTextFromBuffer(buffer);
+      return truncateExcerpt(extracted);
+    }
+
+    return null;
   } catch (error) {
     console.error('Context document parse failed:', error);
     return null;
@@ -544,6 +1050,7 @@ router.get('/api/personal/conversations/:id/messages', async (req, res) => {
 router.post('/api/personal/conversations/:id/messages', async (req, res) => {
   const { id } = req.params;
   const { content, contextDoc } = req.body || {};
+  const streamRequested = wantsMessageStream(req);
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
   }
@@ -552,6 +1059,20 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
   }
 
   try {
+    if (streamRequested) {
+      beginNdjsonStream(res);
+    }
+    let streamDeltaSent = false;
+    const emitStreamEvent = (payload) => {
+      if (!streamRequested) return;
+      writeNdjsonEvent(res, payload);
+    };
+    const emitDelta = (delta) => {
+      if (!streamRequested || !delta) return;
+      streamDeltaSent = true;
+      emitStreamEvent({ type: 'delta', delta });
+    };
+
     const db = await getMongoDb();
     const conversationId = new ObjectId(id);
     const now = new Date();
@@ -598,44 +1119,102 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
     let proposalId = null;
     let proposedTasks = [];
     let createdTasks = [];
+    let recentMessages = [];
 
     const proposed = extractProposedTasks(content);
     if (proposed.length) {
-      createdTasks = await createTasksForUser(
-        db,
-        req.user.uid,
-        proposed.map((task) => ({ ...task, description: task.description || '', tags: [] }))
-      );
-      proposedTasks = proposed;
-      assistantText = `Added ${proposed.length} task${proposed.length === 1 ? '' : 's'} to your tracker.`;
+      const proposal = await createTaskProposalForUser(db, {
+        conversationId,
+        userUid: req.user.uid,
+        tasks: proposed.map((task) => ({ ...task, description: task.description || '', tags: [] })),
+        sourceMessage: content,
+      });
+      if (proposal) {
+        proposalId = String(proposal._id);
+        proposedTasks = proposal.tasks;
+        assistantText = buildTaskProposalMessage(proposal.tasks);
+      }
     } else {
       const openai = await getOpenAIClient();
       if (openai) {
-        if (hasTaskIntent(content)) {
+        recentMessages = await db
+          .collection('ai_messages')
+          .find({ conversationId, userUid: req.user.uid })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .toArray();
+        const history = [...recentMessages].reverse().map((message) => ({
+          role: message.role,
+          content: message.content,
+        }));
+
+        let analyzedTaskOrder = null;
+        try {
+          analyzedTaskOrder = await analyzeTaskOrderIntent(openai, {
+            content,
+            history,
+            contextDocument,
+            contextExcerpt,
+          });
+        } catch (error) {
+          console.error('Task intent analysis failed:', error);
+        }
+
+        if (analyzedTaskOrder?.isTaskOrder) {
+          if (analyzedTaskOrder.tasks.length) {
+            const proposal = await createTaskProposalForUser(db, {
+              conversationId,
+              userUid: req.user.uid,
+              tasks: analyzedTaskOrder.tasks,
+              sourceMessage: content,
+            });
+            if (proposal) {
+              proposalId = String(proposal._id);
+              proposedTasks = proposal.tasks;
+              assistantText = buildTaskProposalMessage(proposal.tasks);
+            }
+          } else {
+            assistantText =
+              'I recognized this as a task request but need more detail to draft tasks. Tell me the scope, deadline, or priorities, and I will prepare tasks for confirmation.';
+          }
+        } else {
           try {
-            const inferredTasks = await inferTasksFromMessage(openai, content);
+            const inferredTasks = await inferTasksFromConversation(openai, {
+              content,
+              history,
+              contextDocument,
+              contextExcerpt,
+            });
             if (inferredTasks.length) {
-              createdTasks = await createTasksForUser(db, req.user.uid, inferredTasks);
-              assistantText = `Added ${inferredTasks.length} task${inferredTasks.length === 1 ? '' : 's'} to your tracker.`;
+              const proposal = await createTaskProposalForUser(db, {
+                conversationId,
+                userUid: req.user.uid,
+                tasks: inferredTasks,
+                sourceMessage: content,
+              });
+              if (proposal) {
+                proposalId = String(proposal._id);
+                proposedTasks = proposal.tasks;
+                assistantText = buildTaskProposalMessage(proposal.tasks);
+              }
+            } else if (hasTaskIntent(content)) {
+              assistantText =
+                'I understood this as a task request, but I could not extract concrete tasks yet. Share more specifics and I can draft them for confirmation.';
             }
           } catch (error) {
             console.error('Task inference failed:', error);
           }
         }
 
-        if (createdTasks.length) {
-          // Task creation handled; skip generic assistant generation for this turn.
+        if (proposalId) {
+          // MCP-like task order drafted; wait for explicit confirmation before saving tasks.
         } else {
-        const recentMessages = await db
-          .collection('ai_messages')
-          .find({ conversationId, userUid: req.user.uid })
-          .sort({ createdAt: -1 })
-          .limit(10)
-          .toArray();
-        const history = recentMessages.reverse().map((message) => ({
-          role: message.role,
-          content: message.content,
-        }));
+        const history = recentMessages.length
+          ? [...recentMessages].reverse().map((message) => ({
+              role: message.role,
+              content: message.content,
+            }))
+          : [];
 
         const systemPrompt = [
           'You are a private academic companion. Keep responses concise, helpful, and specific.',
@@ -668,7 +1247,6 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
             input,
             max_output_tokens: 700,
           };
-          let response = null;
           if (GCLOUD_MCP_SERVER_URL) {
             const requireMcpTool = shouldRequireMcpTool(content);
             requestBody.tools = [
@@ -682,38 +1260,49 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
             requestBody.tool_choice = requireMcpTool ? 'required' : 'auto';
           }
 
+          let outputText = '';
           try {
-            response = await openai.responses.create(requestBody);
+            outputText = await getOpenAIOutputText({
+              openai,
+              requestBody,
+              streamToClient: streamRequested,
+              onDelta: emitDelta,
+            });
           } catch (error) {
-            const isMcpToolError =
-              GCLOUD_MCP_SERVER_URL &&
-              (error?.status === 424 ||
-                /mcp|tool list|failed dependency/i.test(String(error?.message || '')));
-            if (!isMcpToolError) {
+            const hasMcpConfigured = Boolean(GCLOUD_MCP_SERVER_URL);
+            if (!(hasMcpConfigured && isMcpToolError(error))) {
               throw error;
             }
 
             // Fallback keeps chat functional when MCP endpoint is unreachable/misconfigured.
             console.error('OpenAI MCP tool failed, retrying without MCP:', error?.message || error);
-            response = await openai.responses.create({
-              model: getOpenAIModel(),
-              input,
+            outputText = await getOpenAIOutputText({
+              openai,
+              requestBody: {
+                model: getOpenAIModel(),
+                input,
+              },
+              streamToClient: streamRequested,
+              onDelta: emitDelta,
             });
           }
 
-          let outputText = extractTextFromOpenAIResponse(response);
           if (!outputText) {
             // Some runs can return tool-only output; force a plain-text retry.
             const fallbackInput = [
               { role: 'system', content: 'Reply in plain text only. Do not call tools.' },
               ...input,
             ];
-            const fallbackResponse = await openai.responses.create({
-              model: getOpenAIModel(),
-              input: fallbackInput,
-              max_output_tokens: 700,
+            outputText = await getOpenAIOutputText({
+              openai,
+              requestBody: {
+                model: getOpenAIModel(),
+                input: fallbackInput,
+                max_output_tokens: 700,
+              },
+              streamToClient: streamRequested,
+              onDelta: emitDelta,
             });
-            outputText = extractTextFromOpenAIResponse(fallbackResponse);
           }
 
           if (outputText) {
@@ -739,6 +1328,10 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
       }
     }
 
+    if (streamRequested && !streamDeltaSent && assistantText) {
+      emitDelta(assistantText);
+    }
+
     const assistantMessage = {
       conversationId,
       userUid: req.user.uid,
@@ -747,6 +1340,19 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
       createdAt: new Date(),
     };
     await db.collection('ai_messages').insertOne(assistantMessage);
+
+    if (streamRequested) {
+      emitStreamEvent({
+        type: 'meta',
+        conversationTitle,
+        proposalId,
+        proposedTasks,
+        createdTasks,
+      });
+      emitStreamEvent({ type: 'done' });
+      res.end();
+      return;
+    }
 
     return res.json({
       ok: true,
@@ -758,6 +1364,14 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
     });
   } catch (error) {
     console.error('Message create failed:', error);
+    if (streamRequested) {
+      writeNdjsonEvent(res, {
+        type: 'error',
+        message: 'Unable to add message.',
+      });
+      res.end();
+      return;
+    }
     return res.status(500).json({ ok: false, message: 'Unable to add message.' });
   }
 });
@@ -777,26 +1391,13 @@ router.post('/api/personal/task-proposals/:id/confirm', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Proposal not found.' });
     }
 
-    const now = new Date();
-    const tasks = proposal.tasks.map((task) => ({
-      userUid: req.user.uid,
-      title: task.title,
-      status: task.status || 'pending',
-      priority: task.priority || 'normal',
-      dueDate: task.dueDate || null,
-      tags: task.tags || [],
-      createdAt: now,
-      updatedAt: now,
-    }));
-
-    if (tasks.length) {
-      await db.collection('personal_tasks').insertMany(tasks);
-    }
+    const tasksToCreate = normalizeGeneratedTasks(proposal.tasks || []);
+    const created = await createTasksForUser(db, req.user.uid, tasksToCreate);
     await db.collection('ai_task_proposals').updateOne(
       { _id: proposalId },
-      { $set: { status: 'accepted', decidedAt: now } }
+      { $set: { status: 'accepted', decidedAt: new Date(), updatedAt: new Date() } }
     );
-    return res.json({ ok: true, created: tasks.length });
+    return res.json({ ok: true, created: created.length });
   } catch (error) {
     console.error('Proposal confirm failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to confirm proposal.' });

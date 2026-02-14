@@ -2,13 +2,18 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const { hashPassword, verifyPassword } = require('../auth/password');
-const { createSession, deleteSession } = require('../auth/sessionStore');
+const { createSession, deleteSession, deleteSessionsForUid } = require('../auth/sessionStore');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { bootstrapCommunityForUser } = require('../services/communityService');
-const { sendVerificationEmail } = require('../services/emailService');
+const { sendVerificationEmail, sendPasswordResetCodeEmail } = require('../services/emailService');
 
 const router = express.Router();
 const EMAIL_VERIFICATION_TTL_HOURS = Math.max(1, Number(process.env.EMAIL_VERIFICATION_TTL_HOURS || 24));
+const PASSWORD_RESET_CODE_LENGTH = 6;
+const PASSWORD_RESET_CODE_TTL_MINUTES = Math.max(5, Number(process.env.PASSWORD_RESET_CODE_TTL_MINUTES || 15));
+const PASSWORD_RESET_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 20));
+const PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = Math.max(30, Number(process.env.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS || 60));
+const PASSWORD_RESET_MAX_ATTEMPTS = Math.max(3, Number(process.env.PASSWORD_RESET_MAX_ATTEMPTS || 5));
 let ensureAuthSchemaPromise = null;
 const LEGACY_BACKFILL_KEY = 'email_verification_legacy_backfill_done';
 const SKIP_SCHEMA_ENSURE = /^(1|true|yes)$/i.test(String(process.env.DB_SKIP_SCHEMA_ENSURE || '').trim());
@@ -43,9 +48,24 @@ function normalizeUsername(value) {
   return value.trim();
 }
 
+function normalizeResetCode(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, '').trim().toUpperCase();
+}
+
 function isValidEmail(value) {
   if (!value) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function buildPasswordResetCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < PASSWORD_RESET_CODE_LENGTH; i += 1) {
+    const index = crypto.randomInt(0, alphabet.length);
+    code += alphabet[index];
+  }
+  return code;
 }
 
 function appBaseUrl(req) {
@@ -157,6 +177,30 @@ async function ensureAuthSchema() {
       value TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+      id BIGSERIAL PRIMARY KEY,
+      uid TEXT NOT NULL UNIQUE REFERENCES accounts(uid) ON DELETE CASCADE,
+      code_digest TEXT NOT NULL,
+      code_expires_at TIMESTAMPTZ NOT NULL,
+      code_verified_at TIMESTAMPTZ,
+      code_attempts INTEGER NOT NULL DEFAULT 0,
+      last_sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      reset_token_digest TEXT,
+      reset_token_expires_at TIMESTAMPTZ,
+      consumed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS password_reset_codes_uid_idx
+      ON password_reset_codes(uid);
+
+    CREATE INDEX IF NOT EXISTS password_reset_codes_code_expires_idx
+      ON password_reset_codes(code_expires_at);
+
+    CREATE INDEX IF NOT EXISTS password_reset_codes_reset_token_expires_idx
+      ON password_reset_codes(reset_token_expires_at);
   `;
   await pool.query(sql);
 }
@@ -250,6 +294,11 @@ async function sendVerificationEmailForRequest(req, email, token) {
   const verifyUrl = `${appBaseUrl(req)}/verify-email?token=${encodeURIComponent(token)}`;
   const result = await sendVerificationEmail({ to: email, verifyUrl });
   return { verifyUrl, ...result };
+}
+
+async function sendPasswordResetCodeForRequest(email, code) {
+  const result = await sendPasswordResetCodeEmail({ to: email, code });
+  return result;
 }
 
 router.use('/api/account', requireAuthApi);
@@ -570,6 +619,317 @@ router.post('/api/verification/resend', async (req, res) => {
   } catch (error) {
     console.error('Resend verification failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to resend verification email.' });
+  }
+});
+
+router.post('/api/password-reset/request', async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  const genericMessage = 'If an account exists for this email, a reset code has been sent.';
+
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ ok: false, message: 'A valid email is required.' });
+  }
+
+  try {
+    await ensureAuthReady();
+
+    const lookup = await pool.query(
+      `SELECT uid, email
+       FROM accounts
+       WHERE lower(email) = lower($1)
+       LIMIT 1`,
+      [email]
+    );
+    if (!lookup.rows.length) {
+      return res.json({ ok: true, message: genericMessage });
+    }
+
+    const account = lookup.rows[0];
+    const client = await pool.connect();
+    let inTransaction = false;
+    let onCooldown = false;
+    let resetCode = '';
+    try {
+      await client.query('BEGIN');
+      inTransaction = true;
+
+      const existingResult = await client.query(
+        `SELECT last_sent_at
+         FROM password_reset_codes
+         WHERE uid = $1
+         FOR UPDATE`,
+        [account.uid]
+      );
+
+      if (existingResult.rows.length) {
+        const lastSentAt = new Date(existingResult.rows[0].last_sent_at).getTime();
+        const cooldownMs = PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS * 1000;
+        if (Number.isFinite(lastSentAt) && Date.now() - lastSentAt < cooldownMs) {
+          onCooldown = true;
+        }
+      }
+
+      if (!onCooldown) {
+        resetCode = buildPasswordResetCode();
+        const codeDigest = sha256Hex(`${account.uid}:${resetCode}`);
+        await client.query(
+          `INSERT INTO password_reset_codes
+            (uid, code_digest, code_expires_at, code_verified_at, code_attempts, last_sent_at, reset_token_digest, reset_token_expires_at, consumed_at, created_at, updated_at)
+           VALUES
+            ($1, $2, NOW() + ($3::text || ' minutes')::interval, NULL, 0, NOW(), NULL, NULL, NULL, NOW(), NOW())
+           ON CONFLICT (uid)
+           DO UPDATE SET
+             code_digest = EXCLUDED.code_digest,
+             code_expires_at = EXCLUDED.code_expires_at,
+             code_verified_at = NULL,
+             code_attempts = 0,
+             last_sent_at = NOW(),
+             reset_token_digest = NULL,
+             reset_token_expires_at = NULL,
+             consumed_at = NULL,
+             updated_at = NOW()`,
+          [account.uid, codeDigest, String(PASSWORD_RESET_CODE_TTL_MINUTES)]
+        );
+      }
+
+      await client.query('COMMIT');
+      inTransaction = false;
+    } catch (error) {
+      if (inTransaction) {
+        await client.query('ROLLBACK');
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    if (!onCooldown && resetCode) {
+      try {
+        const emailResult = await sendPasswordResetCodeForRequest(account.email, resetCode);
+        return res.json({
+          ok: true,
+          message: genericMessage,
+          deliveryMode: emailResult.mode,
+          devResetCode: emailResult.previewCode || null,
+        });
+      } catch (mailError) {
+        console.error('Password reset code send failed:', mailError);
+      }
+    }
+
+    return res.json({ ok: true, message: genericMessage });
+  } catch (error) {
+    console.error('Password reset request failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to process password reset request.' });
+  }
+});
+
+router.post('/api/password-reset/verify', async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  const code = normalizeResetCode(req.body && req.body.code);
+
+  if (!email || !isValidEmail(email) || !code) {
+    return res.status(400).json({ ok: false, message: 'Email and code are required.' });
+  }
+  if (code.length !== PASSWORD_RESET_CODE_LENGTH) {
+    return res.status(400).json({ ok: false, message: 'Code must be 6 characters.' });
+  }
+
+  try {
+    await ensureAuthReady();
+    const accountResult = await pool.query(
+      `SELECT uid
+       FROM accounts
+       WHERE lower(email) = lower($1)
+       LIMIT 1`,
+      [email]
+    );
+    if (!accountResult.rows.length) {
+      return res.status(400).json({ ok: false, message: 'Invalid or expired reset code.' });
+    }
+    const uid = accountResult.rows[0].uid;
+
+    const client = await pool.connect();
+    let inTransaction = false;
+    let resetToken = '';
+    try {
+      await client.query('BEGIN');
+      inTransaction = true;
+
+      const resetResult = await client.query(
+        `SELECT id, code_digest, code_expires_at, code_attempts, consumed_at
+         FROM password_reset_codes
+         WHERE uid = $1
+         LIMIT 1
+         FOR UPDATE`,
+        [uid]
+      );
+      if (!resetResult.rows.length) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid or expired reset code.' });
+      }
+
+      const reset = resetResult.rows[0];
+      const isExpired = new Date(reset.code_expires_at).getTime() <= Date.now();
+      if (reset.consumed_at || isExpired) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid or expired reset code.' });
+      }
+      if (Number(reset.code_attempts) >= PASSWORD_RESET_MAX_ATTEMPTS) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Too many attempts. Request a new reset code.' });
+      }
+
+      const expectedDigest = sha256Hex(`${uid}:${code}`);
+      if (expectedDigest !== reset.code_digest) {
+        const nextAttempts = Number(reset.code_attempts) + 1;
+        await client.query(
+          `UPDATE password_reset_codes
+           SET code_attempts = $1,
+               code_expires_at = CASE WHEN $1 >= $2 THEN NOW() ELSE code_expires_at END,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [nextAttempts, PASSWORD_RESET_MAX_ATTEMPTS, reset.id]
+        );
+        await client.query('COMMIT');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid or expired reset code.' });
+      }
+
+      resetToken = buildVerificationToken();
+      const resetTokenDigest = sha256Hex(`${uid}:${resetToken}`);
+      await client.query(
+        `UPDATE password_reset_codes
+         SET code_verified_at = NOW(),
+             code_attempts = 0,
+             reset_token_digest = $1,
+             reset_token_expires_at = NOW() + ($2::text || ' minutes')::interval,
+             updated_at = NOW()
+         WHERE id = $3`,
+        [resetTokenDigest, String(PASSWORD_RESET_TOKEN_TTL_MINUTES), reset.id]
+      );
+
+      await client.query('COMMIT');
+      inTransaction = false;
+    } catch (error) {
+      if (inTransaction) {
+        await client.query('ROLLBACK');
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return res.json({
+      ok: true,
+      message: 'Code verified. You can now set a new password.',
+      resetToken,
+    });
+  } catch (error) {
+    console.error('Password reset verify failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to verify reset code.' });
+  }
+});
+
+router.post('/api/password-reset/complete', async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  const resetToken = typeof (req.body && req.body.resetToken) === 'string' ? req.body.resetToken.trim() : '';
+  const newPassword = typeof (req.body && req.body.newPassword) === 'string' ? req.body.newPassword : '';
+
+  if (!email || !isValidEmail(email) || !resetToken || !newPassword) {
+    return res.status(400).json({ ok: false, message: 'Email, reset token, and new password are required.' });
+  }
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ ok: false, message: 'New password must be 8 to 128 characters.' });
+  }
+
+  try {
+    await ensureAuthReady();
+
+    const accountResult = await pool.query(
+      `SELECT uid
+       FROM accounts
+       WHERE lower(email) = lower($1)
+       LIMIT 1`,
+      [email]
+    );
+    if (!accountResult.rows.length) {
+      return res.status(400).json({ ok: false, message: 'Invalid or expired reset session.' });
+    }
+    const uid = accountResult.rows[0].uid;
+
+    const client = await pool.connect();
+    let inTransaction = false;
+    try {
+      await client.query('BEGIN');
+      inTransaction = true;
+
+      const resetResult = await client.query(
+        `SELECT id, reset_token_digest, reset_token_expires_at, consumed_at
+         FROM password_reset_codes
+         WHERE uid = $1
+         LIMIT 1
+         FOR UPDATE`,
+        [uid]
+      );
+      if (!resetResult.rows.length) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid or expired reset session.' });
+      }
+      const reset = resetResult.rows[0];
+
+      const isExpired =
+        !reset.reset_token_expires_at || new Date(reset.reset_token_expires_at).getTime() <= Date.now();
+      if (reset.consumed_at || !reset.reset_token_digest || isExpired) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid or expired reset session.' });
+      }
+
+      const expectedDigest = sha256Hex(`${uid}:${resetToken}`);
+      if (expectedDigest !== reset.reset_token_digest) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid or expired reset session.' });
+      }
+
+      const nextHash = hashPassword(newPassword);
+      await client.query(
+        `UPDATE accounts
+         SET password = $1
+         WHERE uid = $2`,
+        [nextHash, uid]
+      );
+      await client.query(
+        `UPDATE password_reset_codes
+         SET consumed_at = NOW(),
+             reset_token_digest = NULL,
+             reset_token_expires_at = NULL,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [reset.id]
+      );
+
+      await client.query('COMMIT');
+      inTransaction = false;
+    } catch (error) {
+      if (inTransaction) {
+        await client.query('ROLLBACK');
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    deleteSessionsForUid(uid);
+    return res.json({ ok: true, message: 'Password updated. You can now log in with your new password.' });
+  } catch (error) {
+    console.error('Password reset complete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to reset password.' });
   }
 });
 

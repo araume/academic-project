@@ -7,6 +7,9 @@ const privacyForm = document.getElementById('privacyForm');
 const searchable = document.getElementById('searchable');
 const followApprovalRequired = document.getElementById('followApprovalRequired');
 const activeVisible = document.getElementById('activeVisible');
+const notifyFollowingPosts = document.getElementById('notifyFollowingPosts');
+const notifyPostActivity = document.getElementById('notifyPostActivity');
+const notifyDocumentActivity = document.getElementById('notifyDocumentActivity');
 const nonFollowerChatPolicy = document.getElementById('nonFollowerChatPolicy');
 const privacyMessage = document.getElementById('privacyMessage');
 
@@ -86,6 +89,15 @@ async function loadPrivacySettings() {
   searchable.checked = settings.searchable !== false;
   followApprovalRequired.checked = settings.follow_approval_required !== false;
   activeVisible.checked = settings.active_visible !== false;
+  if (notifyFollowingPosts) {
+    notifyFollowingPosts.checked = settings.notify_new_posts_from_following !== false;
+  }
+  if (notifyPostActivity) {
+    notifyPostActivity.checked = settings.notify_post_activity !== false;
+  }
+  if (notifyDocumentActivity) {
+    notifyDocumentActivity.checked = settings.notify_document_activity !== false;
+  }
   nonFollowerChatPolicy.value = settings.non_follower_chat_policy || 'request';
 }
 
@@ -97,6 +109,9 @@ async function savePrivacySettings(event) {
     searchable: Boolean(searchable.checked),
     follow_approval_required: Boolean(followApprovalRequired.checked),
     active_visible: Boolean(activeVisible.checked),
+    notify_new_posts_from_following: Boolean(notifyFollowingPosts && notifyFollowingPosts.checked),
+    notify_post_activity: Boolean(notifyPostActivity && notifyPostActivity.checked),
+    notify_document_activity: Boolean(notifyDocumentActivity && notifyDocumentActivity.checked),
     non_follower_chat_policy: nonFollowerChatPolicy.value,
   };
 

@@ -44,7 +44,7 @@
               <input type="checkbox" data-toggle="password" data-target="login" />
               <span>Show password</span>
             </label>
-            <button type="button" class="link-button">Forgot password</button>
+            <button type="button" class="link-button" id="openForgotPasswordModal">Forgot password</button>
           </div>
           <button type="submit" class="primary-button">Login</button>
           <button type="button" class="ghost-button" id="openSignupModal">Create account</button>
@@ -99,6 +99,49 @@
         </div>
         <button type="submit" class="primary-button">Create account</button>
         <p class="form-message" data-message="signup"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="signup-modal is-hidden" id="forgotPasswordModal">
+    <div class="signup-modal-card forgot-modal-card">
+      <button type="button" class="modal-close" id="closeForgotPasswordModal" aria-label="Close forgot password">×</button>
+      <div class="panel-header">
+        <p class="panel-tag">Account recovery</p>
+        <h2>Reset password</h2>
+      </div>
+      <form class="form-stack" id="forgotPasswordForm">
+        <label>
+          <span>Email</span>
+          <input type="email" id="resetEmailInput" placeholder="Account email" autocomplete="email" required />
+        </label>
+
+        <div class="reset-step is-hidden" id="resetCodeStep">
+          <label>
+            <span>6-character code</span>
+            <input type="text" id="resetCodeInput" placeholder="Enter code" maxlength="6" autocomplete="one-time-code" />
+          </label>
+        </div>
+
+        <div class="reset-step is-hidden" id="resetPasswordStep">
+          <label>
+            <span>New password</span>
+            <input type="password" id="resetNewPasswordInput" placeholder="New password" autocomplete="new-password" />
+          </label>
+          <label>
+            <span>Confirm new password</span>
+            <input type="password" id="resetConfirmPasswordInput" placeholder="Confirm new password" autocomplete="new-password" />
+          </label>
+        </div>
+
+        <div class="reset-actions">
+          <button type="submit" class="primary-button" id="requestResetCodeButton">Send code</button>
+          <button type="submit" class="primary-button is-hidden" id="verifyResetCodeButton">Verify code</button>
+          <button type="submit" class="primary-button is-hidden" id="completePasswordResetButton">Update password</button>
+          <button type="button" class="link-button" id="backToLoginFromForgot">Back to login</button>
+        </div>
+
+        <p class="form-message" id="forgotPasswordMessage"></p>
       </form>
     </div>
   </div>

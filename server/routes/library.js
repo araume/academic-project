@@ -5,6 +5,7 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
+const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
 
 const router = express.Router();
 const upload = multer({
@@ -401,6 +402,16 @@ router.post('/api/library/like', async (req, res) => {
   }
 
   try {
+    const docResult = await pool.query(
+      'SELECT uuid, uploader_uid, title FROM documents WHERE uuid = $1 LIMIT 1',
+      [documentUuid]
+    );
+    const doc = docResult.rows[0];
+    if (!doc) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+
+    let shouldNotifyLike = false;
     if (action === 'unlike') {
       const del = await pool.query(
         'DELETE FROM document_likes WHERE document_uuid = $1 AND user_uid = $2 RETURNING id',
@@ -418,6 +429,7 @@ router.post('/api/library/like', async (req, res) => {
         [documentUuid, userUid]
       );
       if (ins.rowCount) {
+        shouldNotifyLike = true;
         await pool.query(
           'UPDATE documents SET popularity = popularity + 1 WHERE uuid = $1',
           [documentUuid]
@@ -429,6 +441,28 @@ router.post('/api/library/like', async (req, res) => {
       'SELECT popularity FROM documents WHERE uuid = $1',
       [documentUuid]
     );
+
+    if (shouldNotifyLike && doc.uploader_uid && doc.uploader_uid !== userUid) {
+      try {
+        const blocked = await isBlockedEitherDirection(userUid, doc.uploader_uid);
+        if (!blocked) {
+          await createNotification({
+            recipientUid: doc.uploader_uid,
+            actorUid: userUid,
+            type: 'document_liked',
+            entityType: 'document',
+            entityId: documentUuid,
+            targetUrl: '/open-library',
+            meta: {
+              documentTitle: doc.title || 'Untitled document',
+              documentUuid,
+            },
+          });
+        }
+      } catch (error) {
+        console.error('Document like notification failed:', error);
+      }
+    }
 
     return res.json({
       ok: true,
@@ -471,6 +505,15 @@ router.post('/api/library/comments', async (req, res) => {
   }
 
   try {
+    const docResult = await pool.query(
+      'SELECT uuid, uploader_uid, title FROM documents WHERE uuid = $1 LIMIT 1',
+      [documentUuid]
+    );
+    const doc = docResult.rows[0];
+    if (!doc) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+
     const db = await getMongoDb();
     const comment = {
       documentUuid,
@@ -480,6 +523,29 @@ router.post('/api/library/comments', async (req, res) => {
       createdAt: new Date(),
     };
     const result = await db.collection('doccomment').insertOne(comment);
+
+    if (doc.uploader_uid && doc.uploader_uid !== req.user.uid) {
+      try {
+        const blocked = await isBlockedEitherDirection(req.user.uid, doc.uploader_uid);
+        if (!blocked) {
+          await createNotification({
+            recipientUid: doc.uploader_uid,
+            actorUid: req.user.uid,
+            type: 'document_commented',
+            entityType: 'document',
+            entityId: documentUuid,
+            targetUrl: '/open-library',
+            meta: {
+              documentTitle: doc.title || 'Untitled document',
+              documentUuid,
+            },
+          });
+        }
+      } catch (error) {
+        console.error('Document comment notification failed:', error);
+      }
+    }
+
     return res.json({ ok: true, comment: { ...comment, _id: result.insertedId } });
   } catch (error) {
     console.error('Comment create failed:', error);

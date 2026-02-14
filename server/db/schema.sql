@@ -94,6 +94,21 @@ CREATE TABLE IF NOT EXISTS auth_schema_meta (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_codes (
+  id BIGSERIAL PRIMARY KEY,
+  uid TEXT NOT NULL UNIQUE REFERENCES accounts(uid) ON DELETE CASCADE,
+  code_digest TEXT NOT NULL,
+  code_expires_at TIMESTAMPTZ NOT NULL,
+  code_verified_at TIMESTAMPTZ,
+  code_attempts INTEGER NOT NULL DEFAULT 0,
+  last_sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reset_token_digest TEXT,
+  reset_token_expires_at TIMESTAMPTZ,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS document_likes (
   id SERIAL PRIMARY KEY,
   document_uuid UUID NOT NULL REFERENCES documents(uuid) ON DELETE CASCADE,
@@ -108,6 +123,9 @@ CREATE INDEX IF NOT EXISTS documents_popularity_idx ON documents(popularity);
 CREATE INDEX IF NOT EXISTS documents_views_idx ON documents(views);
 CREATE INDEX IF NOT EXISTS email_verification_tokens_uid_idx ON email_verification_tokens(uid);
 CREATE INDEX IF NOT EXISTS email_verification_tokens_expires_idx ON email_verification_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS password_reset_codes_uid_idx ON password_reset_codes(uid);
+CREATE INDEX IF NOT EXISTS password_reset_codes_code_expires_idx ON password_reset_codes(code_expires_at);
+CREATE INDEX IF NOT EXISTS password_reset_codes_reset_token_expires_idx ON password_reset_codes(reset_token_expires_at);
 
 CREATE TABLE IF NOT EXISTS profiles (
   id SERIAL PRIMARY KEY,
@@ -133,9 +151,50 @@ CREATE TABLE IF NOT EXISTS user_privacy_settings (
   non_follower_chat_policy TEXT NOT NULL DEFAULT 'request'
     CHECK (non_follower_chat_policy IN ('allow', 'request', 'deny')),
   active_visible BOOLEAN NOT NULL DEFAULT true,
+  notify_new_posts_from_following BOOLEAN NOT NULL DEFAULT true,
+  notify_post_activity BOOLEAN NOT NULL DEFAULT true,
+  notify_document_activity BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE user_privacy_settings
+  ADD COLUMN IF NOT EXISTS notify_new_posts_from_following BOOLEAN NOT NULL DEFAULT true;
+
+ALTER TABLE user_privacy_settings
+  ADD COLUMN IF NOT EXISTS notify_post_activity BOOLEAN NOT NULL DEFAULT true;
+
+ALTER TABLE user_privacy_settings
+  ADD COLUMN IF NOT EXISTS notify_document_activity BOOLEAN NOT NULL DEFAULT true;
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id BIGSERIAL PRIMARY KEY,
+  recipient_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  actor_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  type TEXT NOT NULL CHECK (
+    type IN (
+      'following_new_post',
+      'post_liked',
+      'post_commented',
+      'document_liked',
+      'document_commented'
+    )
+  ),
+  entity_type TEXT,
+  entity_id TEXT,
+  target_url TEXT,
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_read BOOLEAN NOT NULL DEFAULT false,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS notifications_recipient_created_idx
+  ON notifications(recipient_uid, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS notifications_recipient_unread_idx
+  ON notifications(recipient_uid, is_read, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS notifications_actor_idx
+  ON notifications(actor_uid);
 
 CREATE TABLE IF NOT EXISTS user_presence (
   uid TEXT PRIMARY KEY REFERENCES accounts(uid) ON DELETE CASCADE,

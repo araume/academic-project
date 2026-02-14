@@ -223,6 +223,24 @@ body {
   gap: 4px;
 }
 
+.stats-row .stat-button {
+  border: 1px solid rgba(15, 38, 57, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.stats-row .stat-button:hover {
+  background: #ffffff;
+  border-color: rgba(15, 38, 57, 0.18);
+}
+
 .stat-label {
   color: var(--muted);
   font-size: 0.78rem;
@@ -343,6 +361,35 @@ body {
   display: grid;
   gap: 12px;
   min-height: 280px;
+  max-height: 540px;
+  overflow-y: auto;
+  align-content: start;
+  padding-right: 3px;
+}
+
+.user-list-modal-card {
+  width: min(920px, 100%);
+  max-height: min(84vh, 760px);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 10px;
+}
+
+.user-list-modal-card h2 {
+  margin: 0;
+  font-family: "Playfair Display", Georgia, serif;
+}
+
+.user-list-modal-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.modal-results-list {
+  max-height: none;
+  min-height: 240px;
+  height: 100%;
 }
 
 .person-card {
@@ -547,6 +594,8 @@ body {
   overflow-y: auto;
   max-height: 450px;
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 8px;
 }
 

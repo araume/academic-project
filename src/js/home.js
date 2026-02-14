@@ -34,6 +34,9 @@ const commentsClose = document.getElementById('commentsClose');
 const postCommentList = document.getElementById('postCommentList');
 const postCommentForm = document.getElementById('postCommentForm');
 const postCommentInput = document.getElementById('postCommentInput');
+const postSpotlightModal = document.getElementById('postSpotlightModal');
+const postSpotlightClose = document.getElementById('postSpotlightClose');
+const postSpotlightContainer = document.getElementById('postSpotlightContainer');
 
 const libraryDocModal = document.getElementById('libraryDocModal');
 const libraryDocClose = document.getElementById('libraryDocClose');
@@ -43,6 +46,9 @@ const libraryDocUploader = document.getElementById('libraryDocUploader');
 const libraryDocCourse = document.getElementById('libraryDocCourse');
 const libraryDocSubject = document.getElementById('libraryDocSubject');
 const libraryDocOpen = document.getElementById('libraryDocOpen');
+const trendingDiscussionsList = document.getElementById('trendingDiscussionsList');
+const courseMaterialsList = document.getElementById('courseMaterialsList');
+const suggestedRoomsList = document.getElementById('suggestedRoomsList');
 
 let currentPostId = null;
 let currentLibraryDoc = null;
@@ -50,12 +56,216 @@ let currentEditPost = null;
 let selectedLibraryDocument = null;
 let libraryPickerSearchTimer = null;
 let postCache = new Map();
+const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
 
 const state = {
   page: 1,
   pageSize: 8,
 };
 const DEFAULT_AVATAR = '/assets/LOGO.png';
+
+function clearElement(el) {
+  if (!el) return;
+  while (el.firstChild) {
+    el.removeChild(el.firstChild);
+  }
+}
+
+function renderSidecardEmpty(container, message) {
+  if (!container) return;
+  clearElement(container);
+  const empty = document.createElement('p');
+  empty.className = 'sidecard-empty';
+  empty.textContent = message;
+  container.appendChild(empty);
+}
+
+function sanitizePostId(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+function extractRequestedPostId() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = sanitizePostId(params.get('post') || '');
+  if (fromQuery) return fromQuery;
+
+  const hash = sanitizePostId(window.location.hash || '');
+  if (hash.startsWith('#post-')) {
+    return hash.slice(6).trim();
+  }
+  return '';
+}
+
+function clearRequestedPostFromUrl() {
+  const url = new URL(window.location.href);
+  let changed = false;
+  if (url.searchParams.has('post')) {
+    url.searchParams.delete('post');
+    changed = true;
+  }
+  if (url.searchParams.has('openPostModal')) {
+    url.searchParams.delete('openPostModal');
+    changed = true;
+  }
+  if (url.hash && url.hash.startsWith('#post-')) {
+    url.hash = '';
+    changed = true;
+  }
+  if (changed) {
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
+async function fetchPostById(postId) {
+  const response = await fetch(`/api/posts/${encodeURIComponent(postId)}`);
+  const data = await response.json();
+  if (!response.ok || !data.ok || !data.post) {
+    throw new Error(data.message || 'Unable to load post.');
+  }
+  return data.post;
+}
+
+function renderSpotlightPost(post) {
+  const article = document.createElement('article');
+  article.className = 'post-card spotlight-post-card';
+  const uploaderName = post.uploader?.displayName || 'Member';
+
+  const header = document.createElement('div');
+  header.className = 'post-header spotlight-post-header';
+  header.innerHTML = `
+    <div class="post-avatar"></div>
+    <div class="spotlight-header-meta">
+      <h4>${uploaderName}</h4>
+      <p>${timeAgo(post.uploadDate)}</p>
+    </div>
+  `;
+  const postAvatar = header.querySelector('.post-avatar');
+  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+
+  const content = document.createElement('div');
+  content.className = 'spotlight-post-content';
+  content.innerHTML = `
+    <h4>${post.title}</h4>
+    <p>${post.content}</p>
+  `;
+
+  const footer = document.createElement('div');
+  footer.className = 'spotlight-post-footer';
+  const stat = document.createElement('p');
+  stat.textContent = `${Number(post.likesCount || 0)} likes • ${Number(post.commentsCount || 0)} comments`;
+  const discussion = document.createElement('button');
+  discussion.type = 'button';
+  discussion.className = 'secondary-button';
+  discussion.textContent = 'Open discussion';
+  discussion.addEventListener('click', async () => {
+    currentPostId = post.id;
+    await loadPostComments(post.id);
+    openModal(commentsModal);
+  });
+  footer.appendChild(stat);
+  footer.appendChild(discussion);
+
+  const attachment = renderAttachment(post);
+  article.appendChild(header);
+  article.appendChild(content);
+  if (attachment) {
+    article.appendChild(attachment);
+  }
+  article.appendChild(footer);
+
+  return article;
+}
+
+async function openPostSpotlight(postId, options = {}) {
+  const id = sanitizePostId(postId);
+  if (!id || !postSpotlightContainer) return;
+
+  const clearUrl = options && options.clearUrl === true;
+  postSpotlightContainer.innerHTML = '<p>Loading post...</p>';
+  openModal(postSpotlightModal);
+
+  try {
+    let post = postCache.get(id);
+    if (!post) {
+      post = await fetchPostById(id);
+    }
+    postSpotlightContainer.innerHTML = '';
+    postSpotlightContainer.appendChild(renderSpotlightPost(post));
+  } catch (error) {
+    postSpotlightContainer.innerHTML = `<p>${error.message}</p>`;
+  } finally {
+    if (clearUrl) {
+      clearRequestedPostFromUrl();
+    }
+  }
+}
+
+async function maybeOpenRequestedPost() {
+  const postId = extractRequestedPostId();
+  if (!postId) return;
+  await openPostSpotlight(postId, { clearUrl: true });
+}
+
+function setJoinButtonLoadingState(button, loading) {
+  if (!button) return;
+  if (loading) {
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = 'Joining...';
+    return;
+  }
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || 'Join now';
+}
+
+async function directJoinSuggestedRoom(room, button) {
+  if (!room || !room.id) return;
+  if (button && button.disabled) return;
+  setJoinButtonLoadingState(button, true);
+  try {
+    const response = await fetch(`/api/rooms/${room.id}/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok || !data.joinUrl) {
+      throw new Error(data.message || 'Unable to join this room.');
+    }
+
+    try {
+      sessionStorage.setItem(
+        ROOMS_PREJOIN_KEY,
+        JSON.stringify({
+          roomId: Number(room.id),
+          meetId: room.meetId || '',
+          meetName: room.meetName || 'Live room',
+          joinUrl: data.joinUrl,
+          createdAt: Date.now(),
+        })
+      );
+    } catch (error) {
+      // sessionStorage is best-effort only.
+    }
+
+    window.location.href = '/rooms';
+  } catch (error) {
+    alert(error.message || 'Unable to join this room.');
+  } finally {
+    setJoinButtonLoadingState(button, false);
+  }
+}
+
+function buildAvatarThumb(photoLink, altText) {
+  const avatar = document.createElement('span');
+  avatar.className = 'sidecard-avatar';
+  const img = document.createElement('img');
+  img.src = photoLink || DEFAULT_AVATAR;
+  img.alt = altText || 'Profile photo';
+  avatar.appendChild(img);
+  return avatar;
+}
 
 function setAvatarImage(container, photoLink, altText) {
   if (!container) return;
@@ -256,6 +466,152 @@ function timeAgo(dateString) {
   return `${days}d ago`;
 }
 
+function renderTrendingSidecard(items) {
+  if (!trendingDiscussionsList) return;
+  if (!Array.isArray(items) || !items.length) {
+    renderSidecardEmpty(trendingDiscussionsList, 'No trending discussions in the last 3 days.');
+    return;
+  }
+
+  clearElement(trendingDiscussionsList);
+  items.forEach((item) => {
+    const row = document.createElement('article');
+    row.className = 'sidecard-item sidecard-item--discussion';
+
+    const top = document.createElement('div');
+    top.className = 'sidecard-top';
+    top.appendChild(buildAvatarThumb(item.uploader && item.uploader.photoLink, `${item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member'} profile photo`));
+
+    const meta = document.createElement('div');
+    meta.className = 'sidecard-meta';
+    const title = document.createElement('h4');
+    title.textContent = item.title || 'Untitled discussion';
+    const info = document.createElement('p');
+    const uploader = item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member';
+    info.textContent = `${uploader} • ${timeAgo(item.uploadDate)}`;
+    meta.appendChild(title);
+    meta.appendChild(info);
+    top.appendChild(meta);
+
+    const excerpt = document.createElement('p');
+    excerpt.className = 'sidecard-text';
+    excerpt.textContent = item.excerpt || '';
+
+    const stat = document.createElement('p');
+    stat.className = 'sidecard-stat';
+    stat.textContent = `${Number(item.likesCount || 0)} likes`;
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'sidecard-action sidecard-action-button';
+    open.textContent = 'Open discussion';
+    open.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      await openPostSpotlight(item.id);
+    });
+
+    row.appendChild(top);
+    if (item.excerpt) {
+      row.appendChild(excerpt);
+    }
+    row.appendChild(stat);
+    row.appendChild(open);
+    row.addEventListener('click', async () => {
+      await openPostSpotlight(item.id);
+    });
+    trendingDiscussionsList.appendChild(row);
+  });
+}
+
+function renderCourseMaterialsSidecard(items) {
+  if (!courseMaterialsList) return;
+  if (!Array.isArray(items) || !items.length) {
+    renderSidecardEmpty(courseMaterialsList, 'No recent materials available.');
+    return;
+  }
+
+  clearElement(courseMaterialsList);
+  items.forEach((item) => {
+    const link = document.createElement('a');
+    link.className = 'sidecard-item sidecard-item--material';
+    link.href = item.link || '#';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+
+    const title = document.createElement('h4');
+    title.textContent = item.title || 'Untitled document';
+
+    const info = document.createElement('p');
+    const course = item.course || 'No course';
+    const subject = item.subject || 'No subject';
+    info.textContent = `${course} • ${subject}`;
+
+    const time = document.createElement('p');
+    time.className = 'sidecard-stat';
+    time.textContent = timeAgo(item.uploadDate);
+
+    link.appendChild(title);
+    link.appendChild(info);
+    link.appendChild(time);
+    courseMaterialsList.appendChild(link);
+  });
+}
+
+function renderSuggestedRoomsSidecard(items) {
+  if (!suggestedRoomsList) return;
+  if (!Array.isArray(items) || !items.length) {
+    renderSidecardEmpty(suggestedRoomsList, 'No live rooms available right now.');
+    return;
+  }
+
+  clearElement(suggestedRoomsList);
+  items.forEach((item) => {
+    const row = document.createElement('article');
+    row.className = 'sidecard-item sidecard-item--room';
+
+    const title = document.createElement('h4');
+    title.textContent = item.meetName || 'Live room';
+    const meta = document.createElement('p');
+    const visibilityLabel = item.visibility === 'course_exclusive' ? 'Course' : 'Public';
+    meta.textContent = `${visibilityLabel} • ${item.activeParticipants || 0} active`;
+
+    const join = document.createElement('button');
+    join.type = 'button';
+    join.className = 'sidecard-action sidecard-action-button';
+    join.textContent = 'Join now';
+    join.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      await directJoinSuggestedRoom(item, join);
+    });
+
+    row.appendChild(title);
+    row.appendChild(meta);
+    row.appendChild(join);
+    row.addEventListener('click', async () => {
+      await directJoinSuggestedRoom(item, join);
+    });
+    suggestedRoomsList.appendChild(row);
+  });
+}
+
+async function fetchHomeSidecards() {
+  try {
+    const response = await fetch('/api/home/sidecards?limit=6');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to load sidecards.');
+    }
+    const sidecards = data.sidecards || {};
+    renderTrendingSidecard(sidecards.trendingDiscussions || []);
+    renderCourseMaterialsSidecard(sidecards.courseMaterials || []);
+    renderSuggestedRoomsSidecard(sidecards.suggestedRooms || []);
+  } catch (error) {
+    renderSidecardEmpty(trendingDiscussionsList, 'Unable to load trending discussions.');
+    renderSidecardEmpty(courseMaterialsList, 'Unable to load course materials.');
+    renderSidecardEmpty(suggestedRoomsList, 'Unable to load suggested rooms.');
+  }
+}
+
 function renderPost(post, index) {
   const article = document.createElement('article');
   article.className = `post-card${index % 2 ? ' alt' : ''}`;
@@ -392,11 +748,12 @@ async function handleMenuAction(action, post) {
       replacePostCard(post);
     }
   } else if (action === 'share') {
+    const shareUrl = `${window.location.origin}/home?post=${encodeURIComponent(post.id)}`;
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/home#post-${post.id}`);
+      await navigator.clipboard.writeText(shareUrl);
       alert('Post link copied.');
     } catch (error) {
-      prompt('Copy post link:', `${window.location.origin}/home#post-${post.id}`);
+      prompt('Copy post link:', shareUrl);
     }
   } else if (action === 'report') {
     await fetch(`/api/posts/${post.id}/report`, { method: 'POST' });
@@ -414,6 +771,7 @@ async function handleMenuAction(action, post) {
     const response = await fetch(`/api/posts/${post.id}`, { method: 'DELETE' });
     if (response.ok) {
       removePostCard(post.id);
+      fetchHomeSidecards();
     } else {
       const data = await response.json();
       alert(data.message || 'Unable to delete post.');
@@ -433,6 +791,7 @@ async function handleAction(action, post) {
       post.liked = !post.liked;
       post.likesCount = Number(data.likesCount || 0);
       replacePostCard(post);
+      fetchHomeSidecards();
     }
   } else if (action === 'comments') {
     currentPostId = post.id;
@@ -537,6 +896,7 @@ async function createPost(event) {
     updateCourseDisabled(postPublic, postCourse);
     closeModal(createPostModal);
     await fetchPosts();
+    fetchHomeSidecards();
   } catch (error) {
     createPostMessage.textContent = error.message;
   }
@@ -724,9 +1084,37 @@ if (editPostPublic) {
   editPostPublic.addEventListener('change', () => updateCourseDisabled(editPostPublic, editPostCourse));
 }
 
-updateCourseDisabled(postPublic, postCourse);
-updateCourseDisabled(editPostPublic, editPostCourse);
-loadCourses();
-updateSelectedLibraryDocUI();
-loadCurrentProfile();
-fetchPosts();
+if (postSpotlightClose) {
+  postSpotlightClose.addEventListener('click', () => closeModal(postSpotlightModal));
+}
+
+if (postSpotlightModal) {
+  postSpotlightModal.addEventListener('click', (event) => {
+    if (event.target === postSpotlightModal) {
+      closeModal(postSpotlightModal);
+    }
+  });
+}
+
+window.addEventListener('open-post-modal', async (event) => {
+  const postId = event && event.detail ? sanitizePostId(event.detail.postId || '') : '';
+  if (!postId) return;
+  await openPostSpotlight(postId);
+});
+
+async function initHome() {
+  updateCourseDisabled(postPublic, postCourse);
+  updateCourseDisabled(editPostPublic, editPostCourse);
+  updateSelectedLibraryDocUI();
+
+  await Promise.all([
+    loadCourses(),
+    loadCurrentProfile(),
+    fetchPosts(),
+    fetchHomeSidecards(),
+  ]);
+
+  await maybeOpenRequestedPost();
+}
+
+initHome();
