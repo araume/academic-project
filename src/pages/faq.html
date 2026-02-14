@@ -38,7 +38,7 @@
       </button>
       <div class="profile-wrap">
         <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
-          <span class="avatar-circle">ME</span>
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
         </button>
         <div class="profile-menu is-hidden" id="profileMenu">
           <a href="/profile">Profile</a>
@@ -59,32 +59,6 @@
     </div>
   </div>
 
-  <script>
-    const profileToggle = document.getElementById('profileToggle');
-    const profileMenu = document.getElementById('profileMenu');
-    const logoutButton = document.getElementById('logoutButton');
-
-    if (profileToggle && profileMenu) {
-      profileToggle.addEventListener('click', () => {
-        profileMenu.classList.toggle('is-hidden');
-      });
-      document.addEventListener('click', (event) => {
-        if (!profileMenu.contains(event.target) && !profileToggle.contains(event.target)) {
-          profileMenu.classList.add('is-hidden');
-        }
-      });
-    }
-
-    if (logoutButton) {
-      logoutButton.addEventListener('click', async () => {
-        try {
-          await fetch('/api/logout', { method: 'POST' });
-        } catch (error) {
-          // best effort logout
-        }
-        window.location.href = '/login';
-      });
-    }
-  </script>
+  <script src="/src/js/nav-basic.js"></script>
 </body>
 </html>

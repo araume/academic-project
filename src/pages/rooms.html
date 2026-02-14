@@ -71,8 +71,8 @@
       </section>
     </aside>
 
-    <section class="rooms-main">
-      <section class="card workspace-card">
+    <section class="rooms-main" id="roomsMain">
+      <section class="card workspace-card" id="workspaceCard">
         <header class="workspace-head">
           <div>
             <p class="eyebrow" id="selectedContextType">Context</p>
@@ -103,6 +103,29 @@
 
         <p class="inline-message" id="workspaceMessage"></p>
         <div class="rooms-list" id="roomsList"></div>
+      </section>
+
+      <section class="card call-panel-card is-hidden" id="callPanelCard">
+        <header class="call-panel-head">
+          <div>
+            <p class="eyebrow">Live Call</p>
+            <h3>Group call panel</h3>
+          </div>
+          <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave view</button>
+        </header>
+        <p class="call-panel-status" id="callPanelStatus">Join a room to start the call on this page.</p>
+        <div class="call-frame-wrap is-hidden" id="callFrameWrap">
+          <iframe
+            id="callFrame"
+            title="Room call"
+            allow="camera; microphone; display-capture; fullscreen; autoplay; clipboard-read; clipboard-write"
+            referrerpolicy="strict-origin-when-cross-origin"
+          ></iframe>
+        </div>
+        <div class="call-placeholder" id="callPlaceholder">
+          <p>Your call will open here on the right side.</p>
+        </div>
+        <a class="ghost-button is-hidden call-tab-link" id="openCallTab" target="_blank" rel="noopener noreferrer">Open in new tab</a>
       </section>
     </section>
   </main>

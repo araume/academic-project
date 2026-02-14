@@ -77,6 +77,17 @@ function displayNameFromRow(row) {
   return row.profile_display_name || row.account_display_name || row.username || row.email || 'Member';
 }
 
+function normalizeUid(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function isSameUid(left, right) {
+  const a = normalizeUid(left);
+  const b = normalizeUid(right);
+  return Boolean(a) && a === b;
+}
+
 function isOwnerOrAdmin(viewer) {
   return viewer && (viewer.platform_role === 'owner' || viewer.platform_role === 'admin');
 }
@@ -151,7 +162,7 @@ function buildInviteLink(req, meetId, inviteToken) {
 
 function buildCallLink(meetId) {
   const configured = sanitizeText(process.env.ROOMS_CALL_BASE_URL || '', 500);
-  const base = (configured || 'https://meet.jit.si').replace(/\/+$/, '');
+  const base = (configured || 'https://meet.ffmuc.net').replace(/\/+$/, '');
   return `${base}/${encodeURIComponent(String(meetId))}`;
 }
 
@@ -521,6 +532,7 @@ router.get('/api/rooms', async (req, res) => {
     }
 
     const conditions = [
+      `(r.state <> 'ended' OR r.ended_at IS NULL OR r.ended_at > NOW() - INTERVAL '1 minute')`,
       `(
         r.visibility = 'public'
         OR (
@@ -547,7 +559,7 @@ router.get('/api/rooms', async (req, res) => {
             )
           )
         )
-        OR (r.visibility = 'private' AND r.creator_uid = $1)
+        OR (r.visibility = 'private' AND lower(r.creator_uid) = lower($1))
       )`,
       `NOT EXISTS (
         SELECT 1
@@ -571,7 +583,7 @@ router.get('/api/rooms', async (req, res) => {
     }
 
     if (mineOnly) {
-      conditions.push(`r.creator_uid = $1`);
+      conditions.push(`lower(r.creator_uid) = lower($1)`);
     }
 
     params.push(pageSize, offset);
@@ -594,7 +606,7 @@ router.get('/api/rooms', async (req, res) => {
         ) AS active_participants,
         (
           $2::text IN ('owner', 'admin')
-          OR r.creator_uid = $1
+          OR lower(r.creator_uid) = lower($1)
           OR (
             r.community_id IS NOT NULL
             AND EXISTS (
@@ -1040,7 +1052,7 @@ router.post('/api/rooms/requests/:id/approve', async (req, res) => {
       return res.status(403).json({ ok: false, message: 'You are not allowed to approve this request.' });
     }
 
-    if (requestRow.requester_uid === viewer.uid) {
+    if (isSameUid(requestRow.requester_uid, viewer.uid)) {
       await client.query('ROLLBACK');
       return res.status(403).json({ ok: false, message: 'You cannot approve your own room request.' });
     }
@@ -1218,6 +1230,7 @@ router.post('/api/rooms/:id/join', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Room not found.' });
     }
     const room = roomResult.rows[0];
+    const isCreator = isSameUid(room.creator_uid, viewer.uid);
 
     const blockedResult = await client.query(
       `SELECT 1
@@ -1235,7 +1248,7 @@ router.post('/api/rooms/:id/join', async (req, res) => {
     const canModerateRoomCommunity = room.community_id
       ? await isCommunityModerator(Number(room.community_id), viewer.uid, client)
       : false;
-    const canManage = isOwnerOrAdmin(viewer) || room.creator_uid === viewer.uid || canModerateRoomCommunity;
+    const canManage = isOwnerOrAdmin(viewer) || isCreator || canModerateRoomCommunity;
 
     if (room.visibility === 'course_exclusive') {
       let allowed = canManage;
@@ -1362,7 +1375,7 @@ router.post('/api/rooms/:id/join', async (req, res) => {
            ELSE NOW()
          END,
          left_at = NULL`,
-      [room.id, viewer.uid, room.creator_uid === viewer.uid ? 'host' : 'participant', room.allow_mic, room.allow_video]
+      [room.id, viewer.uid, isCreator ? 'host' : 'participant', room.allow_mic, room.allow_video]
     );
 
     await client.query('COMMIT');
@@ -1411,7 +1424,7 @@ router.post('/api/rooms/:id/start', async (req, res) => {
     const canModerateRoomCommunity = room.community_id
       ? await isCommunityModerator(Number(room.community_id), viewer.uid)
       : false;
-    const canManage = isOwnerOrAdmin(viewer) || room.creator_uid === viewer.uid || canModerateRoomCommunity;
+    const canManage = isOwnerOrAdmin(viewer) || isSameUid(room.creator_uid, viewer.uid) || canModerateRoomCommunity;
     if (!canManage) {
       return res.status(403).json({ ok: false, message: 'You are not allowed to start this room.' });
     }
@@ -1472,7 +1485,7 @@ router.post('/api/rooms/:id/end', async (req, res) => {
     const canModerateRoomCommunity = room.community_id
       ? await isCommunityModerator(Number(room.community_id), viewer.uid)
       : false;
-    const canManage = isOwnerOrAdmin(viewer) || room.creator_uid === viewer.uid || canModerateRoomCommunity;
+    const canManage = isOwnerOrAdmin(viewer) || isSameUid(room.creator_uid, viewer.uid) || canModerateRoomCommunity;
     if (!canManage) {
       return res.status(403).json({ ok: false, message: 'You are not allowed to end this room.' });
     }

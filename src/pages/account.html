@@ -6,15 +6,9 @@
   <title>Account</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/account.css" />
   <link rel="stylesheet" href="/src/styles/nav.css" />
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: calc(100vh - var(--app-nav-height)); display: grid; place-items: center; text-align: center; padding: 24px; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); width: min(560px, 100%); }
-    .card h1 { margin-top: 0; font-family: "Playfair Display", Georgia, serif; }
-    .profile-wrap { position: relative; }
-  </style>
 </head>
 <body>
   <header class="top-nav">
@@ -38,7 +32,7 @@
       </button>
       <div class="profile-wrap">
         <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
-          <span class="avatar-circle">ME</span>
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
         </button>
         <div class="profile-menu is-hidden" id="profileMenu">
           <a href="/profile">Profile</a>
@@ -52,39 +46,120 @@
     </div>
   </header>
 
-  <div class="wrap">
-    <div class="card">
-      <h1>Account</h1>
-      <p>Placeholder page. Content will be added later.</p>
-    </div>
-  </div>
+  <main class="account-page">
+    <section class="account-head">
+      <p class="eyebrow">Security & Login</p>
+      <h1>Account settings</h1>
+      <p class="subcopy">Manage sign-in credentials and recovery details.</p>
+    </section>
 
-  <script>
-    const profileToggle = document.getElementById('profileToggle');
-    const profileMenu = document.getElementById('profileMenu');
-    const logoutButton = document.getElementById('logoutButton');
+    <section class="account-layout">
+      <aside class="account-card account-summary">
+        <h2>Account status</h2>
+        <div class="summary-row">
+          <span>Primary email</span>
+          <strong id="summaryEmail">-</strong>
+        </div>
+        <div class="summary-row">
+          <span>Email verification</span>
+          <strong id="emailStatusBadge" class="status-badge status-badge--pending">Pending</strong>
+        </div>
+        <div class="summary-row">
+          <span>Recovery email</span>
+          <strong id="summaryRecoveryEmail">Not set</strong>
+        </div>
+        <p class="summary-note">
+          Changing your primary email requires verification again before your next login.
+        </p>
+      </aside>
 
-    if (profileToggle && profileMenu) {
-      profileToggle.addEventListener('click', () => {
-        profileMenu.classList.toggle('is-hidden');
-      });
-      document.addEventListener('click', (event) => {
-        if (!profileMenu.contains(event.target) && !profileToggle.contains(event.target)) {
-          profileMenu.classList.add('is-hidden');
-        }
-      });
-    }
+      <div class="account-sections">
+        <section class="account-card">
+          <h2>Username</h2>
+          <form id="usernameForm" class="account-form">
+            <label>
+              <span>Username</span>
+              <input type="text" id="usernameInput" maxlength="32" placeholder="Enter username" required />
+              <small>3-32 chars. Letters, numbers, dot, underscore, hyphen.</small>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Save username</button>
+            </div>
+            <p class="form-message" id="usernameMessage"></p>
+          </form>
+        </section>
 
-    if (logoutButton) {
-      logoutButton.addEventListener('click', async () => {
-        try {
-          await fetch('/api/logout', { method: 'POST' });
-        } catch (error) {
-          // best effort logout
-        }
-        window.location.href = '/login';
-      });
-    }
-  </script>
+        <section class="account-card">
+          <h2>Primary email</h2>
+          <form id="emailForm" class="account-form">
+            <label>
+              <span>Current email</span>
+              <input type="text" id="currentEmailInput" disabled />
+            </label>
+            <label>
+              <span>New email</span>
+              <input type="email" id="newEmailInput" placeholder="name@example.com" required />
+            </label>
+            <label>
+              <span>Current password</span>
+              <input type="password" id="emailCurrentPasswordInput" placeholder="Current password" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Change email</button>
+            </div>
+            <p class="form-message" id="emailMessage"></p>
+            <p class="verification-link is-hidden" id="verificationLinkWrap">
+              Dev verification link:
+              <a href="#" target="_blank" rel="noopener noreferrer" id="verificationLink">Open verification</a>
+            </p>
+          </form>
+        </section>
+
+        <section class="account-card">
+          <h2>Password</h2>
+          <form id="passwordForm" class="account-form">
+            <label>
+              <span>Current password</span>
+              <input type="password" id="passwordCurrentInput" placeholder="Current password" required />
+            </label>
+            <label>
+              <span>New password</span>
+              <input type="password" id="passwordNewInput" placeholder="New password" minlength="8" required />
+            </label>
+            <label>
+              <span>Confirm new password</span>
+              <input type="password" id="passwordConfirmInput" placeholder="Confirm new password" minlength="8" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Update password</button>
+            </div>
+            <p class="form-message" id="passwordMessage"></p>
+          </form>
+        </section>
+
+        <section class="account-card">
+          <h2>Recovery email</h2>
+          <form id="recoveryForm" class="account-form">
+            <label>
+              <span>Recovery email</span>
+              <input type="email" id="recoveryEmailInput" placeholder="name@example.com" />
+              <small>Leave blank to remove recovery email.</small>
+            </label>
+            <label>
+              <span>Current password</span>
+              <input type="password" id="recoveryCurrentPasswordInput" placeholder="Current password" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Save recovery email</button>
+            </div>
+            <p class="form-message" id="recoveryMessage"></p>
+          </form>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="/src/js/nav-basic.js"></script>
+  <script src="/src/js/account.js"></script>
 </body>
 </html>

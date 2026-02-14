@@ -178,6 +178,11 @@ body {
   align-content: start;
 }
 
+.rooms-main {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
 .card {
   background: var(--card);
   border-radius: 20px;
@@ -306,6 +311,85 @@ body {
   padding: 18px;
   display: grid;
   gap: 12px;
+  min-height: calc(100vh - 170px);
+  align-content: start;
+}
+
+.call-panel-card {
+  padding: 16px;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 10px;
+  min-height: calc(100vh - 170px);
+  position: sticky;
+  top: calc(var(--app-nav-height, 86px) + 16px);
+}
+
+.rooms-main.is-call-active .call-panel-card {
+  display: grid !important;
+  min-height: calc(100vh - 170px);
+}
+
+.rooms-main.is-call-active .workspace-card {
+  display: none !important;
+}
+
+.call-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.call-panel-head h3 {
+  margin: 4px 0 0;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 1.18rem;
+}
+
+.call-panel-status {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.call-frame-wrap {
+  border: 1px solid rgba(15, 38, 57, 0.12);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0f1e2d;
+  min-height: 420px;
+}
+
+.call-frame-wrap iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border: 0;
+  display: block;
+}
+
+.call-placeholder {
+  border: 1px dashed rgba(15, 38, 57, 0.2);
+  border-radius: 14px;
+  background: #fafbfd;
+  min-height: 420px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 16px;
+}
+
+.call-placeholder p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.call-tab-link {
+  display: inline-flex;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .workspace-head {
@@ -681,6 +765,16 @@ body {
     padding: 14px 20px 24px;
   }
 
+  .rooms-main {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-card,
+  .call-panel-card {
+    min-height: auto;
+    position: static;
+  }
+
   .context-list,
   .request-list {
     max-height: none;
@@ -716,5 +810,11 @@ body {
 
   .room-grid {
     grid-template-columns: 1fr;
+  }
+
+  .call-frame-wrap,
+  .call-frame-wrap iframe,
+  .call-placeholder {
+    min-height: 320px;
   }
 }

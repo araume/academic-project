@@ -15,6 +15,8 @@ const mineOnlyToggle = document.getElementById('mineOnlyToggle');
 const refreshRoomsButton = document.getElementById('refreshRoomsButton');
 const openCreateRoomButton = document.getElementById('openCreateRoomButton');
 const roomsList = document.getElementById('roomsList');
+const roomsMain = document.getElementById('roomsMain');
+const workspaceCard = document.getElementById('workspaceCard');
 
 const requestsCard = document.getElementById('requestsCard');
 const pendingRequestCount = document.getElementById('pendingRequestCount');
@@ -39,6 +41,13 @@ const submitRoomButton = document.getElementById('submitRoomButton');
 const roomFormMessage = document.getElementById('roomFormMessage');
 const inviteResult = document.getElementById('inviteResult');
 const inviteResultLink = document.getElementById('inviteResultLink');
+const callPanelCard = document.getElementById('callPanelCard');
+const callPanelStatus = document.getElementById('callPanelStatus');
+const callFrameWrap = document.getElementById('callFrameWrap');
+const callFrame = document.getElementById('callFrame');
+const callPlaceholder = document.getElementById('callPlaceholder');
+const leaveCallButton = document.getElementById('leaveCallButton');
+const openCallTab = document.getElementById('openCallTab');
 
 const initialSearchParams = new URLSearchParams(window.location.search);
 const inviteTokenFromUrl = (initialSearchParams.get('invite') || '').trim();
@@ -50,6 +59,7 @@ const state = {
   selectedContextKey: 'public',
   rooms: [],
   pendingRequests: [],
+  currentCall: null,
 };
 
 function initialsFromName(name) {
@@ -140,6 +150,73 @@ function escapeHtml(value) {
 
 function selectedContext() {
   return state.contexts.find((context) => context.key === state.selectedContextKey) || state.contexts[0] || null;
+}
+
+function isViewerRoomCreator(room) {
+  if (!room || !room.creator || !room.creator.uid || !state.viewer || !state.viewer.uid) return false;
+  return String(room.creator.uid).trim().toLowerCase() === String(state.viewer.uid).trim().toLowerCase();
+}
+
+function openCallPanel(joinUrl, room) {
+  if (!joinUrl || !callFrame || !callFrameWrap || !callPlaceholder || !callPanelStatus) return;
+  if (callPanelCard) {
+    callPanelCard.classList.remove('is-hidden');
+  }
+  if (roomsMain) {
+    roomsMain.classList.add('is-call-active');
+  }
+  if (workspaceCard) {
+    workspaceCard.classList.add('is-hidden');
+  }
+  callFrame.src = joinUrl;
+  callFrameWrap.classList.remove('is-hidden');
+  callPlaceholder.classList.add('is-hidden');
+  if (leaveCallButton) {
+    leaveCallButton.classList.remove('is-hidden');
+  }
+  if (openCallTab) {
+    openCallTab.href = joinUrl;
+    openCallTab.classList.remove('is-hidden');
+  }
+  state.currentCall = {
+    roomId: room && room.id ? Number(room.id) : null,
+    meetId: room && room.meetId ? String(room.meetId) : '',
+    joinUrl,
+  };
+  const roomLabel = room && room.meetName ? room.meetName : 'room';
+  callPanelStatus.textContent = `Connected to ${roomLabel}.`;
+}
+
+function closeCallPanel() {
+  if (callPanelCard) {
+    callPanelCard.classList.add('is-hidden');
+  }
+  if (roomsMain) {
+    roomsMain.classList.remove('is-call-active');
+  }
+  if (workspaceCard) {
+    workspaceCard.classList.remove('is-hidden');
+  }
+  if (callFrame) {
+    callFrame.src = 'about:blank';
+  }
+  if (callFrameWrap) {
+    callFrameWrap.classList.add('is-hidden');
+  }
+  if (callPlaceholder) {
+    callPlaceholder.classList.remove('is-hidden');
+  }
+  if (leaveCallButton) {
+    leaveCallButton.classList.add('is-hidden');
+  }
+  if (openCallTab) {
+    openCallTab.classList.add('is-hidden');
+    openCallTab.href = '#';
+  }
+  if (callPanelStatus) {
+    callPanelStatus.textContent = 'Join a room to start the call on this page.';
+  }
+  state.currentCall = null;
 }
 
 function closeRoomModal() {
@@ -405,8 +482,9 @@ function renderRooms() {
     `;
 
     const actions = item.querySelector('.room-actions');
+    const canManage = room.canManage || isViewerRoomCreator(room);
     const canJoinLive = room.state === 'live';
-    const canStartAndJoin = room.state === 'scheduled' && room.canManage;
+    const canStartAndJoin = room.state === 'scheduled' && canManage;
     if (canJoinLive || canStartAndJoin) {
       const joinButton = document.createElement('button');
       joinButton.type = 'button';
@@ -422,7 +500,7 @@ function renderRooms() {
       actions.appendChild(waitingButton);
     }
 
-    if (room.canManage) {
+    if (canManage) {
       if (room.state !== 'live' && room.state !== 'ended' && room.state !== 'canceled') {
         const startButton = document.createElement('button');
         startButton.type = 'button';
@@ -560,8 +638,9 @@ async function handleRoomStateChange(roomId, action) {
 
 async function handleJoinRoom(room) {
   const payload = {};
+  const canManage = room.canManage || isViewerRoomCreator(room);
 
-  if (room.visibility === 'private' && !room.canManage) {
+  if (room.visibility === 'private' && !canManage) {
     const inviteToken =
       inviteRoomMeetIdFromUrl === String(room.meetId || '').toUpperCase() && inviteTokenFromUrl
         ? inviteTokenFromUrl
@@ -591,9 +670,9 @@ async function handleJoinRoom(room) {
     });
 
     if (data.joinUrl) {
-      window.open(data.joinUrl, '_blank', 'noopener,noreferrer');
+      openCallPanel(data.joinUrl, room);
     }
-    showMessage(workspaceMessage, 'Joined room. Opening group call...', 'success');
+    showMessage(workspaceMessage, 'Joined room. Group call loaded on the right panel.', 'success');
     await loadRooms();
   } catch (error) {
     showMessage(workspaceMessage, error.message || 'Unable to join room.');
@@ -675,12 +754,26 @@ async function handleRoomFormSubmit(event) {
       if (meetIdPreview) {
         meetIdPreview.value = room.meetId || 'Generated';
       }
-      showMessage(roomFormMessage, 'Room created successfully.', 'success');
+      showMessage(roomFormMessage, 'Room created. Joining call...', 'success');
       if (data.inviteLink && inviteResult && inviteResultLink) {
         inviteResult.classList.remove('is-hidden');
         inviteResultLink.href = data.inviteLink;
         inviteResultLink.textContent = data.inviteLink;
       }
+
+      if (room.id) {
+        const joinData = await apiRequest(`/api/rooms/${room.id}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (joinData.joinUrl) {
+          openCallPanel(joinData.joinUrl, room);
+        }
+      }
+
+      closeRoomModal();
+      showMessage(workspaceMessage, 'Room created and joined successfully.', 'success');
     } else {
       showMessage(roomFormMessage, 'Room request submitted for moderator/admin review.', 'success');
       setTimeout(() => closeRoomModal(), 900);
@@ -740,6 +833,10 @@ if (roomModal) {
 
 if (roomForm) {
   roomForm.addEventListener('submit', handleRoomFormSubmit);
+}
+
+if (leaveCallButton) {
+  leaveCallButton.addEventListener('click', closeCallPanel);
 }
 
 async function init() {
