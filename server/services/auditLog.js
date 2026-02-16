@@ -1,4 +1,6 @@
 const pool = require('../db/pool');
+const { ObjectId } = require('mongodb');
+const { getMongoDb } = require('../db/mongo');
 
 let ensureAuditSchemaPromise = null;
 
@@ -51,27 +53,147 @@ function extractTarget(req) {
   return { targetType: 'resource', targetId: String(targetId) };
 }
 
-function deriveAction(req) {
+function isSuccessStatus(statusCode) {
+  const code = Number(statusCode);
+  return Number.isInteger(code) && code >= 200 && code < 400;
+}
+
+function toPossessive(name) {
+  const text = String(name || '').trim();
+  if (!text) return "someone's";
+  if (text.endsWith('s') || text.endsWith('S')) return `${text}'`;
+  return `${text}'s`;
+}
+
+async function lookupAccountDisplayName(uid) {
+  const safeUid = String(uid || '').trim();
+  if (!safeUid) return null;
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name
+       FROM accounts a
+       LEFT JOIN profiles p ON p.uid = a.uid
+       WHERE a.uid = $1
+       LIMIT 1`,
+      [safeUid]
+    );
+    return result.rows[0] ? result.rows[0].display_name || null : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function lookupMainFeedPostSummary(postId) {
+  const safeId = String(postId || '').trim();
+  if (!safeId || !ObjectId.isValid(safeId)) return null;
+  try {
+    const db = await getMongoDb();
+    const row = await db.collection('posts').findOne(
+      { _id: new ObjectId(safeId) },
+      { projection: { title: 1, uploaderUid: 1 } }
+    );
+    if (!row) return null;
+    return {
+      id: safeId,
+      title: row.title || 'Untitled post',
+      uploaderUid: row.uploaderUid || null,
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+async function deriveAction(req, context = {}) {
   const method = String(req.method || 'GET').toUpperCase();
   const path = req.path || req.originalUrl || '';
   const normalizedPath = normalizePath(path);
   const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const statusCode = Number(context.statusCode || 0);
+  const responseBody =
+    context.responseBody && typeof context.responseBody === 'object' ? context.responseBody : {};
+  const executorName =
+    String(
+      context.executorName ||
+      (req.user && (req.user.displayName || req.user.username || req.user.email)) ||
+      'User'
+    ).trim() || 'User';
 
   let actionType = `${method} ${normalizedPath}`;
-  if (/^\/api\/posts\/[^/]+\/like$/i.test(path)) {
-    actionType = body.action === 'unlike' ? 'Unlike post' : 'Like post';
-  } else if (/^\/api\/posts\/[^/]+\/comments$/i.test(path) && method === 'POST') {
-    actionType = 'Comment on post';
+  let targetUrl = null;
+  let recipientUid = null;
+  let recipientName = null;
+  let postTitle = null;
+
+  const isSuccess = isSuccessStatus(statusCode);
+
+  if (/^\/api\/posts\/[^/]+\/like$/i.test(path) && isSuccess) {
+    const postId = req.params && req.params.id ? String(req.params.id) : null;
+    const postSummary = await lookupMainFeedPostSummary(postId);
+    recipientUid = postSummary ? postSummary.uploaderUid : null;
+    recipientName = (await lookupAccountDisplayName(recipientUid)) || 'a user';
+    postTitle = postSummary ? postSummary.title : null;
+    actionType = `${executorName} ${body.action === 'unlike' ? 'unliked' : 'liked'} ${toPossessive(recipientName)} post`;
+    targetUrl = postId ? `/home?post=${encodeURIComponent(postId)}` : null;
+  } else if (/^\/api\/posts\/[^/]+\/comments$/i.test(path) && method === 'POST' && isSuccess) {
+    const postId = req.params && req.params.id ? String(req.params.id) : null;
+    const postSummary = await lookupMainFeedPostSummary(postId);
+    recipientUid = postSummary ? postSummary.uploaderUid : null;
+    recipientName = (await lookupAccountDisplayName(recipientUid)) || 'a user';
+    postTitle = postSummary ? postSummary.title : null;
+    actionType = `${executorName} commented on ${toPossessive(recipientName)} post`;
+    targetUrl = postId ? `/home?post=${encodeURIComponent(postId)}` : null;
+  } else if (/^\/api\/posts$/i.test(path) && method === 'POST' && isSuccess) {
+    const createdPost =
+      responseBody && responseBody.post && typeof responseBody.post === 'object' ? responseBody.post : null;
+    const postId = createdPost && createdPost.id ? String(createdPost.id) : null;
+    postTitle = createdPost && createdPost.title ? String(createdPost.title) : null;
+    actionType = `${executorName} published a post`;
+    targetUrl = postId ? `/home?post=${encodeURIComponent(postId)}` : null;
+  } else if (/^\/api\/connections\/follow\/request$/i.test(path) && method === 'POST' && isSuccess) {
+    recipientUid = String(body.targetUid || '').trim() || null;
+    recipientName = (await lookupAccountDisplayName(recipientUid)) || 'a user';
+    actionType = `${executorName} requested to follow ${recipientName}`;
+    targetUrl = recipientUid ? `/profile?uid=${encodeURIComponent(recipientUid)}` : null;
   } else if (/^\/api\/posts\/[^/]+\/report$/i.test(path) && method === 'POST') {
-    actionType = 'Report post';
+    actionType = `${executorName} reported a post`;
   } else if (/^\/api\/community\/[^/]+\/reports$/i.test(path) && method === 'POST') {
-    actionType = 'Submit community report';
+    actionType = `${executorName} submitted a community report`;
   } else if (/^\/api\/community\/[^/]+\/reports\/[^/]+\/resolve$/i.test(path) && method === 'POST') {
-    actionType = 'Resolve community report';
+    actionType = `${executorName} resolved a community report`;
   } else if (/^\/api\/connections\/report-user$/i.test(path) && method === 'POST') {
-    actionType = 'Report user profile';
+    actionType = `${executorName} reported a user profile`;
   } else if (/^\/api\/admin\//i.test(path)) {
     actionType = `Admin action: ${method} ${normalizedPath.replace('/api/admin/', '')}`;
+  }
+
+  if (/^\/api\/posts\/[^/]+\/like$/i.test(path)) {
+    const postId = req.params && req.params.id ? String(req.params.id) : null;
+    if (postId) {
+      targetUrl = `/home?post=${encodeURIComponent(postId)}`;
+    }
+  }
+  if (/^\/api\/posts\/[^/]+\/comments$/i.test(path) && method === 'POST') {
+    const postId = req.params && req.params.id ? String(req.params.id) : null;
+    if (postId) {
+      targetUrl = `/home?post=${encodeURIComponent(postId)}`;
+    }
+  }
+  if (/^\/api\/posts$/i.test(path) && method === 'POST' && !targetUrl) {
+    const createdPostId =
+      responseBody && responseBody.post && responseBody.post.id ? String(responseBody.post.id) : null;
+    if (createdPostId) {
+      targetUrl = `/home?post=${encodeURIComponent(createdPostId)}`;
+    }
+  }
+  if (/^\/api\/connections\/follow\/request$/i.test(path) && method === 'POST' && !targetUrl) {
+    const targetUid = String(body.targetUid || '').trim();
+    if (targetUid) {
+      targetUrl = `/profile?uid=${encodeURIComponent(targetUid)}`;
+    }
+  }
+
+  if (/^\/api\/posts\/[^/]+\/like$/i.test(path)) {
+    actionType = actionType || (body.action === 'unlike' ? `${executorName} unliked a post` : `${executorName} liked a post`);
   }
 
   const target = extractTarget(req);
@@ -81,6 +203,10 @@ function deriveAction(req) {
     targetType: target.targetType,
     targetId: target.targetId,
     sourcePath: normalizedPath,
+    targetUrl,
+    recipientUid,
+    recipientName,
+    postTitle,
   };
 }
 

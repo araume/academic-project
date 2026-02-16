@@ -224,6 +224,13 @@ body {
   color: #fff;
 }
 
+.search-bar button:disabled,
+.primary-button:disabled,
+.ghost-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
 .ghost-button {
   background: #fff;
   border: 1px solid var(--accent);
@@ -395,6 +402,10 @@ body {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.detail-open-message {
+  margin-top: 10px;
 }
 
 .menu-button {

@@ -177,7 +177,8 @@ CREATE TABLE IF NOT EXISTS notifications (
       'post_liked',
       'post_commented',
       'document_liked',
-      'document_commented'
+      'document_commented',
+      'community_rules_required'
     )
   ),
   entity_type TEXT,
@@ -188,6 +189,21 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE notifications
+  DROP CONSTRAINT IF EXISTS notifications_type_check;
+
+ALTER TABLE notifications
+  ADD CONSTRAINT notifications_type_check CHECK (
+    type IN (
+      'following_new_post',
+      'post_liked',
+      'post_commented',
+      'document_liked',
+      'document_commented',
+      'community_rules_required'
+    )
+  );
 
 CREATE INDEX IF NOT EXISTS notifications_recipient_created_idx
   ON notifications(recipient_uid, created_at DESC, id DESC);

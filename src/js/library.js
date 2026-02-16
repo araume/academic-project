@@ -25,6 +25,7 @@ const detailViews = document.getElementById('detailViews');
 const detailPopularity = document.getElementById('detailPopularity');
 const detailThumb = document.getElementById('detailThumb');
 const detailOpen = document.getElementById('detailOpen');
+const detailOpenMessage = document.getElementById('detailOpenMessage');
 const detailLike = document.getElementById('detailLike');
 const detailAskAi = document.getElementById('detailAskAi');
 const detailMenuToggle = document.getElementById('detailMenuToggle');
@@ -141,6 +142,19 @@ function renderThumb(container, doc) {
   container.textContent = getFileExtension(doc.filename || '');
 }
 
+function updateDocumentAvailabilityUI(doc) {
+  const available = Boolean(doc && doc.link);
+  if (detailOpen) {
+    detailOpen.disabled = !available;
+    detailOpen.title = available ? '' : 'Document file is unavailable in storage.';
+  }
+  if (detailOpenMessage) {
+    detailOpenMessage.textContent = available
+      ? ''
+      : 'Document file is unavailable. It may have been removed or is still processing.';
+  }
+}
+
 function toggleMenu(show) {
   if (!detailMenu) {
     return;
@@ -245,6 +259,7 @@ function renderPagination() {
 
 async function openDetail(doc) {
   currentDoc = doc;
+  updateDocumentAvailabilityUI(doc);
   detailTitle.textContent = doc.title;
   detailMeta.textContent = `${doc.course} • ${doc.subject}`;
   detailDescription.textContent = doc.description || 'No description provided.';
@@ -328,6 +343,13 @@ async function openDocument() {
   if (!currentDoc) {
     return;
   }
+  if (!currentDoc.link) {
+    updateDocumentAvailabilityUI(currentDoc);
+    return;
+  }
+  if (detailOpenMessage) {
+    detailOpenMessage.textContent = '';
+  }
   try {
     const response = await fetch(`/api/library/documents/${currentDoc.uuid}/view`, { method: 'POST' });
     const data = await response.json();
@@ -338,7 +360,7 @@ async function openDocument() {
   } catch (error) {
     // ignore view update errors
   }
-  window.open(currentDoc.link, '_blank');
+  window.open(currentDoc.link, '_blank', 'noopener,noreferrer');
 }
 
 async function submitEdit(event) {

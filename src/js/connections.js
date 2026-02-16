@@ -135,6 +135,28 @@ function relationLabel(relation) {
   return 'No connection yet';
 }
 
+function profileUrlForUid(uid) {
+  const safeUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!safeUid) return '';
+  return `/profile?uid=${encodeURIComponent(safeUid)}`;
+}
+
+function buildProfileNameNode(uid, displayName, className = 'connection-name-link') {
+  const label = displayName || 'Member';
+  const url = profileUrlForUid(uid);
+  if (!url) {
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = label;
+    return span;
+  }
+  const link = document.createElement('a');
+  link.className = className;
+  link.href = url;
+  link.textContent = label;
+  return link;
+}
+
 function renderEmptyState(target, text) {
   target.innerHTML = '';
   const empty = document.createElement('div');
@@ -205,7 +227,7 @@ function renderUserCards() {
     head.className = 'person-head';
 
     const name = document.createElement('h3');
-    name.textContent = user.displayName || 'Member';
+    name.appendChild(buildProfileNameNode(user.uid || '', user.displayName || 'Member'));
 
     const meta = document.createElement('p');
     meta.className = 'person-meta';
@@ -311,7 +333,12 @@ function renderRequests() {
 
     const metaWrap = document.createElement('div');
     const title = document.createElement('h4');
-    title.textContent = request.user.displayName || 'Member';
+    title.appendChild(
+      buildProfileNameNode(
+        request.user && request.user.uid ? request.user.uid : '',
+        request.user && request.user.displayName ? request.user.displayName : 'Member'
+      )
+    );
     const meta = document.createElement('p');
     meta.textContent = request.user.course || 'No course';
 

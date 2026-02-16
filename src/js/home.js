@@ -10,8 +10,6 @@ const createPostModal = document.getElementById('createPostModal');
 const createPostClose = document.getElementById('createPostClose');
 const createPostForm = document.getElementById('createPostForm');
 const createPostMessage = document.getElementById('createPostMessage');
-const postCourse = document.getElementById('postCourse');
-const postPublic = document.getElementById('postPublic');
 const attachmentFile = document.getElementById('attachmentFile');
 const openLibraryPicker = document.getElementById('openLibraryPicker');
 const libraryPickerModal = document.getElementById('libraryPickerModal');
@@ -26,8 +24,6 @@ const editPostModal = document.getElementById('editPostModal');
 const editPostClose = document.getElementById('editPostClose');
 const editPostForm = document.getElementById('editPostForm');
 const editPostMessage = document.getElementById('editPostMessage');
-const editPostCourse = document.getElementById('editPostCourse');
-const editPostPublic = document.getElementById('editPostPublic');
 
 const commentsModal = document.getElementById('commentsModal');
 const commentsClose = document.getElementById('commentsClose');
@@ -54,6 +50,7 @@ const libraryDocUploader = document.getElementById('libraryDocUploader');
 const libraryDocCourse = document.getElementById('libraryDocCourse');
 const libraryDocSubject = document.getElementById('libraryDocSubject');
 const libraryDocOpen = document.getElementById('libraryDocOpen');
+const libraryDocOpenMessage = document.getElementById('libraryDocOpenMessage');
 const trendingDiscussionsList = document.getElementById('trendingDiscussionsList');
 const courseMaterialsList = document.getElementById('courseMaterialsList');
 const suggestedRoomsList = document.getElementById('suggestedRoomsList');
@@ -73,6 +70,28 @@ const state = {
   pageSize: 8,
 };
 const DEFAULT_AVATAR = '/assets/LOGO.png';
+
+function profileUrlForUid(uid) {
+  const safeUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!safeUid) return '';
+  return `/profile?uid=${encodeURIComponent(safeUid)}`;
+}
+
+function buildProfileNameNode(uid, displayName, className = 'post-author-link') {
+  const label = displayName || 'Member';
+  const url = profileUrlForUid(uid);
+  if (!url) {
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = label;
+    return span;
+  }
+  const link = document.createElement('a');
+  link.className = className;
+  link.href = url;
+  link.textContent = label;
+  return link;
+}
 
 function clearElement(el) {
   if (!el) return;
@@ -152,6 +171,13 @@ function renderSpotlightPost(post) {
   `;
   const postAvatar = header.querySelector('.post-avatar');
   setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+  const nameHeading = header.querySelector('.spotlight-header-meta h4');
+  if (nameHeading) {
+    nameHeading.textContent = '';
+    nameHeading.appendChild(
+      buildProfileNameNode(post.uploader?.uid || '', uploaderName, 'post-author-link')
+    );
+  }
 
   const content = document.createElement('div');
   content.className = 'spotlight-post-content';
@@ -461,39 +487,6 @@ async function sendPostAiMessage(event) {
   }
 }
 
-function updateCourseDisabled(toggle, selectEl) {
-  const isPublic = toggle && toggle.checked;
-  if (selectEl) {
-    selectEl.disabled = isPublic;
-    if (isPublic) {
-      selectEl.value = '';
-    }
-  }
-}
-
-async function loadCourses() {
-  try {
-    const response = await fetch('/api/library/courses');
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Failed to load courses.');
-    }
-    data.courses.forEach((course) => {
-      const option = document.createElement('option');
-      option.value = course.course_name;
-      option.textContent = course.course_name;
-      postCourse.appendChild(option);
-
-      const editOption = document.createElement('option');
-      editOption.value = course.course_name;
-      editOption.textContent = course.course_name;
-      editPostCourse.appendChild(editOption);
-    });
-  } catch (error) {
-    // optional
-  }
-}
-
 function updateSelectedLibraryDocUI() {
   if (!selectedLibraryDoc || !selectedLibraryDocTitle) {
     return;
@@ -764,6 +757,13 @@ function renderPost(post, index) {
   `;
   const postAvatar = header.querySelector('.post-avatar');
   setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+  const nameHeading = header.querySelector('.post-meta h4');
+  if (nameHeading) {
+    nameHeading.textContent = '';
+    nameHeading.appendChild(
+      buildProfileNameNode(post.uploader?.uid || '', uploaderName, 'post-author-link')
+    );
+  }
 
   const content = document.createElement('div');
   content.innerHTML = `
@@ -884,9 +884,6 @@ async function handleMenuAction(action, post) {
     currentEditPost = post;
     editPostForm.elements.title.value = post.title;
     editPostForm.elements.content.value = post.content;
-    editPostPublic.checked = post.visibility === 'public';
-    editPostCourse.value = post.course || '';
-    updateCourseDisabled(editPostPublic, editPostCourse);
     openModal(editPostModal);
   } else if (action === 'delete') {
     if (!confirm('Delete this post?')) return;
@@ -972,12 +969,8 @@ async function createPost(event) {
   createPostMessage.textContent = '';
 
   const formData = new FormData(createPostForm);
-  const isPublic = postPublic.checked;
-  formData.set('visibility', isPublic ? 'public' : 'private');
-  if (!isPublic && !postCourse.value) {
-    createPostMessage.textContent = 'Please select a course for private posts.';
-    return;
-  }
+  formData.set('visibility', 'public');
+  formData.delete('course');
 
   const file = attachmentFile && attachmentFile.files ? attachmentFile.files[0] : null;
 
@@ -1017,7 +1010,6 @@ async function createPost(event) {
     createPostForm.reset();
     selectedLibraryDocument = null;
     updateSelectedLibraryDocUI();
-    updateCourseDisabled(postPublic, postCourse);
     closeModal(createPostModal);
     await fetchPosts();
     fetchHomeSidecards();
@@ -1034,13 +1026,8 @@ async function savePost(event) {
   const payload = {
     title: editPostForm.elements.title.value,
     content: editPostForm.elements.content.value,
-    course: editPostCourse.value,
-    visibility: editPostPublic.checked ? 'public' : 'private',
+    visibility: 'public',
   };
-  if (payload.visibility === 'private' && !payload.course) {
-    editPostMessage.textContent = 'Please select a course for private posts.';
-    return;
-  }
 
   try {
     const response = await fetch(`/api/posts/${currentEditPost.id}`, {
@@ -1054,8 +1041,8 @@ async function savePost(event) {
     }
     currentEditPost.title = payload.title;
     currentEditPost.content = payload.content;
-    currentEditPost.course = payload.course || null;
-    currentEditPost.visibility = payload.visibility;
+    currentEditPost.course = null;
+    currentEditPost.visibility = 'public';
     replacePostCard(currentEditPost);
     closeModal(editPostModal);
   } catch (error) {
@@ -1080,7 +1067,19 @@ async function loadPostComments(postId) {
       item.className = 'comment-item';
       const time = new Date(comment.createdAt).toLocaleString();
       const name = comment.displayName || 'Member';
-      item.innerHTML = `<p>${comment.content}</p><span>${name} • ${time}</span>`;
+      const content = document.createElement('p');
+      content.textContent = comment.content || '';
+      const meta = document.createElement('span');
+      meta.appendChild(
+        buildProfileNameNode(
+          comment.userUid || comment.uid || comment.authorUid || '',
+          name,
+          'comment-author-link'
+        )
+      );
+      meta.appendChild(document.createTextNode(` • ${time}`));
+      item.appendChild(content);
+      item.appendChild(meta);
       postCommentList.appendChild(item);
     });
   } catch (error) {
@@ -1117,23 +1116,56 @@ async function openLibraryDoc(uuid) {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Unable to load document.');
     }
-    currentLibraryDoc = data.document;
-    libraryDocTitle.textContent = data.document.title;
-    libraryDocDescription.textContent = data.document.description || 'No description provided.';
-    libraryDocUploader.textContent = data.document.uploader_name || 'Member';
-    libraryDocCourse.textContent = data.document.course;
-    libraryDocSubject.textContent = data.document.subject;
+    const raw = data.document || {};
+    const normalized = {
+      title: raw.title || raw.name || 'Untitled document',
+      description: raw.description || raw.summary || '',
+      uploaderName: raw.uploader_name || raw.uploaderName || raw.uploader || 'Member',
+      course: raw.course || raw.course_name || raw.courseName || '',
+      subject: raw.subject || raw.subject_name || raw.subjectName || '',
+      link: raw.link || raw.documentLink || raw.url || '',
+    };
+    currentLibraryDoc = normalized;
+
+    libraryDocTitle.textContent = normalized.title;
+    libraryDocDescription.textContent = normalized.description || 'No description provided.';
+    libraryDocUploader.textContent = normalized.uploaderName || 'Member';
+    libraryDocCourse.textContent = normalized.course || 'No course';
+    libraryDocSubject.textContent = normalized.subject || 'No subject';
+    if (libraryDocOpen) {
+      libraryDocOpen.disabled = !normalized.link;
+      libraryDocOpen.title = normalized.link ? '' : 'Document file is unavailable in storage.';
+    }
+    if (libraryDocOpenMessage) {
+      libraryDocOpenMessage.textContent = normalized.link
+        ? ''
+        : 'This attachment is unavailable. It may have been removed from Open Library.';
+    }
     openModal(libraryDocModal);
   } catch (error) {
-    alert(error.message);
+    currentLibraryDoc = null;
+    const rawMessage = error && error.message ? String(error.message) : 'Unable to load document.';
+    const friendlyMessage =
+      rawMessage.toLowerCase().includes('document not found')
+        ? 'This document is no longer available.'
+        : rawMessage;
+    alert(friendlyMessage);
   }
 }
 
 if (libraryDocOpen) {
   libraryDocOpen.addEventListener('click', () => {
-    if (currentLibraryDoc) {
-      window.open(currentLibraryDoc.link, '_blank');
+    if (!currentLibraryDoc || !currentLibraryDoc.link) {
+      if (libraryDocOpenMessage) {
+        libraryDocOpenMessage.textContent =
+          'This attachment is unavailable. It may have been removed from Open Library.';
+      }
+      return;
     }
+    if (libraryDocOpenMessage) {
+      libraryDocOpenMessage.textContent = '';
+    }
+    window.open(currentLibraryDoc.link, '_blank', 'noopener,noreferrer');
   });
 }
 
@@ -1205,20 +1237,12 @@ if (attachmentFile) {
   });
 }
 
-if (postPublic) {
-  postPublic.addEventListener('change', () => updateCourseDisabled(postPublic, postCourse));
-}
-
 if (editPostClose) {
   editPostClose.addEventListener('click', () => closeModal(editPostModal));
 }
 
 if (editPostForm) {
   editPostForm.addEventListener('submit', savePost);
-}
-
-if (editPostPublic) {
-  editPostPublic.addEventListener('change', () => updateCourseDisabled(editPostPublic, editPostCourse));
 }
 
 if (postSpotlightClose) {
@@ -1251,12 +1275,9 @@ window.addEventListener('open-post-modal', async (event) => {
 });
 
 async function initHome() {
-  updateCourseDisabled(postPublic, postCourse);
-  updateCourseDisabled(editPostPublic, editPostCourse);
   updateSelectedLibraryDocUI();
 
   await Promise.all([
-    loadCourses(),
     loadCurrentProfile(),
     fetchPosts(),
     fetchHomeSidecards(),

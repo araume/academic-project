@@ -98,6 +98,15 @@ function renderEmptyRow(target, columns, text = 'No records found.') {
   target.innerHTML = `<tr><td class="empty-row" colspan="${columns}">${escapeHtml(text)}</td></tr>`;
 }
 
+function normalizeActionTargetUrl(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed || !trimmed.startsWith('/') || trimmed.startsWith('//')) {
+    return '';
+  }
+  return trimmed.slice(0, 512);
+}
+
 async function loadAdminContext() {
   const data = await apiRequest('/api/admin/me');
   if (!data.allowed) {
@@ -130,14 +139,20 @@ async function loadLogs() {
 
     logsTableBody.innerHTML = data.logs
       .map(
-        (log) => `
+        (log) => {
+          const targetUrl = normalizeActionTargetUrl(log.targetUrl || '');
+          const actionCell = targetUrl
+            ? `<a href="${escapeHtml(targetUrl)}">${escapeHtml(log.actionType)}</a>`
+            : escapeHtml(log.actionType);
+          return `
           <tr>
             <td>${escapeHtml(log.id)}</td>
-            <td>${escapeHtml(log.actionType)}</td>
+            <td>${actionCell}</td>
             <td>${escapeHtml(log.executor || '')}</td>
             <td>${escapeHtml(log.course || '-')}</td>
             <td>${escapeHtml(new Date(log.createdAt).toLocaleString())}</td>
-          </tr>`
+          </tr>`;
+        }
       )
       .join('');
   } catch (error) {

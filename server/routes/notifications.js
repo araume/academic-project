@@ -16,6 +16,7 @@ function buildNotificationMessage(row) {
   const meta = row.meta && typeof row.meta === 'object' ? row.meta : {};
   const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle : 'a post';
   const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle : 'a document';
+  const communityName = typeof meta.communityName === 'string' ? meta.communityName : 'this community';
 
   if (row.type === 'following_new_post') {
     return `shared a new post: ${postTitle}`;
@@ -31,6 +32,9 @@ function buildNotificationMessage(row) {
   }
   if (row.type === 'document_commented') {
     return `commented on your upload: ${documentTitle}`;
+  }
+  if (row.type === 'community_rules_required') {
+    return `Please agree to the community rules for ${communityName} to interact.`;
   }
   return 'interacted with your content.';
 }
@@ -91,7 +95,9 @@ router.get('/api/notifications', async (req, res) => {
         message: buildNotificationMessage(row),
         actor: {
           uid: row.actor_uid || null,
-          displayName: row.actor_display_name || 'Someone',
+          displayName:
+            row.actor_display_name ||
+            (row.type === 'community_rules_required' ? 'Community' : 'Someone'),
           photoLink: await signPhotoIfNeeded(row.actor_photo_link),
         },
       }))

@@ -243,6 +243,19 @@ body {
   margin: 0;
 }
 
+.post-author-link,
+.comment-author-link {
+  color: inherit;
+  text-decoration: none;
+  font: inherit;
+  font-weight: inherit;
+}
+
+a.post-author-link:hover,
+a.comment-author-link:hover {
+  text-decoration: underline;
+}
+
 .post-header p {
   margin: 2px 0 0;
   color: var(--muted);
@@ -626,6 +639,12 @@ body {
   box-shadow: 0 12px 24px rgba(15, 47, 71, 0.2);
 }
 
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .secondary-button {
   background: #e4edf3;
   color: #17384d;
@@ -793,6 +812,81 @@ body {
 
 .detail-description {
   color: var(--ink-soft);
+}
+
+.library-doc-card {
+  max-width: 700px;
+  background: linear-gradient(165deg, #ffffff 0%, #f6fafd 52%, #edf4f9 100%);
+  border: 1px solid rgba(23, 56, 77, 0.12);
+}
+
+.library-doc-head {
+  display: grid;
+  gap: 8px;
+}
+
+.library-doc-eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #5c7689;
+  font-weight: 700;
+}
+
+.library-doc-head h2 {
+  margin: 0;
+}
+
+.library-doc-description {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.library-doc-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.library-doc-grid .detail-item {
+  border-radius: 14px;
+  border: 1px solid #cedce6;
+  background: #ffffff;
+  padding: 11px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  min-height: 74px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.library-doc-grid .detail-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #5a7284;
+  font-weight: 700;
+}
+
+.library-doc-grid .detail-value {
+  margin: 0;
+  font-size: 0.93rem;
+  color: #18374d;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.library-doc-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.library-doc-open-message {
+  margin-top: 10px;
 }
 
 .form-message {
@@ -1015,5 +1109,9 @@ a.sidecard-item {
 
   .nav-logo {
     width: 100px;
+  }
+
+  .library-doc-grid {
+    grid-template-columns: 1fr;
   }
 }

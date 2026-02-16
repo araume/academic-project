@@ -443,6 +443,14 @@ router.get('/api/admin/logs', async (req, res) => {
       pageSize,
       total,
       logs: rowsResult.rows.map((row) => ({
+        ...(row.metadata && typeof row.metadata === 'object'
+          ? {
+              targetUrl:
+                typeof row.metadata.targetUrl === 'string' && row.metadata.targetUrl.trim()
+                  ? row.metadata.targetUrl.trim().slice(0, 512)
+                  : null,
+            }
+          : { targetUrl: null }),
         id: Number(row.id),
         actionKey: row.action_key,
         actionType: row.action_type,

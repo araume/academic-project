@@ -101,16 +101,6 @@
           <textarea name="content" rows="4" placeholder="Share details with your classmates..." required></textarea>
         </label>
         <label class="field">
-          <span class="field-label">Course</span>
-          <select name="course" id="postCourse">
-            <option value="">Select course</option>
-          </select>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="postPublic" />
-          <span>Public post</span>
-        </label>
-        <label class="field">
           <span class="field-label">Upload file (optional)</span>
           <input type="file" name="file" id="attachmentFile" accept="image/*,video/*" />
           <span class="post-form-hint">File type is detected automatically based on what you upload.</span>
@@ -141,16 +131,6 @@
         <label>
           <span>Content</span>
           <textarea name="content" rows="4" required></textarea>
-        </label>
-        <label>
-          <span>Course</span>
-          <select name="course" id="editPostCourse">
-            <option value="">Select course</option>
-          </select>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="editPostPublic" />
-          <span>Public post (course not required)</span>
         </label>
         <button type="submit" class="primary-button">Save</button>
         <p class="form-message" id="editPostMessage"></p>
@@ -193,25 +173,31 @@
   </div>
 
   <div class="modal is-hidden" id="libraryDocModal">
-    <div class="modal-card">
+    <div class="modal-card library-doc-card">
       <button class="close-button" id="libraryDocClose">×</button>
-      <h2 id="libraryDocTitle"></h2>
-      <p id="libraryDocDescription" class="detail-description"></p>
-      <div class="detail-grid">
-        <div>
-          <span>Uploader</span>
-          <p id="libraryDocUploader"></p>
+      <div class="library-doc-head">
+        <p class="library-doc-eyebrow">Open Library Attachment</p>
+        <h2 id="libraryDocTitle"></h2>
+        <p id="libraryDocDescription" class="detail-description library-doc-description"></p>
+      </div>
+      <div class="detail-grid library-doc-grid">
+        <div class="detail-item">
+          <span class="detail-label">Uploader</span>
+          <p id="libraryDocUploader" class="detail-value"></p>
         </div>
-        <div>
-          <span>Course</span>
-          <p id="libraryDocCourse"></p>
+        <div class="detail-item">
+          <span class="detail-label">Course</span>
+          <p id="libraryDocCourse" class="detail-value"></p>
         </div>
-        <div>
-          <span>Subject/Lesson</span>
-          <p id="libraryDocSubject"></p>
+        <div class="detail-item">
+          <span class="detail-label">Subject/Lesson</span>
+          <p id="libraryDocSubject" class="detail-value"></p>
         </div>
       </div>
-      <button class="primary-button" id="libraryDocOpen">Open/View</button>
+      <div class="library-doc-actions">
+        <button class="primary-button" id="libraryDocOpen">Open/View</button>
+      </div>
+      <p class="form-message library-doc-open-message" id="libraryDocOpenMessage"></p>
     </div>
   </div>
 

@@ -4,6 +4,7 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 const { bootstrapCommunityForUser } = require('../services/communityService');
+const { createNotification } = require('../services/notificationService');
 
 const router = express.Router();
 const upload = multer({
@@ -221,14 +222,14 @@ async function getCommunityAccess(viewer, communityId) {
 
   if (!acceptedLatestRule && latestRule) {
     return {
-      canReadFeed: false,
+      canReadFeed: true,
       canPost: false,
       canModerate: false,
       membership,
       latestRule,
       acceptedLatestRule,
       requiresRuleAcceptance: true,
-      reason: 'Please accept the latest community rules first.',
+      reason: 'Please accept the latest community rules to interact.',
     };
   }
 
@@ -241,6 +242,36 @@ async function getCommunityAccess(viewer, communityId) {
     acceptedLatestRule,
     requiresRuleAcceptance: false,
   };
+}
+
+function buildRulesInteractionError(access) {
+  return {
+    ok: false,
+    code: 'RULES_NOT_ACCEPTED',
+    message: 'Please accept the latest community rules to interact in this community.',
+    requiresRuleAcceptance: true,
+    latestRuleVersion: access && access.latestRule ? Number(access.latestRule.version) : null,
+  };
+}
+
+async function notifyRulesAgreementPrompt({ recipientUid, communityId, communityName, latestRuleVersion }) {
+  if (!recipientUid || !communityId || !latestRuleVersion) return;
+  try {
+    await createNotification({
+      recipientUid,
+      actorUid: null,
+      type: 'community_rules_required',
+      entityType: 'community',
+      entityId: String(communityId),
+      targetUrl: `/community?community=${encodeURIComponent(String(communityId))}`,
+      meta: {
+        communityName: communityName || 'Community',
+        latestRuleVersion: Number(latestRuleVersion),
+      },
+    });
+  } catch (error) {
+    console.error('Community rules prompt notification failed:', error);
+  }
 }
 
 async function getTargetDisciplineState(communityId, targetUid) {
@@ -350,7 +381,7 @@ router.get('/api/community/bootstrap', async (req, res) => {
         slug: row.slug,
         description: row.description || null,
         membersCount: Number(row.members_count || 0),
-        pendingCount: Number(row.pending_count || 0),
+        pendingCount: canModerate ? Number(row.pending_count || 0) : null,
         membershipState: row.membership_state,
         latestRuleVersion,
         acceptedLatestRule: row.accepted_latest_rule === true,
@@ -414,7 +445,7 @@ router.get('/api/community/:id', async (req, res) => {
         description: community.description || null,
         stats: {
           membersCount: Number(stats.members_count || 0),
-          pendingCount: Number(stats.pending_count || 0),
+          pendingCount: access.canModerate ? Number(stats.pending_count || 0) : null,
           postsCount: Number(stats.posts_count || 0),
         },
       },
@@ -610,15 +641,6 @@ router.post('/api/community/:id/join', async (req, res) => {
     const isMainCommunity = viewer.course && viewer.course.trim() === community.course_name;
     const canModerate = await canModerateCommunity(viewer, communityId);
 
-    if (!isMainCommunity && latestRule && !acceptedLatest) {
-      return res.status(400).json({
-        ok: false,
-        code: 'RULES_NOT_ACCEPTED',
-        message: 'Accept the latest community rules before joining.',
-        latestRuleVersion: Number(latestRule.version),
-      });
-    }
-
     const nextState = isMainCommunity || canModerate ? 'member' : 'pending';
 
     await pool.query(
@@ -638,6 +660,15 @@ router.post('/api/community/:id/join', async (req, res) => {
          updated_at = NOW()`,
       [communityId, req.user.uid, nextState]
     );
+
+    if (nextState === 'member' && latestRule && !acceptedLatest) {
+      await notifyRulesAgreementPrompt({
+        recipientUid: req.user.uid,
+        communityId,
+        communityName: community.course_name,
+        latestRuleVersion: Number(latestRule.version),
+      });
+    }
 
     return res.json({
       ok: true,
@@ -792,13 +823,7 @@ router.post('/api/community/:id/join-requests/:uid', async (req, res) => {
         targetUid,
         latestRule ? Number(latestRule.version) : null
       );
-
-      if (latestRule && !acceptedLatest) {
-        return res.status(400).json({
-          ok: false,
-          message: 'User has not accepted the latest community rules.',
-        });
-      }
+      const community = await getCommunity(communityId);
 
       await pool.query(
         `UPDATE community_memberships
@@ -806,6 +831,15 @@ router.post('/api/community/:id/join-requests/:uid', async (req, res) => {
          WHERE community_id = $1 AND user_uid = $2`,
         [communityId, targetUid]
       );
+
+      if (latestRule && !acceptedLatest) {
+        await notifyRulesAgreementPrompt({
+          recipientUid: targetUid,
+          communityId,
+          communityName: community ? community.course_name : null,
+          latestRuleVersion: Number(latestRule.version),
+        });
+      }
 
       return res.json({ ok: true, state: 'member' });
     }
@@ -988,11 +1022,17 @@ router.post('/api/community/:id/posts', upload.single('file'), async (req, res) 
 
     const access = await getCommunityAccess(viewer, communityId);
     if (!access.canPost) {
+      if (access.requiresRuleAcceptance) {
+        return res.status(403).json(buildRulesInteractionError(access));
+      }
       return res.status(403).json({
         ok: false,
         message: access.reason || 'You cannot post in this community.',
         requiresRuleAcceptance: access.requiresRuleAcceptance,
       });
+    }
+    if (access.latestRule && !access.acceptedLatestRule) {
+      return res.status(403).json(buildRulesInteractionError(access));
     }
 
     if (file && libraryDocumentUuid) {
@@ -1308,6 +1348,9 @@ router.post('/api/community/:id/posts/:postId/like', async (req, res) => {
         message: access.reason || 'You do not have access to this community.',
       });
     }
+    if (access.latestRule && !access.acceptedLatestRule) {
+      return res.status(403).json(buildRulesInteractionError(access));
+    }
 
     const postResult = await pool.query(
       `SELECT id, status
@@ -1458,7 +1501,13 @@ router.post('/api/community/:id/posts/:postId/comments', async (req, res) => {
     const viewer = await getViewer(req.user.uid);
     const access = await getCommunityAccess(viewer, communityId);
     if (!access.canPost) {
+      if (access.requiresRuleAcceptance) {
+        return res.status(403).json(buildRulesInteractionError(access));
+      }
       return res.status(403).json({ ok: false, message: access.reason || 'You cannot comment in this community.' });
+    }
+    if (access.latestRule && !access.acceptedLatestRule) {
+      return res.status(403).json(buildRulesInteractionError(access));
     }
 
     const postCheck = await pool.query(
@@ -1623,6 +1672,7 @@ router.delete('/api/community/:id/comments/:commentId', async (req, res) => {
 router.get('/api/community/:id/members', async (req, res) => {
   const communityId = parsePositiveInt(req.params.id);
   const { page, pageSize, offset } = parsePagination(req, 30, 100);
+  const query = sanitizeText(req.query.q, 200).toLowerCase();
   if (!communityId) {
     return res.status(400).json({ ok: false, message: 'Invalid community id.' });
   }
@@ -1637,13 +1687,22 @@ router.get('/api/community/:id/members', async (req, res) => {
     const access = await getCommunityAccess(viewer, communityId);
     const canModerate = access.canModerate;
 
-    if (!canModerate && !(access.membership && access.membership.state === 'member')) {
-      return res.status(403).json({ ok: false, message: 'You cannot view this member list.' });
-    }
-
     const stateFilter = canModerate
       ? `IN ('member', 'pending', 'banned')`
       : `= 'member'`;
+    const whereParts = [`cm.community_id = $1`, `cm.state ${stateFilter}`];
+    const params = [communityId];
+    if (query) {
+      params.push(`%${query}%`);
+      whereParts.push(
+        `(COALESCE(p.display_name, a.display_name, a.username, a.email) ILIKE $${params.length}
+          OR a.email ILIKE $${params.length}
+          OR a.username ILIKE $${params.length})`
+      );
+    }
+    params.push(pageSize, offset);
+    const limitParam = params.length - 1;
+    const offsetParam = params.length;
 
     const result = await pool.query(
       `SELECT
@@ -1667,8 +1726,7 @@ router.get('/api/community/:id/members', async (req, res) => {
        FROM community_memberships cm
        JOIN accounts a ON a.uid = cm.user_uid
        LEFT JOIN profiles p ON p.uid = cm.user_uid
-       WHERE cm.community_id = $1
-         AND cm.state ${stateFilter}
+       WHERE ${whereParts.join(' AND ')}
        ORDER BY
          CASE cm.state
            WHEN 'member' THEN 1
@@ -1677,8 +1735,8 @@ router.get('/api/community/:id/members', async (req, res) => {
            ELSE 4
          END,
          lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) ASC
-       LIMIT $2 OFFSET $3`,
-      [communityId, pageSize, offset]
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      params
     );
 
     const members = await Promise.all(

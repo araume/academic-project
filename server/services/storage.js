@@ -26,6 +26,73 @@ function getBucket() {
   return storage.bucket(bucketName);
 }
 
+function normalizeStorageKey(rawKey) {
+  if (!rawKey) return null;
+  const bucketName = (process.env.GCS_BUCKET || '').trim();
+  const original = String(rawKey).trim();
+  if (!original) return null;
+
+  let key = original;
+
+  if (key.startsWith('gs://')) {
+    key = key.replace(/^gs:\/\//i, '');
+    if (bucketName && key.startsWith(`${bucketName}/`)) {
+      key = key.slice(bucketName.length + 1);
+    }
+    return key || null;
+  }
+
+  if (/^https?:\/\//i.test(key)) {
+    try {
+      const parsed = new URL(key);
+      const host = (parsed.hostname || '').toLowerCase();
+      const pathname = parsed.pathname || '';
+
+      if (host === 'storage.googleapis.com' || host === 'storage.cloud.google.com') {
+        const parts = pathname.replace(/^\/+/, '').split('/');
+        if (parts.length >= 2 && (!bucketName || parts[0] === bucketName)) {
+          const objectKey = decodeURIComponent(parts.slice(1).join('/'));
+          return objectKey || null;
+        }
+      }
+
+      if (host.endsWith('.storage.googleapis.com')) {
+        const subdomainBucket = host.slice(0, -'.storage.googleapis.com'.length);
+        if (!bucketName || subdomainBucket === bucketName) {
+          const objectKey = decodeURIComponent(pathname.replace(/^\/+/, ''));
+          return objectKey || null;
+        }
+      }
+
+      if (pathname.startsWith('/download/storage/v1/b/')) {
+        const match = pathname.match(/^\/download\/storage\/v1\/b\/([^/]+)\/o\/(.+)$/i);
+        if (match) {
+          const urlBucket = decodeURIComponent(match[1]);
+          if (!bucketName || urlBucket === bucketName) {
+            const objectKey = decodeURIComponent(match[2]);
+            return objectKey || null;
+          }
+        }
+      }
+    } catch (error) {
+      return key;
+    }
+    return key;
+  }
+
+  if (bucketName && key.startsWith(`/${bucketName}/`)) {
+    key = key.slice(bucketName.length + 2);
+  } else if (bucketName && key.startsWith(`${bucketName}/`)) {
+    key = key.slice(bucketName.length + 1);
+  }
+
+  if (key.startsWith('/')) {
+    key = key.slice(1);
+  }
+
+  return key || null;
+}
+
 function sanitizeFilename(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
@@ -54,15 +121,20 @@ async function uploadToStorage({ buffer, filename, mimeType, prefix }) {
 }
 
 async function deleteFromStorage(key) {
-  if (!key) return;
+  const normalized = normalizeStorageKey(key);
+  if (!normalized) return;
   const bucket = getBucket();
-  await bucket.file(key).delete({ ignoreNotFound: true });
+  await bucket.file(normalized).delete({ ignoreNotFound: true });
 }
 
 async function getSignedUrl(key, ttlMinutes = 60) {
+  const normalized = normalizeStorageKey(key);
+  if (!normalized) {
+    throw new Error('Missing storage object key for signed URL generation.');
+  }
   const bucket = getBucket();
   const expires = Date.now() + ttlMinutes * 60 * 1000;
-  const [url] = await bucket.file(key).getSignedUrl({
+  const [url] = await bucket.file(normalized).getSignedUrl({
     version: 'v4',
     action: 'read',
     expires,
@@ -70,14 +142,25 @@ async function getSignedUrl(key, ttlMinutes = 60) {
   return url;
 }
 
+async function objectExists(key) {
+  const normalized = normalizeStorageKey(key);
+  if (!normalized) return false;
+  const bucket = getBucket();
+  const [exists] = await bucket.file(normalized).exists();
+  return exists;
+}
+
 module.exports = {
   uploadToStorage,
   deleteFromStorage,
   getSignedUrl,
+  objectExists,
+  normalizeStorageKey,
   async downloadFromStorage(key) {
-    if (!key) return null;
+    const normalized = normalizeStorageKey(key);
+    if (!normalized) return null;
     const bucket = getBucket();
-    const [buffer] = await bucket.file(key).download();
+    const [buffer] = await bucket.file(normalized).download();
     return buffer;
   },
 };

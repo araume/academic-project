@@ -7,7 +7,14 @@ const pdfParse = require('pdf-parse');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
-const { uploadToStorage, deleteFromStorage, getSignedUrl, downloadFromStorage } = require('../services/storage');
+const {
+  uploadToStorage,
+  deleteFromStorage,
+  getSignedUrl,
+  downloadFromStorage,
+  objectExists,
+  normalizeStorageKey,
+} = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
 
@@ -22,10 +29,32 @@ const AI_DOC_CONTEXT_MAX_BYTES = 8 * 1024 * 1024;
 const AI_DOC_CONTEXT_MAX_CHARS = 3800;
 const AI_DOC_PDF_OCR_MIN_TEXT_CHARS = 140;
 
-async function signIfNeeded(value) {
+async function signIfNeeded(value, { ensureExists = false } = {}) {
   if (!value) return null;
-  if (value.startsWith('http')) return value;
-  return getSignedUrl(value, SIGNED_TTL);
+  try {
+    const normalized = normalizeStorageKey(value);
+    const looksLikeHttp = /^https?:\/\//i.test(String(value).trim());
+    const isExternalHttp = looksLikeHttp && normalized === String(value).trim();
+    if (isExternalHttp) {
+      return value;
+    }
+    const keyForStorage = normalized || value;
+    if (ensureExists) {
+      try {
+        const exists = await objectExists(keyForStorage);
+        if (exists === false) return null;
+      } catch (existError) {
+        console.warn(
+          'Library object existence check failed; continuing with signed URL attempt:',
+          existError && existError.message ? existError.message : existError
+        );
+      }
+    }
+    return await getSignedUrl(keyForStorage, SIGNED_TTL);
+  } catch (error) {
+    console.warn('Library sign URL failed:', error && error.message ? error.message : error);
+    return null;
+  }
 }
 
 function extractTextFromOpenAIResponse(response) {
@@ -476,11 +505,17 @@ router.get('/api/library/documents', async (req, res) => {
 
     const listResult = await pool.query(listQuery, listValues);
     const documents = await Promise.all(
-      listResult.rows.map(async (doc) => ({
-        ...doc,
-        link: await signIfNeeded(doc.link),
-        thumbnail_link: await signIfNeeded(doc.thumbnail_link),
-      }))
+      listResult.rows.map(async (doc) => {
+        const [link, thumbnailLink] = await Promise.all([
+          signIfNeeded(doc.link, { ensureExists: true }),
+          signIfNeeded(doc.thumbnail_link, { ensureExists: true }),
+        ]);
+        return {
+          ...doc,
+          link,
+          thumbnail_link: thumbnailLink,
+        };
+      })
     );
     return res.json({ ok: true, total, page, pageSize, documents });
   } catch (error) {
@@ -530,12 +565,16 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Document not found.' });
     }
     const doc = result.rows[0];
+    const [link, thumbnailLink] = await Promise.all([
+      signIfNeeded(doc.link, { ensureExists: true }),
+      signIfNeeded(doc.thumbnail_link, { ensureExists: true }),
+    ]);
     return res.json({
       ok: true,
       document: {
         ...doc,
-        link: await signIfNeeded(doc.link),
-        thumbnail_link: await signIfNeeded(doc.thumbnail_link),
+        link,
+        thumbnail_link: thumbnailLink,
       },
     });
   } catch (error) {

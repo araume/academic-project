@@ -6,6 +6,7 @@ const NOTIFICATION_TYPES = new Set([
   'post_commented',
   'document_liked',
   'document_commented',
+  'community_rules_required',
 ]);
 
 const TYPE_SETTING_COLUMN = {
@@ -98,7 +99,8 @@ async function ensureNotificationsTables() {
           'post_liked',
           'post_commented',
           'document_liked',
-          'document_commented'
+          'document_commented',
+          'community_rules_required'
         )
       ),
       entity_type TEXT,
@@ -123,6 +125,20 @@ async function ensureNotificationsTables() {
       ADD COLUMN IF NOT EXISTS notify_post_activity BOOLEAN NOT NULL DEFAULT true;
     ALTER TABLE user_privacy_settings
       ADD COLUMN IF NOT EXISTS notify_document_activity BOOLEAN NOT NULL DEFAULT true;
+
+    ALTER TABLE notifications
+      DROP CONSTRAINT IF EXISTS notifications_type_check;
+    ALTER TABLE notifications
+      ADD CONSTRAINT notifications_type_check CHECK (
+        type IN (
+          'following_new_post',
+          'post_liked',
+          'post_commented',
+          'document_liked',
+          'document_commented',
+          'community_rules_required'
+        )
+      );
   `;
   await pool.query(sql);
 }
