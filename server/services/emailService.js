@@ -22,12 +22,12 @@ function requireNodeMailer() {
 async function sendVerificationEmail({ to, verifyUrl }) {
   const mode = (process.env.EMAIL_MODE || 'smtp').trim().toLowerCase();
   const from = (process.env.EMAIL_FROM || process.env.EMAIL_USER || 'no-reply@thesis.local').trim();
-  const subject = 'Verify your Thesis account email';
-  const text = `Welcome to Thesis.\n\nVerify your email by opening this link:\n${verifyUrl}\n\nIf you did not create this account, you can ignore this email.`;
+  const subject = 'Verify your MyBuddy account email';
+  const text = `Welcome to MyBuddy.\n\nVerify your email by opening this link:\n${verifyUrl}\n\nIf you did not create this account, you can ignore this email.`;
   const html = `
     <div style="font-family: Arial, sans-serif; color: #0f2639; line-height: 1.5;">
       <h2 style="margin-bottom: 8px;">Verify your email</h2>
-      <p style="margin-top: 0;">Welcome to Thesis. Confirm that this email belongs to you.</p>
+      <p style="margin-top: 0;">Welcome to MyBuddy. Confirm that this email belongs to you.</p>
       <p>
         <a href="${verifyUrl}" style="display: inline-block; padding: 10px 16px; border-radius: 8px; background: #0c2e46; color: #fff; text-decoration: none; font-weight: 600;">
           Verify Email
