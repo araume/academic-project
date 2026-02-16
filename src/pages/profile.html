@@ -8,18 +8,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/profile.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
 </head>
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/LOGO.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
-        <a href="/home">Home</a>
-        <a href="/connections">Connections</a>
-        <a href="/personal">Personal</a>
-        <a href="/open-library">Open Library</a>
-        <a href="/community">Community</a>
-        <a href="/rooms">Rooms</a>
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
     <div class="nav-actions">
@@ -31,7 +32,7 @@
       </button>
       <div class="profile-wrap">
         <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
-          <span class="avatar-circle">ML</span>
+          <span class="avatar-circle" id="navAvatarLabel">ML</span>
         </button>
         <div class="profile-menu is-hidden" id="profileMenu">
           <a href="/profile">Profile</a>
@@ -46,22 +47,74 @@
   </header>
 
   <main class="profile-page">
-    <section class="profile-card">
+    <section class="profile-card profile-view-card">
       <div class="profile-photo">
         <img id="profileImage" src="/assets/LOGO.png" alt="Profile" />
-        <label class="photo-upload">
+        <label class="photo-upload is-hidden" id="photoUploadLabel">
           <input type="file" id="photoInput" accept="image/*" />
           Change photo
         </label>
         <p class="hint">Max 5MB. Recommended square image.</p>
       </div>
       <div class="profile-meta">
-        <h1 id="profileName">Profile</h1>
+        <div class="profile-name-row">
+          <h1 id="profileName">Profile</h1>
+          <span class="presence-pill presence-pill--inactive" id="profilePresence">
+            <span class="presence-dot"></span>
+            <span id="profilePresenceLabel">Inactive</span>
+          </span>
+        </div>
         <p id="profileCourse">Main course</p>
+        <p id="profileBio" class="profile-bio">No bio yet.</p>
+        <div class="profile-view-actions is-hidden" id="profileViewActions">
+          <button type="button" class="primary-button" id="profileFollowButton">Follow</button>
+          <div class="profile-options-wrap">
+            <button type="button" class="ghost-button" id="profileOptionsToggle">More</button>
+            <div class="profile-options-menu is-hidden" id="profileOptionsMenu">
+              <button type="button" data-action="copy-link">Copy profile link</button>
+              <button type="button" data-action="toggle-hide-posts" id="toggleHidePostsButton">Hide posts from this user</button>
+              <button type="button" data-action="report-user">Report user</button>
+              <button type="button" data-action="toggle-block" class="danger" id="toggleBlockButton">Block user</button>
+            </div>
+          </div>
+        </div>
+        <div class="profile-own-actions is-hidden" id="profileOwnActions">
+          <button type="button" class="ghost-button" id="viewBookmarksButton">Bookmarked posts</button>
+        </div>
+        <p class="form-message" id="profileActionMessage"></p>
       </div>
     </section>
 
-    <section class="profile-form-card">
+    <section class="profile-form-card profile-view-card">
+      <div class="profile-view-grid">
+        <article class="view-block">
+          <h3>Sub courses</h3>
+          <p id="profileSubCourses">None set.</p>
+        </article>
+        <article class="view-block">
+          <h3>Facebook</h3>
+          <p id="profileFacebook">Not set.</p>
+        </article>
+        <article class="view-block">
+          <h3>LinkedIn</h3>
+          <p id="profileLinkedin">Not set.</p>
+        </article>
+        <article class="view-block">
+          <h3>Instagram</h3>
+          <p id="profileInstagram">Not set.</p>
+        </article>
+        <article class="view-block">
+          <h3>GitHub</h3>
+          <p id="profileGithub">Not set.</p>
+        </article>
+        <article class="view-block">
+          <h3>Portfolio</h3>
+          <p id="profilePortfolio">Not set.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="profile-form-card is-hidden" id="profileEditCard">
       <form id="profileForm" class="profile-form">
         <label>
           <span>Display name</span>
@@ -113,6 +166,20 @@
     </section>
   </main>
 
+  <button type="button" class="mode-toggle-button" id="toggleEditMode">Edit profile</button>
+
+  <div class="floating-modal is-hidden" id="bookmarksModal" role="dialog" aria-modal="true" aria-labelledby="bookmarksModalTitle">
+    <div class="floating-modal-card">
+      <div class="floating-modal-head">
+        <h3 id="bookmarksModalTitle">Bookmarked posts</h3>
+        <button type="button" class="floating-close" id="bookmarksModalClose" aria-label="Close">×</button>
+      </div>
+      <p class="floating-modal-message" id="bookmarksMessage"></p>
+      <div class="bookmarks-list" id="bookmarksList"></div>
+    </div>
+  </div>
+
   <script src="/src/js/profile.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
 </body>
 </html>

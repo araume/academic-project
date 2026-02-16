@@ -26,6 +26,7 @@ const detailPopularity = document.getElementById('detailPopularity');
 const detailThumb = document.getElementById('detailThumb');
 const detailOpen = document.getElementById('detailOpen');
 const detailLike = document.getElementById('detailLike');
+const detailAskAi = document.getElementById('detailAskAi');
 const detailMenuToggle = document.getElementById('detailMenuToggle');
 const detailMenu = document.getElementById('detailMenu');
 const detailShare = document.getElementById('detailShare');
@@ -40,14 +41,25 @@ const editMessage = document.getElementById('editMessage');
 const commentList = document.getElementById('commentList');
 const commentForm = document.getElementById('commentForm');
 const commentInput = document.getElementById('commentInput');
+const docAiModal = document.getElementById('docAiModal');
+const docAiClose = document.getElementById('docAiClose');
+const docAiTitle = document.getElementById('docAiTitle');
+const docAiSubtitle = document.getElementById('docAiSubtitle');
+const docAiMessages = document.getElementById('docAiMessages');
+const docAiForm = document.getElementById('docAiForm');
+const docAiInput = document.getElementById('docAiInput');
+const docAiMessage = document.getElementById('docAiMessage');
 
 const profileToggle = document.getElementById('profileToggle');
 const profileMenu = document.getElementById('profileMenu');
 const logoutButton = document.getElementById('logoutButton');
+const navAvatarLabel = document.getElementById('navAvatarLabel');
 
 let currentDoc = null;
 let lastActive = Date.now();
 let isFetching = false;
+let activeDocAiUuid = null;
+let isSendingDocAi = false;
 
 const state = {
   page: 1,
@@ -57,6 +69,42 @@ const state = {
   sort: 'recent',
   total: 0,
 };
+
+function initialsFromName(name) {
+  const words = (name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!words.length) return 'ME';
+  return words.map((word) => word[0].toUpperCase()).join('');
+}
+
+function setNavAvatar(photoLink, displayName) {
+  if (!navAvatarLabel) return;
+  navAvatarLabel.innerHTML = '';
+  if (photoLink) {
+    const image = document.createElement('img');
+    image.src = photoLink;
+    image.alt = `${displayName || 'User'} profile photo`;
+    navAvatarLabel.appendChild(image);
+    return;
+  }
+  navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+async function loadNavAvatar() {
+  try {
+    const response = await fetch('/api/profile');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      return;
+    }
+    setNavAvatar(data.profile?.photo_link || null, data.profile?.display_name || '');
+  } catch (error) {
+    // keep fallback initials
+  }
+}
 
 function markActive() {
   lastActive = Date.now();
@@ -208,6 +256,12 @@ async function openDetail(doc) {
   detailViews.textContent = doc.views;
   detailPopularity.textContent = doc.popularity;
   detailLike.textContent = doc.liked ? 'Unlike' : 'Like';
+  if (detailAskAi) {
+    const aiAllowed = doc.aiallowed !== false;
+    detailAskAi.disabled = !aiAllowed;
+    detailAskAi.textContent = aiAllowed ? 'Ask AI' : 'AI disabled';
+    detailAskAi.title = aiAllowed ? '' : 'Uploader disabled AI for this document.';
+  }
   renderThumb(detailThumb, doc);
 
   if (detailEdit && detailDelete && detailReport) {
@@ -372,6 +426,143 @@ function closeModal(modal) {
   modal.classList.add('is-hidden');
 }
 
+function clearElement(element) {
+  if (!element) return;
+  while (element.firstChild) {
+    element.removeChild(element.firstChild);
+  }
+}
+
+function appendDocAiBubble(role, text, { pending = false } = {}) {
+  if (!docAiMessages) return null;
+  const empty = docAiMessages.querySelector('.doc-ai-empty');
+  if (empty) empty.remove();
+  const bubble = document.createElement('div');
+  bubble.className = `doc-ai-bubble ${role}${pending ? ' pending' : ''}`;
+  bubble.textContent = text || '';
+  docAiMessages.appendChild(bubble);
+  docAiMessages.scrollTop = docAiMessages.scrollHeight;
+  return bubble;
+}
+
+function renderDocAiMessages(messages) {
+  if (!docAiMessages) return;
+  clearElement(docAiMessages);
+  if (!Array.isArray(messages) || !messages.length) {
+    const empty = document.createElement('p');
+    empty.className = 'doc-ai-empty';
+    empty.textContent = 'Start by asking a question about this document.';
+    docAiMessages.appendChild(empty);
+    return;
+  }
+  messages.forEach((message) => {
+    appendDocAiBubble(message.role === 'user' ? 'user' : 'assistant', message.content || '');
+  });
+}
+
+function resetDocAiState() {
+  activeDocAiUuid = null;
+  isSendingDocAi = false;
+  if (docAiInput) {
+    docAiInput.value = '';
+    docAiInput.disabled = false;
+  }
+  if (docAiMessage) {
+    docAiMessage.textContent = '';
+  }
+  renderDocAiMessages([]);
+}
+
+function closeDocAiModal() {
+  if (!docAiModal) return;
+  closeModal(docAiModal);
+  resetDocAiState();
+}
+
+async function openDocAiModal(doc) {
+  if (!doc || !doc.uuid || !docAiModal) return;
+  if (doc.aiallowed === false) {
+    alert('AI is disabled for this document by the uploader.');
+    return;
+  }
+  activeDocAiUuid = doc.uuid;
+  if (docAiMessage) docAiMessage.textContent = '';
+  if (docAiTitle) {
+    docAiTitle.textContent = `Ask AI: ${doc.title || 'Untitled document'}`;
+  }
+  if (docAiSubtitle) {
+    docAiSubtitle.textContent = 'Loading document context...';
+  }
+  renderDocAiMessages([]);
+  openModal(docAiModal);
+
+  try {
+    const response = await fetch(`/api/library/documents/${encodeURIComponent(doc.uuid)}/ask-ai/bootstrap`);
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to load document AI conversation.');
+    }
+    if (docAiSubtitle) {
+      const summary = data.context && data.context.summary ? data.context.summary : 'Document context ready.';
+      docAiSubtitle.textContent = `Context: ${summary}`;
+    }
+    renderDocAiMessages(data.messages || []);
+  } catch (error) {
+    if (docAiSubtitle) {
+      docAiSubtitle.textContent = 'Document context could not be loaded.';
+    }
+    if (docAiMessage) {
+      docAiMessage.textContent = error.message || 'Unable to load document AI conversation.';
+    }
+  }
+}
+
+async function sendDocAiMessage(event) {
+  event.preventDefault();
+  if (isSendingDocAi || !activeDocAiUuid || !docAiInput) return;
+  const content = docAiInput.value.trim();
+  if (!content) return;
+  isSendingDocAi = true;
+  if (docAiMessage) docAiMessage.textContent = '';
+  docAiInput.value = '';
+  docAiInput.disabled = true;
+  const userBubble = appendDocAiBubble('user', content);
+  const pendingBubble = appendDocAiBubble('assistant', 'Thinking...', { pending: true });
+
+  try {
+    const response = await fetch(`/api/library/documents/${encodeURIComponent(activeDocAiUuid)}/ask-ai/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to send message.');
+    }
+    if (pendingBubble) {
+      pendingBubble.classList.remove('pending');
+      pendingBubble.textContent = data.message && data.message.content
+        ? data.message.content
+        : 'No response generated.';
+    }
+  } catch (error) {
+    if (pendingBubble) pendingBubble.remove();
+    if (!userBubble || !userBubble.parentElement) {
+      appendDocAiBubble('user', content);
+    }
+    if (docAiMessage) {
+      docAiMessage.textContent = error.message || 'Unable to send message.';
+    }
+  } finally {
+    isSendingDocAi = false;
+    docAiInput.disabled = false;
+    docAiInput.focus();
+    if (docAiMessages) {
+      docAiMessages.scrollTop = docAiMessages.scrollHeight;
+    }
+  }
+}
+
 if (uploadToggle) {
   uploadToggle.addEventListener('click', () => openModal(uploadModal));
 }
@@ -390,6 +581,13 @@ if (detailLike) {
 
 if (detailOpen) {
   detailOpen.addEventListener('click', openDocument);
+}
+
+if (detailAskAi) {
+  detailAskAi.addEventListener('click', async () => {
+    if (!currentDoc) return;
+    await openDocAiModal(currentDoc);
+  });
 }
 
 if (detailMenuToggle) {
@@ -473,6 +671,14 @@ if (commentForm) {
   commentForm.addEventListener('submit', submitComment);
 }
 
+if (docAiClose) {
+  docAiClose.addEventListener('click', closeDocAiModal);
+}
+
+if (docAiForm) {
+  docAiForm.addEventListener('submit', sendDocAiMessage);
+}
+
 if (uploadForm) {
   uploadForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -548,6 +754,14 @@ document.addEventListener('click', (event) => {
   }
 });
 
+if (docAiModal) {
+  docAiModal.addEventListener('click', (event) => {
+    if (event.target === docAiModal) {
+      closeDocAiModal();
+    }
+  });
+}
+
 if (logoutButton) {
   logoutButton.addEventListener('click', async () => {
     try {
@@ -567,3 +781,4 @@ setInterval(() => {
 
 loadCourses();
 fetchDocuments();
+loadNavAvatar();

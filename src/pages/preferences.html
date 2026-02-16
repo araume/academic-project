@@ -4,19 +4,130 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Preferences</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    body { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; background: #efeeec; color: #0f2639; }
-    .wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; }
-    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 18px 40px rgba(15, 38, 57, 0.12); }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/preferences.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Preferences</h1>
-      <p>Placeholder page. Content will be added later.</p>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
     </div>
-  </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="preferences-page">
+    <section class="preferences-card">
+      <p class="eyebrow">Privacy & Presence</p>
+      <h1>Preferences</h1>
+      <p class="subcopy">Control how others find and contact you.</p>
+
+      <form id="privacyForm" class="preferences-form">
+        <label class="setting-row">
+          <div>
+            <h2>Search visibility</h2>
+            <p>When enabled, your profile appears in connections search.</p>
+          </div>
+          <input type="checkbox" id="searchable" />
+        </label>
+
+        <label class="setting-row">
+          <div>
+            <h2>Require follow approval</h2>
+            <p>Users must send a follow request before they can follow you.</p>
+          </div>
+          <input type="checkbox" id="followApprovalRequired" />
+        </label>
+
+        <label class="setting-row">
+          <div>
+            <h2>Show active status</h2>
+            <p>When disabled, others see your status as hidden/inactive.</p>
+          </div>
+          <input type="checkbox" id="activeVisible" />
+        </label>
+
+        <section class="settings-group">
+          <h2>Notifications</h2>
+          <p>Choose which updates should trigger notifications for your account.</p>
+        </section>
+
+        <label class="setting-row">
+          <div>
+            <h2>New posts from followings</h2>
+            <p>Get notified when people you follow publish a new post.</p>
+          </div>
+          <input type="checkbox" id="notifyFollowingPosts" />
+        </label>
+
+        <label class="setting-row">
+          <div>
+            <h2>Post activity</h2>
+            <p>Get notified when someone likes or comments on your posts.</p>
+          </div>
+          <input type="checkbox" id="notifyPostActivity" />
+        </label>
+
+        <label class="setting-row">
+          <div>
+            <h2>Document activity</h2>
+            <p>Get notified when someone likes or comments on your uploads.</p>
+          </div>
+          <input type="checkbox" id="notifyDocumentActivity" />
+        </label>
+
+        <label class="policy-field">
+          <span>Non-follower chat policy</span>
+          <select id="nonFollowerChatPolicy">
+            <option value="request">Allow requests (recommended)</option>
+            <option value="allow">Allow direct chats</option>
+            <option value="deny">Deny chats</option>
+          </select>
+          <small>
+            `request` lets non-followers send chat requests to your requests inbox. `deny` blocks them.
+          </small>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" class="primary-button">Save changes</button>
+          <a href="/preferences/blocked-users" class="secondary-link">Blocked users</a>
+        </div>
+        <p class="form-message" id="privacyMessage"></p>
+      </form>
+    </section>
+  </main>
+
+  <script src="/src/js/preferences.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
 </body>
 </html>

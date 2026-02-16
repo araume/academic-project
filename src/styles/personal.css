@@ -18,14 +18,23 @@ body {
   margin: 0;
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
-  background: #efeeec;
+  background:
+    radial-gradient(130% 90% at 0% 0%, rgba(222, 214, 205, 0.35) 0%, rgba(239, 238, 236, 0) 48%),
+    #efeeec;
 }
 
 .top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 120;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 22px 48px;
+  background: rgba(239, 238, 236, 0.92);
+  border-bottom: 1px solid rgba(15, 38, 57, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .nav-left {
@@ -143,41 +152,64 @@ body {
 
 .personal-shell {
   display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 24px;
-  padding: 12px 48px 60px;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: clamp(20px, 2.2vw, 34px);
+  padding: 26px 48px 68px;
+  max-width: 1500px;
+  margin: 0 auto;
+  align-items: start;
 }
 
 .personal-tabs {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   align-content: start;
+  position: sticky;
+  top: 108px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(15, 38, 57, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 14px 30px rgba(15, 38, 57, 0.08);
+  padding: 12px;
 }
 
 .tab-button {
-  border: none;
-  background: #fff;
-  padding: 12px 16px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 12px 14px;
   border-radius: 12px;
   text-align: left;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: var(--shadow);
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.tab-button:hover {
+  background: rgba(15, 38, 57, 0.06);
 }
 
 .tab-button.is-active {
   background: var(--accent-strong);
   color: #fff;
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 10px 20px rgba(12, 46, 70, 0.25);
 }
 
 .personal-panel {
   display: grid;
   gap: 24px;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(15, 38, 57, 0.09);
+  border-radius: 24px;
+  padding: 22px;
+  box-shadow: 0 16px 38px rgba(15, 38, 57, 0.08);
 }
 
 .tab-panel {
   display: none;
-  gap: 20px;
+  gap: 22px;
+  min-height: 0;
 }
 
 .tab-panel.is-active {
@@ -189,6 +221,8 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e5e1dc;
 }
 
 .panel-header h2 {
@@ -204,10 +238,35 @@ body {
   color: var(--muted);
 }
 
+.hint {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
 .panel-grid {
   display: grid;
   gap: 20px;
   grid-template-columns: 1fr 1fr;
+}
+
+.journal-layout {
+  display: grid;
+  grid-template-columns: 330px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.journal-sidebar {
+  align-content: start;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+}
+
+.journal-reader {
+  align-content: start;
+  min-height: 420px;
+  gap: 10px;
 }
 
 .panel-card {
@@ -264,6 +323,7 @@ body {
   background: var(--accent-strong);
   color: #fff;
 }
+
 
 .ghost-button {
   background: #fff;
@@ -421,21 +481,30 @@ body {
   color: var(--accent);
 }
 
-.entry-view {
-  border-top: 1px solid #e3e1dd;
-  padding-top: 16px;
-  display: grid;
-  gap: 8px;
+.journal-reader h3 {
+  margin: 0;
 }
 
-.entry-view pre {
+.journal-reader pre {
   white-space: pre-wrap;
   background: #f6f4f1;
   border-radius: 12px;
-  padding: 12px;
+  padding: 14px;
   margin: 0;
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink-soft);
+  min-height: 300px;
+}
+
+.journal-modal-card {
+  max-width: 680px;
+}
+
+.journal-modal-form {
+  box-shadow: none;
+  padding: 0;
+  background: transparent;
+  margin-top: 14px;
 }
 
 .task-board {
@@ -469,6 +538,7 @@ body {
 .task-card p {
   margin: 0;
   color: var(--ink-soft);
+  padding: 0 0 5px 0;
 }
 
 .task-card .meta {
@@ -476,8 +546,47 @@ body {
   color: var(--muted);
 }
 
-.task-card select {
+.task-status-select {
+  position: relative;
   width: 100%;
+}
+
+.task-status-select::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid #3d5668;
+  border-bottom: 2px solid #3d5668;
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
+
+.task-status-select select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: 1px solid #c9d4dd;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ffffff 0%, #f3f7fa 100%);
+  color: #1d3b4f;
+  font-weight: 600;
+  padding: 9px 36px 9px 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.task-status-select select:hover {
+  border-color: #9eb3c2;
+}
+
+.task-status-select select:focus {
+  outline: none;
+  border-color: #3b637c;
+  box-shadow: 0 0 0 3px rgba(59, 99, 124, 0.15);
 }
 
 .task-card button {
@@ -495,7 +604,10 @@ body {
   grid-template-columns: 280px 1fr;
   gap: 16px;
   align-items: start;
-  height: calc(100vh - 240px);
+  height: min(720px, calc(100vh - 290px));
+  max-height: min(720px, calc(100vh - 290px));
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ai-sidebar {
@@ -509,6 +621,8 @@ body {
   grid-template-rows: auto 1fr;
   align-self: start;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ai-sidebar-top {
@@ -526,8 +640,10 @@ body {
 .conversation-list {
   display: grid;
   gap: 8px;
+  height: 100%;
   max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   align-content: start;
   min-height: 0;
 }
@@ -586,6 +702,8 @@ body {
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ai-chat-header {
@@ -640,7 +758,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 6px;
   min-height: 0;
 }
@@ -782,8 +902,8 @@ body {
 
 .chat-input button {
   border: none;
-  background: #27313f;
   color: #fff;
+  background-color: #ffffff;
   border-radius: 12px;
   padding: 0 16px;
   display: inline-flex;
@@ -793,8 +913,8 @@ body {
 }
 
 .chat-input button img {
-  width: 18px;
-  height: 18px;
+  width: 30px;
+  height: 30px;
 }
 
 .context-card {
@@ -907,26 +1027,54 @@ body {
 
   .personal-tabs {
     grid-template-columns: repeat(3, 1fr);
+    position: static;
   }
 
-  .panel-grid {
+  .personal-panel {
+    padding: 18px;
+  }
+
+  .journal-layout {
     grid-template-columns: 1fr;
+  }
+
+  .journal-sidebar {
+    max-height: none;
   }
 
   .ai-shell {
     grid-template-columns: 1fr;
     height: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .ai-sidebar,
   .ai-chat {
     height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .conversation-list,
+  .chat-messages {
+    height: auto;
+    max-height: none;
+    overflow: visible;
   }
 }
 
 @media (max-width: 640px) {
-  .top-nav,
+  .top-nav {
+    padding: 20px;
+  }
+
   .personal-shell {
     padding: 20px;
+  }
+
+  .personal-panel {
+    padding: 14px;
+    border-radius: 18px;
   }
 }

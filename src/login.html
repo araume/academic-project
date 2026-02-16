@@ -30,11 +30,6 @@
           <h2>Sign in to continue</h2>
         </div>
 
-        <div class="panel-tabs">
-          <button class="tab-button is-active" type="button" data-target="login">Login</button>
-          <button class="tab-button" type="button" data-target="signup">Sign up</button>
-        </div>
-
         <form class="form-stack" data-form="login">
           <label>
             <span>Email</span>
@@ -49,52 +44,107 @@
               <input type="checkbox" data-toggle="password" data-target="login" />
               <span>Show password</span>
             </label>
-            <button type="button" class="link-button">Forgot password</button>
+            <button type="button" class="link-button" id="openForgotPasswordModal">Forgot password</button>
           </div>
           <button type="submit" class="primary-button">Login</button>
-          <button type="button" class="ghost-button" data-switch="signup">Sign up</button>
+          <button type="button" class="ghost-button" id="openSignupModal">Create account</button>
           <p class="form-message" data-message="login"></p>
-        </form>
-
-        <form class="form-stack is-hidden" data-form="signup">
-          <label>
-            <span>Email</span>
-            <input type="email" name="email" placeholder="Email" autocomplete="email" required />
-          </label>
-          <label>
-            <span>Password</span>
-            <input type="password" name="password" placeholder="Password" autocomplete="new-password" required />
-          </label>
-          <label>
-            <span>Username</span>
-            <input type="text" name="username" placeholder="Username" autocomplete="username" />
-          </label>
-          <label>
-            <span>Display name</span>
-            <input type="text" name="displayName" placeholder="Display name" />
-          </label>
-          <label>
-            <span>Course</span>
-            <input type="text" name="course" placeholder="Course" />
-          </label>
-          <label>
-            <span>Recovery email</span>
-            <input type="email" name="recoveryEmail" placeholder="Recovery email" autocomplete="email" />
-          </label>
-          <div class="form-row">
-            <label class="checkbox">
-              <input type="checkbox" data-toggle="password" data-target="signup" />
-              <span>Show password</span>
-            </label>
-            <button type="button" class="link-button" data-switch="login">Already have an account?</button>
-          </div>
-          <button type="submit" class="primary-button">Create account</button>
-          <p class="form-message" data-message="signup"></p>
+          <button type="button" class="link-button is-hidden" id="resendVerificationButton">Resend verification email</button>
         </form>
       </div>
       <p class="panel-footnote">By continuing you agree to keep account details confidential.</p>
     </section>
   </main>
+
+  <div class="signup-modal is-hidden" id="signupModal">
+    <div class="signup-modal-card">
+      <button type="button" class="modal-close" id="closeSignupModal" aria-label="Close sign up">×</button>
+      <div class="panel-header">
+        <p class="panel-tag">New account</p>
+        <h2>Create your profile</h2>
+      </div>
+      <form class="form-stack" data-form="signup">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" placeholder="Email" autocomplete="email" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" placeholder="Password" autocomplete="new-password" required />
+        </label>
+        <label>
+          <span>Username</span>
+          <input type="text" name="username" placeholder="Username" autocomplete="username" />
+        </label>
+        <label>
+          <span>Display name</span>
+          <input type="text" name="displayName" placeholder="Display name" />
+        </label>
+        <label>
+          <span>Course</span>
+          <select name="course" id="signupCourseSelect" required>
+            <option value="">Select course</option>
+          </select>
+        </label>
+        <label>
+          <span>Recovery email</span>
+          <input type="email" name="recoveryEmail" placeholder="Recovery email" autocomplete="email" />
+        </label>
+        <div class="form-row">
+          <label class="checkbox">
+            <input type="checkbox" data-toggle="password" data-target="signup" />
+            <span>Show password</span>
+          </label>
+          <button type="button" class="link-button" id="backToLogin">Back to login</button>
+        </div>
+        <button type="submit" class="primary-button">Create account</button>
+        <p class="form-message" data-message="signup"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="signup-modal is-hidden" id="forgotPasswordModal">
+    <div class="signup-modal-card forgot-modal-card">
+      <button type="button" class="modal-close" id="closeForgotPasswordModal" aria-label="Close forgot password">×</button>
+      <div class="panel-header">
+        <p class="panel-tag">Account recovery</p>
+        <h2>Reset password</h2>
+      </div>
+      <form class="form-stack" id="forgotPasswordForm">
+        <label>
+          <span>Email</span>
+          <input type="email" id="resetEmailInput" placeholder="Account email" autocomplete="email" required />
+        </label>
+
+        <div class="reset-step is-hidden" id="resetCodeStep">
+          <label>
+            <span>6-character code</span>
+            <input type="text" id="resetCodeInput" placeholder="Enter code" maxlength="6" autocomplete="one-time-code" />
+          </label>
+        </div>
+
+        <div class="reset-step is-hidden" id="resetPasswordStep">
+          <label>
+            <span>New password</span>
+            <input type="password" id="resetNewPasswordInput" placeholder="New password" autocomplete="new-password" />
+          </label>
+          <label>
+            <span>Confirm new password</span>
+            <input type="password" id="resetConfirmPasswordInput" placeholder="Confirm new password" autocomplete="new-password" />
+          </label>
+        </div>
+
+        <div class="reset-actions">
+          <button type="submit" class="primary-button" id="requestResetCodeButton">Send code</button>
+          <button type="submit" class="primary-button is-hidden" id="verifyResetCodeButton">Verify code</button>
+          <button type="submit" class="primary-button is-hidden" id="completePasswordResetButton">Update password</button>
+          <button type="button" class="link-button" id="backToLoginFromForgot">Back to login</button>
+        </div>
+
+        <p class="form-message" id="forgotPasswordMessage"></p>
+      </form>
+    </div>
+  </div>
 
   <script src="/src/js/login.js"></script>
 </body>
