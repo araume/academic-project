@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Account</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/account.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="account-page">
+    <section class="account-head">
+      <p class="eyebrow">Security & Login</p>
+      <h1>Account settings</h1>
+      <p class="subcopy">Manage sign-in credentials and recovery details.</p>
+    </section>
+
+    <section class="account-layout">
+      <aside class="account-card account-summary">
+        <h2>Account status</h2>
+        <div class="summary-row">
+          <span>Primary email</span>
+          <strong id="summaryEmail">-</strong>
+        </div>
+        <div class="summary-row">
+          <span>Email verification</span>
+          <strong id="emailStatusBadge" class="status-badge status-badge--pending">Pending</strong>
+        </div>
+        <div class="summary-row">
+          <span>Recovery email</span>
+          <strong id="summaryRecoveryEmail">Not set</strong>
+        </div>
+        <p class="summary-note">
+          Changing your primary email requires verification again before your next login.
+        </p>
+      </aside>
+
+      <div class="account-sections">
+        <section class="account-card">
+          <h2>Username</h2>
+          <form id="usernameForm" class="account-form">
+            <label>
+              <span>Username</span>
+              <input type="text" id="usernameInput" maxlength="32" placeholder="Enter username" required />
+              <small>3-32 chars. Letters, numbers, dot, underscore, hyphen.</small>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Save username</button>
+            </div>
+            <p class="form-message" id="usernameMessage"></p>
+          </form>
+        </section>
+
+        <section class="account-card">
+          <h2>Primary email</h2>
+          <form id="emailForm" class="account-form">
+            <label>
+              <span>Current email</span>
+              <input type="text" id="currentEmailInput" disabled />
+            </label>
+            <label>
+              <span>New email</span>
+              <input type="email" id="newEmailInput" placeholder="name@example.com" required />
+            </label>
+            <label>
+              <span>Current password</span>
+              <input type="password" id="emailCurrentPasswordInput" placeholder="Current password" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Change email</button>
+            </div>
+            <p class="form-message" id="emailMessage"></p>
+            <p class="verification-link is-hidden" id="verificationLinkWrap">
+              Dev verification link:
+              <a href="#" target="_blank" rel="noopener noreferrer" id="verificationLink">Open verification</a>
+            </p>
+          </form>
+        </section>
+
+        <section class="account-card">
+          <h2>Password</h2>
+          <form id="passwordForm" class="account-form">
+            <label>
+              <span>Current password</span>
+              <input type="password" id="passwordCurrentInput" placeholder="Current password" required />
+            </label>
+            <label>
+              <span>New password</span>
+              <input type="password" id="passwordNewInput" placeholder="New password" minlength="8" required />
+            </label>
+            <label>
+              <span>Confirm new password</span>
+              <input type="password" id="passwordConfirmInput" placeholder="Confirm new password" minlength="8" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Update password</button>
+            </div>
+            <p class="form-message" id="passwordMessage"></p>
+          </form>
+        </section>
+
+        <section class="account-card">
+          <h2>Recovery email</h2>
+          <form id="recoveryForm" class="account-form">
+            <label>
+              <span>Recovery email</span>
+              <input type="email" id="recoveryEmailInput" placeholder="name@example.com" />
+              <small>Leave blank to remove recovery email.</small>
+            </label>
+            <label>
+              <span>Current password</span>
+              <input type="password" id="recoveryCurrentPasswordInput" placeholder="Current password" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Save recovery email</button>
+            </div>
+            <p class="form-message" id="recoveryMessage"></p>
+          </form>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="/src/js/nav-basic.js"></script>
+  <script src="/src/js/account.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

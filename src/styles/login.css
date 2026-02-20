@@ -1,0 +1,395 @@
+:root {
+  --ink: #0f2639;
+  --ink-soft: #31485a;
+  --accent: #1c3c5a;
+  --accent-strong: #0c2e46;
+  --sand: #e8e3dc;
+  --stone: #f4f3f1;
+  --card: #ffffff;
+  --muted: #7b8b99;
+  --shadow: 0 28px 60px rgba(15, 38, 57, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at top, #faf9f7, #e7e5e2 55%, #dfddda 100%);
+}
+
+.login-shell {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  min-height: 100vh;
+  animation: pageFade 0.8s ease-out both;
+}
+
+.login-brand {
+  position: relative;
+  padding: 64px 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-card {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 32px;
+  max-width: 460px;
+}
+
+.brand-logo {
+  width: 160px;
+  height: auto;
+  filter: drop-shadow(0 12px 24px rgba(10, 31, 46, 0.15));
+}
+
+.brand-copy h1 {
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  font-size: 2.6rem;
+  margin: 0 0 10px;
+}
+
+.brand-copy p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.brand-kicker {
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  color: var(--accent-strong);
+  margin-bottom: 8px;
+}
+
+.brand-ornament {
+  position: absolute;
+  inset: 18% 8% auto 12%;
+  height: 60%;
+  border-radius: 36px;
+  background: linear-gradient(135deg, rgba(213, 198, 190, 0.7), rgba(233, 230, 225, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 40px 80px rgba(12, 26, 38, 0.12);
+}
+
+.login-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 48px;
+}
+
+.panel-card {
+  width: min(420px, 100%);
+  background: var(--card);
+  border-radius: 24px;
+  padding: 36px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 24px;
+  animation: panelSlide 0.7s ease-out both;
+}
+
+.panel-header h2 {
+  margin: 8px 0 0;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  font-size: 2rem;
+}
+
+.panel-tag {
+  margin: 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.panel-tabs {
+  display: inline-flex;
+  background: var(--stone);
+  border-radius: 999px;
+  padding: 4px;
+  gap: 6px;
+  align-self: center;
+  margin: 0 auto;
+}
+
+.tab-button {
+  border: none;
+  background: transparent;
+  padding: 10px 20px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.tab-button.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.form-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.form-stack label {
+  display: grid;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.form-stack input {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #d8d8d8;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-stack select {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #d8d8d8;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+  background: #fff;
+}
+
+.form-stack input:focus,
+.form-stack select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(28, 60, 90, 0.15);
+}
+
+.form-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.form-stack label.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  flex-direction: row;
+  justify-self: start;
+  width: auto;
+}
+
+.form-stack label.checkbox input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.form-stack label.checkbox span {
+  display: inline-block;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.primary-button,
+.ghost-button,
+.link-button {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.primary-button {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.ghost-button {
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.link-button {
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.form-message {
+  min-height: 18px;
+  margin: 0;
+  color: #b0554a;
+  font-size: 0.85rem;
+}
+
+.form-message.success {
+  color: #2f9e68;
+}
+
+#resendVerificationButton {
+  justify-self: start;
+  margin-top: -6px;
+}
+
+.panel-footnote {
+  margin: 18px 0 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  max-width: 360px;
+}
+
+.signup-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 19, 30, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  z-index: 1200;
+}
+
+.signup-modal-card {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 24px;
+  box-shadow: 0 34px 80px rgba(8, 23, 36, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 30px 28px 26px;
+  position: relative;
+  animation: panelSlide 0.25s ease-out both;
+}
+
+.forgot-modal-card {
+  width: min(500px, 100%);
+}
+
+.reset-step {
+  display: grid;
+  gap: 14px;
+}
+
+.reset-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.reset-actions .link-button {
+  justify-self: start;
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 1.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--ink);
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+@media (max-width: 960px) {
+  .login-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .login-brand {
+    padding: 48px 24px 12px;
+  }
+
+  .brand-ornament {
+    inset: 12% 6% auto 6%;
+  }
+
+  .brand-card {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .brand-logo {
+    width: 140px;
+  }
+
+  .login-panel {
+    padding: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-brand {
+    padding: 36px 20px 0;
+  }
+
+  .panel-card {
+    padding: 28px 22px;
+  }
+
+  .brand-copy h1 {
+    font-size: 2.2rem;
+  }
+}
+
+@keyframes panelSlide {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pageFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

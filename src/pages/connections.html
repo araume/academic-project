@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Connections</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/connections.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" class="is-active" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="connections-shell">
+    <section class="connections-left">
+      <article class="hero-card card">
+        <p class="eyebrow">Network</p>
+        <h1>Connections</h1>
+        <p class="subcopy">Find peers, follow updates, and start direct or group chats from one place.</p>
+        <div class="stats-row" id="statsRow">
+          <button type="button" class="stat-button" data-quick-list="following">
+            <span class="stat-label">Following</span>
+            <strong id="followingCount">0</strong>
+          </button>
+          <button type="button" class="stat-button" data-quick-list="followers">
+            <span class="stat-label">Followers</span>
+            <strong id="followersCount">0</strong>
+          </button>
+          <div>
+            <span class="stat-label">Pending</span>
+            <strong id="pendingCount">0</strong>
+          </div>
+        </div>
+      </article>
+
+      <article class="search-card card">
+        <div class="search-header">
+          <h2>Discover users</h2>
+          <span class="result-count" id="searchResultCount">0 results</span>
+        </div>
+        <form class="search-form" id="searchForm">
+          <input type="text" id="searchInput" placeholder="Search by display name or course" autocomplete="off" />
+          <button type="submit">Search</button>
+        </form>
+        <div class="chips-row">
+          <button type="button" class="chip" data-list-type="following">Following</button>
+          <button type="button" class="chip" data-list-type="followers">Followers</button>
+          <button type="button" class="chip" data-list-type="mutual">Mutual</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="connections-right">
+      <article class="request-card card">
+        <div class="request-header">
+          <h2>Requests</h2>
+          <div class="request-tabs">
+            <button type="button" class="request-tab is-active" data-request-tab="follow">Follow</button>
+            <button type="button" class="request-tab" data-request-tab="chat">Chat</button>
+          </div>
+        </div>
+        <div class="request-list" id="requestList"></div>
+      </article>
+
+      <article class="chat-card card">
+        <div class="chat-title-row">
+          <h2>Chats</h2>
+          <div class="chat-actions">
+            <button type="button" class="secondary-button" id="chatFocusToggle">Expand chat</button>
+            <button type="button" class="secondary-button" id="openGroupModal">New group</button>
+          </div>
+        </div>
+        <div class="chat-shell">
+          <aside class="conversation-sidebar" id="conversationList"></aside>
+          <section class="conversation-panel">
+            <header class="conversation-header">
+              <h3 id="activeConversationTitle">Select a conversation</h3>
+              <p id="activeConversationMeta">Messages stay inside this panel and won’t expand the page.</p>
+            </header>
+            <div class="conversation-messages" id="messageList"></div>
+            <div class="typing-indicator" id="typingIndicator"></div>
+            <form class="message-form" id="messageForm">
+              <div class="reply-preview is-hidden" id="replyPreview">
+                <div class="reply-preview-copy">
+                  <strong id="replyPreviewAuthor"></strong>
+                  <span id="replyPreviewText"></span>
+                </div>
+                <button type="button" class="mini-ghost" id="clearReplyButton">Clear</button>
+              </div>
+              <div class="attachment-preview is-hidden" id="messageAttachmentPreview">
+                <span id="messageAttachmentName">No attachment</span>
+                <button type="button" class="mini-ghost" id="removeMessageAttachmentButton">Remove</button>
+              </div>
+              <div class="message-toolbar">
+                <button type="button" class="toolbar-button" id="emojiToggleButton" aria-label="Insert emoji">😊</button>
+                <label for="messageAttachmentInput" class="toolbar-button" title="Attach image or video">📎</label>
+                <input type="file" id="messageAttachmentInput" accept="image/*,video/*" class="is-hidden" />
+              </div>
+              <div class="emoji-picker is-hidden" id="emojiPicker"></div>
+              <div class="message-compose-row">
+                <input type="text" id="messageInput" maxlength="2000" placeholder="Write a message..." disabled />
+                <button type="submit" id="messageSend" disabled>Send</button>
+              </div>
+            </form>
+            <p class="form-message" id="messageFeedback"></p>
+          </section>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <div class="modal is-hidden" id="userListModal">
+    <div class="modal-card user-list-modal-card">
+      <button type="button" class="close-button" id="userListModalClose">×</button>
+      <h2 id="userListModalTitle">Connections</h2>
+      <p class="user-list-modal-meta" id="userListModalMeta">Choose a list or run a search to view users.</p>
+      <section class="results-list modal-results-list" id="userResults"></section>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="groupModal">
+    <div class="modal-card">
+      <button type="button" class="close-button" id="groupModalClose">×</button>
+      <h2>Create group chat</h2>
+      <form id="groupForm" class="group-form">
+        <label>
+          <span>Group title</span>
+          <input type="text" id="groupTitle" maxlength="80" placeholder="Study circle, Thesis squad..." required />
+        </label>
+        <label>
+          <span>Select members (people you follow)</span>
+          <select id="groupMembers" multiple size="8"></select>
+          <small>Hold Ctrl/Cmd to choose multiple members.</small>
+        </label>
+        <button type="submit" class="primary-button">Create group</button>
+        <p class="form-message" id="groupMessage"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/src/js/connections.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

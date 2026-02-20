@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rooms</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/rooms.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" class="is-active" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="rooms-shell">
+    <aside class="rooms-left">
+      <section class="card hero-card">
+        <p class="eyebrow">Realtime meeting hub</p>
+        <h1>Rooms</h1>
+        <p class="subcopy">Start study calls, request moderated rooms, and manage meetings by visibility and course context.</p>
+      </section>
+
+      <section class="card context-card">
+        <div class="context-head">
+          <h2>Courses</h2>
+          <span id="contextCount">0</span>
+        </div>
+        <div class="context-list" id="contextList"></div>
+      </section>
+
+      <section class="card request-card is-hidden" id="requestsCard">
+        <div class="request-head">
+          <h3>Pending requests</h3>
+          <span id="pendingRequestCount">0</span>
+        </div>
+        <div class="request-list" id="requestList"></div>
+      </section>
+    </aside>
+
+    <section class="rooms-main" id="roomsMain">
+      <section class="card workspace-card" id="workspaceCard">
+        <header class="workspace-head">
+          <div>
+            <p class="eyebrow" id="selectedContextType">Room list</p>
+            <h2 id="selectedContextName">Public Rooms</h2>
+            <p class="subcopy" id="workspaceHint">Visible rooms in the selected course.</p>
+          </div>
+          <div class="workspace-actions">
+            <button type="button" class="ghost-button" id="refreshRoomsButton">Refresh</button>
+            <button type="button" class="primary-button" id="openCreateRoomButton">Create room</button>
+          </div>
+        </header>
+
+        <div class="workspace-filters">
+          <label>
+            <span>State</span>
+            <select id="stateFilter">
+              <option value="">All states</option>
+              <option value="live">Live</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="ended">Ended</option>
+            </select>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="mineOnlyToggle" />
+            <span>Only my rooms</span>
+          </label>
+        </div>
+
+        <p class="inline-message" id="workspaceMessage"></p>
+        <div class="rooms-list" id="roomsList"></div>
+      </section>
+
+      <section class="card call-panel-card is-hidden" id="callPanelCard">
+        <header class="call-panel-head">
+          <div>
+            <p class="eyebrow">Live Call</p>
+            <h3>Group call panel</h3>
+          </div>
+          <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave view</button>
+        </header>
+        <p class="call-panel-status" id="callPanelStatus">Join a room to start the call on this page.</p>
+        <div class="call-frame-wrap is-hidden" id="callFrameWrap">
+          <iframe
+            id="callFrame"
+            title="Room call"
+            allow="camera; microphone; display-capture; fullscreen; autoplay; clipboard-read; clipboard-write"
+            referrerpolicy="strict-origin-when-cross-origin"
+          ></iframe>
+        </div>
+        <div class="call-placeholder" id="callPlaceholder">
+          <p>Your call will open here on the right side.</p>
+        </div>
+        <a class="ghost-button is-hidden call-tab-link" id="openCallTab" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+      </section>
+    </section>
+  </main>
+
+  <div class="modal is-hidden" id="roomModal">
+    <div class="modal-card">
+      <button type="button" class="close-button" id="roomModalClose">×</button>
+      <h2 id="roomModalTitle">Create room</h2>
+      <form id="roomForm" class="room-form">
+        <label>
+          <span>Meet name</span>
+          <input type="text" id="meetNameInput" maxlength="80" placeholder="Example: Data Structures Recap" required />
+        </label>
+        <label>
+          <span>Meet ID</span>
+          <input type="text" id="meetIdPreview" value="Generated automatically on submit" readonly />
+        </label>
+        <label>
+          <span>Visibility</span>
+          <select id="visibilityInput">
+            <option value="public">Public</option>
+            <option value="course_exclusive">Course-exclusive</option>
+            <option value="private">Private (invite only)</option>
+          </select>
+        </label>
+        <label>
+          <span id="courseContextLabel">Course context</span>
+          <select id="communityInput">
+            <option value="">No specific course</option>
+          </select>
+        </label>
+        <label class="private-only is-hidden" id="passwordField">
+          <span>Meet password (optional)</span>
+          <input type="password" id="meetPasswordInput" maxlength="128" placeholder="At least 6 characters if set" />
+        </label>
+        <div class="room-grid">
+          <label>
+            <span>Maximum participants</span>
+            <input type="number" id="maxParticipantsInput" min="2" max="99" value="25" required />
+          </label>
+          <label>
+            <span>Schedule for later</span>
+            <input type="datetime-local" id="scheduledAtInput" />
+          </label>
+        </div>
+        <fieldset class="toggle-set">
+          <legend>Participant permissions</legend>
+          <label class="toggle-pill">
+            <input type="checkbox" id="allowMicInput" checked />
+            <span>Allow mic</span>
+          </label>
+          <label class="toggle-pill">
+            <input type="checkbox" id="allowVideoInput" checked />
+            <span>Allow video</span>
+          </label>
+          <label class="toggle-pill">
+            <input type="checkbox" id="allowScreenShareInput" />
+            <span>Allow screen share</span>
+          </label>
+        </fieldset>
+        <button type="submit" class="primary-button" id="submitRoomButton">Submit</button>
+        <p class="inline-message" id="roomFormMessage"></p>
+        <div class="invite-result is-hidden" id="inviteResult">
+          <p>Private invite link generated:</p>
+          <a href="#" target="_blank" rel="noopener noreferrer" id="inviteResultLink"></a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/src/js/rooms.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

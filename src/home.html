@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Home</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/home.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" class="is-active" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ML</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <section class="feed">
+      <div class="composer">
+        <div class="composer-avatar" id="composerAvatar"></div>
+        <button class="composer-button" id="createPostToggle">
+          <img src="/assets/write-create.svg" alt="" />
+          Create post
+        </button>
+      </div>
+
+      <div id="postsFeed" class="posts-feed"></div>
+    </section>
+
+    <aside class="sidebar">
+      <section class="side-card large">
+        <h3>Trending Discussions</h3>
+        <div class="side-card-content side-card-content--large" id="trendingDiscussionsList">
+          <div class="placeholder-line"></div>
+          <div class="placeholder-line wide"></div>
+          <div class="placeholder-line"></div>
+        </div>
+      </section>
+      <div class="side-grid">
+        <section class="side-card">
+          <h3>Course materials</h3>
+          <div class="side-card-content" id="courseMaterialsList">
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+          </div>
+        </section>
+        <section class="side-card">
+          <h3>Suggested Rooms</h3>
+          <div class="side-card-content" id="suggestedRoomsList">
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <div class="modal is-hidden" id="createPostModal">
+    <div class="modal-card create-post-card">
+      <button class="close-button" id="createPostClose">×</button>
+      <h2>Create a post</h2>
+      <form id="createPostForm" class="post-form post-form--create">
+        <label class="field">
+          <span class="field-label">Title</span>
+          <input type="text" name="title" placeholder="What is this post about?" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Content</span>
+          <textarea name="content" rows="4" placeholder="Share details with your classmates..." required></textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Upload file (optional)</span>
+          <input type="file" name="file" id="attachmentFile" accept="image/*,video/*" />
+          <span class="post-form-hint">File type is detected automatically based on what you upload.</span>
+        </label>
+        <div class="library-picker-row">
+          <button type="button" class="secondary-button" id="openLibraryPicker">Select from Open Library</button>
+          <div class="library-picked is-hidden" id="selectedLibraryDoc">
+            <span id="selectedLibraryDocTitle"></span>
+            <button type="button" id="clearLibraryDoc">Clear</button>
+          </div>
+          <span class="post-form-hint">Use one source only: upload a file or choose an Open Library document.</span>
+        </div>
+        <button type="submit" class="primary-button">Post</button>
+        <p class="form-message" id="createPostMessage"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="editPostModal">
+    <div class="modal-card">
+      <button class="close-button" id="editPostClose">×</button>
+      <h2>Edit post</h2>
+      <form id="editPostForm" class="post-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea name="content" rows="4" required></textarea>
+        </label>
+        <button type="submit" class="primary-button">Save</button>
+        <p class="form-message" id="editPostMessage"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="commentsModal">
+    <div class="modal-card">
+      <button class="close-button" id="commentsClose">×</button>
+      <h2>Discussion</h2>
+      <div class="comment-list" id="postCommentList"></div>
+      <form id="postCommentForm" class="comment-form">
+        <input type="text" id="postCommentInput" placeholder="Write a comment..." />
+        <button type="submit">Post</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="postAiModal">
+    <div class="modal-card post-ai-modal-card">
+      <button class="close-button" id="postAiClose">×</button>
+      <h2 id="postAiTitle">Ask AI about this post</h2>
+      <p class="detail-description" id="postAiSubtitle">Post context is automatically included.</p>
+      <div class="post-ai-messages" id="postAiMessages"></div>
+      <form id="postAiForm" class="post-ai-form">
+        <input type="text" id="postAiInput" placeholder="Ask about this post..." />
+        <button type="submit" class="primary-button">Send</button>
+      </form>
+      <p class="form-message" id="postAiMessage"></p>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="postSpotlightModal">
+    <div class="modal-card spotlight-modal-card">
+      <button class="close-button" id="postSpotlightClose">×</button>
+      <h2>Post</h2>
+      <div id="postSpotlightContainer" class="spotlight-post-wrap"></div>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="libraryDocModal">
+    <div class="modal-card library-doc-card">
+      <button class="close-button" id="libraryDocClose">×</button>
+      <div class="library-doc-head">
+        <p class="library-doc-eyebrow">Open Library Attachment</p>
+        <h2 id="libraryDocTitle"></h2>
+        <p id="libraryDocDescription" class="detail-description library-doc-description"></p>
+      </div>
+      <div class="detail-grid library-doc-grid">
+        <div class="detail-item">
+          <span class="detail-label">Uploader</span>
+          <p id="libraryDocUploader" class="detail-value"></p>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Course</span>
+          <p id="libraryDocCourse" class="detail-value"></p>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Subject/Lesson</span>
+          <p id="libraryDocSubject" class="detail-value"></p>
+        </div>
+      </div>
+      <div class="library-doc-actions">
+        <button class="primary-button" id="libraryDocOpen">Open/View</button>
+      </div>
+      <p class="form-message library-doc-open-message" id="libraryDocOpenMessage"></p>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="libraryPickerModal">
+    <div class="modal-card library-picker-card">
+      <button class="close-button" id="libraryPickerClose">×</button>
+      <div class="picker-header">
+        <h2>Select Open Library document</h2>
+        <p class="detail-description">Browse and attach one document from your library feed.</p>
+      </div>
+      <div class="picker-search">
+        <input type="text" id="libraryPickerSearch" placeholder="Search title, course, or subject..." />
+      </div>
+      <div class="library-picker-list" id="libraryPickerList"></div>
+    </div>
+  </div>
+
+  <script src="/src/js/home.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/admin.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search"><img src="/assets/search.svg" alt="" /></button>
+      <button class="icon-button" aria-label="Notifications"><img src="/assets/notif.svg" alt="" /></button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="admin-page">
+    <section class="admin-header">
+      <p class="eyebrow">Platform Governance</p>
+      <h1>Admin Console</h1>
+      <p class="subcopy">Monitor activity, handle reports, and manage users and platform content.</p>
+      <p class="role-pill" id="adminRoleBadge">Role: loading...</p>
+      <p class="page-message" id="pageMessage"></p>
+    </section>
+
+    <section class="admin-tabs">
+      <button class="tab-button is-active" data-tab="logs">Logs</button>
+      <button class="tab-button" data-tab="reports">Reports</button>
+      <button class="tab-button" data-tab="accounts">Accounts</button>
+      <button class="tab-button" data-tab="content">Content</button>
+      <button class="tab-button" data-tab="spaces">Spaces</button>
+      <button class="tab-button" data-tab="site-pages">Site pages</button>
+    </section>
+
+    <section class="tab-panel is-active" id="panel-logs">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Audit logs</h2>
+          <div class="filters">
+            <input type="text" id="logsQuery" placeholder="Search action, target, path..." />
+            <input type="text" id="logsExecutor" placeholder="Executor UID" />
+            <input type="text" id="logsCourse" placeholder="Course" />
+            <select id="logsSort">
+              <option value="latest">Latest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+            <button class="primary-button" id="refreshLogs">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>LogID</th>
+                <th>Action</th>
+                <th>Executor</th>
+                <th>Course</th>
+                <th>Date time</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-reports">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Reports</h2>
+          <div class="filters">
+            <input type="text" id="reportsQuery" placeholder="Search reason, target, reporter..." />
+            <input type="text" id="reportsCourse" placeholder="Course" />
+            <select id="reportsSource">
+              <option value="">All sources</option>
+              <option value="profile">Profile reports</option>
+              <option value="community">Community reports</option>
+              <option value="main_post">Main post reports</option>
+              <option value="chat_message">Chat message reports</option>
+            </select>
+            <select id="reportsStatus">
+              <option value="">All statuses</option>
+              <option value="open">Open</option>
+              <option value="under_review">Under review</option>
+              <option value="resolved_action_taken">Resolved (action taken)</option>
+              <option value="resolved_no_action">Resolved (no action)</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <button class="primary-button" id="refreshReports">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ReportID</th>
+                <th>Source</th>
+                <th>Target</th>
+                <th>Reporter</th>
+                <th>Status</th>
+                <th>Reason</th>
+                <th>Date time</th>
+              </tr>
+            </thead>
+            <tbody id="reportsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-accounts">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Accounts</h2>
+          <div class="filters">
+            <input type="text" id="accountsQuery" placeholder="Search uid, username, email..." />
+            <input type="text" id="accountsCourse" placeholder="Course" />
+            <select id="accountsRoleFilter">
+              <option value="">All user types</option>
+              <option value="owner">Owner</option>
+              <option value="admin">Admin</option>
+              <option value="member">Member</option>
+            </select>
+            <select id="accountsStatusFilter">
+              <option value="">All statuses</option>
+              <option value="verified">Verified</option>
+              <option value="non-verified">Non-verified</option>
+              <option value="banned">Banned</option>
+            </select>
+            <button class="primary-button" id="refreshAccounts">Refresh</button>
+          </div>
+        </div>
+
+        <div class="moderator-tools">
+          <h3>Moderator assignment</h3>
+          <div class="filters">
+            <select id="moderatorCommunity"></select>
+            <input type="text" id="moderatorTargetUid" placeholder="Target user UID" />
+            <button class="secondary-button" id="assignModerator">Assign moderator</button>
+            <button class="secondary-button" id="removeModerator">Remove moderator</button>
+          </div>
+          <p class="inline-message" id="moderatorMessage"></p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>UID</th>
+                <th>Username</th>
+                <th>Display name</th>
+                <th>Email</th>
+                <th>User type</th>
+                <th>Recovery email</th>
+                <th>Status</th>
+                <th>Date registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="accountsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-content">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Content moderation</h2>
+          <div class="filters">
+            <input type="text" id="contentQuery" placeholder="Search text..." />
+            <input type="text" id="contentCourse" placeholder="Course" />
+            <select id="contentStatus">
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="taken_down">Taken down</option>
+            </select>
+            <button class="primary-button" id="refreshContent">Refresh</button>
+          </div>
+        </div>
+
+        <div class="content-tabs">
+          <button class="content-tab is-active" data-content-tab="main-posts">Main feed posts</button>
+          <button class="content-tab" data-content-tab="main-comments">Main feed comments</button>
+          <button class="content-tab" data-content-tab="community-posts">Community posts</button>
+          <button class="content-tab" data-content-tab="community-comments">Community comments</button>
+          <button class="content-tab" data-content-tab="library-documents">Library documents</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead id="contentTableHead"></thead>
+            <tbody id="contentTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-site-pages">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Public pages content</h2>
+          <p class="subcopy">Edit what users see in FAQ and About pages.</p>
+        </div>
+
+        <div class="site-pages-grid">
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>About page</h3>
+              <button type="button" class="secondary-button" id="reloadAboutPage">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Title</span>
+                <input type="text" id="aboutTitle" maxlength="180" />
+              </label>
+              <label>
+                <span>Subtitle</span>
+                <textarea id="aboutSubtitle" rows="2" maxlength="400"></textarea>
+              </label>
+              <label>
+                <span>Overview</span>
+                <textarea id="aboutOverview" rows="4" maxlength="5000"></textarea>
+              </label>
+              <label>
+                <span>Highlights (one per line)</span>
+                <textarea id="aboutHighlights" rows="4" maxlength="5000"></textarea>
+              </label>
+              <label>
+                <span>Commitments (one per line)</span>
+                <textarea id="aboutCommitments" rows="4" maxlength="5000"></textarea>
+              </label>
+              <label>
+                <span>Contact email</span>
+                <input type="email" id="aboutContactEmail" maxlength="320" />
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveAboutPage">Save About</button>
+              </div>
+              <p class="inline-message" id="aboutPageMessage"></p>
+            </div>
+          </article>
+
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>FAQ page</h3>
+              <button type="button" class="secondary-button" id="reloadFaqPage">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Title</span>
+                <input type="text" id="faqTitle" maxlength="180" />
+              </label>
+              <label>
+                <span>Subtitle</span>
+                <textarea id="faqSubtitle" rows="2" maxlength="400"></textarea>
+              </label>
+              <label>
+                <span>FAQ entries (format: Question | Answer per line)</span>
+                <textarea id="faqItems" rows="12" maxlength="12000"></textarea>
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveFaqPage">Save FAQ</button>
+              </div>
+              <p class="inline-message" id="faqPageMessage"></p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-spaces">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Community and Rooms editing</h2>
+          <p class="subcopy">Manage community descriptions and room context settings.</p>
+        </div>
+
+        <div class="site-pages-grid">
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>Community description</h3>
+              <button type="button" class="secondary-button" id="reloadSpacesCommunities">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Community</span>
+                <select id="spacesCommunitySelect">
+                  <option value="">Select community</option>
+                </select>
+              </label>
+              <label>
+                <span>Description</span>
+                <textarea id="spacesCommunityDescription" rows="6" maxlength="4000"></textarea>
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveSpacesCommunity">Save community</button>
+              </div>
+              <p class="inline-message" id="spacesCommunityMessage"></p>
+            </div>
+          </article>
+
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>Room context label</h3>
+              <button type="button" class="secondary-button" id="reloadSpacesRooms">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Label shown in Rooms create form</span>
+                <input type="text" id="spacesRoomContextLabel" maxlength="80" placeholder="Course context" />
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveSpacesRoom">Save label</button>
+              </div>
+              <p class="inline-message" id="spacesRoomMessage"></p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/src/js/nav-basic.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+  <script src="/src/js/admin.js"></script>
+</body>
+</html>
