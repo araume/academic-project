@@ -1,4 +1,5 @@
 :root {
+  --app-font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   --app-nav-height: 86px;
   --app-nav-icon-size: 26px;
   --app-nav-link-size: 48px;
@@ -6,6 +7,7 @@
 }
 
 body {
+  font-family: var(--app-font-family);
   margin: 0;
   padding-top: 0 !important;
   scroll-padding-top: calc(var(--app-nav-height) + 10px);
@@ -13,6 +15,23 @@ body {
 
 body > .top-nav + * {
   margin-top: var(--app-nav-height) !important;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--app-font-family);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: inherit;
 }
 
 .top-nav {

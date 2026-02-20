@@ -44,7 +44,7 @@ body {
 
 .admin-header h1 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(1.9rem, 2.8vw, 2.4rem);
 }
 
@@ -261,7 +261,8 @@ body {
 }
 
 .site-editor-body input,
-.site-editor-body textarea {
+.site-editor-body textarea,
+.site-editor-body select {
   width: 100%;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -272,7 +273,8 @@ body {
 }
 
 .site-editor-body input:focus,
-.site-editor-body textarea:focus {
+.site-editor-body textarea:focus,
+.site-editor-body select:focus {
   outline: none;
   border-color: #3a6a89;
   box-shadow: 0 0 0 3px rgba(58, 106, 137, 0.14);

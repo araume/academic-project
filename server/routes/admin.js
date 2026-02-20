@@ -172,7 +172,7 @@ async function cleanupMongoDataForAccount(uid) {
   await Promise.all(cleanupOps);
 }
 
-const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq']);
+const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq', 'rooms']);
 
 const DEFAULT_SITE_PAGES = {
   about: {
@@ -217,6 +217,13 @@ const DEFAULT_SITE_PAGES = {
       ],
     },
   },
+  rooms: {
+    title: 'Rooms settings',
+    subtitle: 'Configurable labels for Rooms UI',
+    body: {
+      courseContextLabel: 'Course context',
+    },
+  },
 };
 
 let ensureSitePagesReadyPromise = null;
@@ -226,13 +233,22 @@ async function ensureSitePagesReady() {
   ensureSitePagesReadyPromise = (async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS site_page_content (
-        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq')),
+        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms')),
         title TEXT NOT NULL,
         subtitle TEXT NOT NULL DEFAULT '',
         body JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `);
+    await pool.query(`
+      ALTER TABLE site_page_content
+      DROP CONSTRAINT IF EXISTS site_page_content_slug_check;
+    `);
+    await pool.query(`
+      ALTER TABLE site_page_content
+      ADD CONSTRAINT site_page_content_slug_check
+      CHECK (slug IN ('about', 'faq', 'rooms'));
     `);
   })().catch((error) => {
     ensureSitePagesReadyPromise = null;
@@ -275,11 +291,20 @@ function normalizeFaqBody(body = {}) {
   return { items };
 }
 
+function normalizeRoomsBody(body = {}) {
+  return {
+    courseContextLabel: sanitizeText(body.courseContextLabel, 80) || 'Course context',
+  };
+}
+
 function normalizeSitePageBody(slug, body = {}) {
   if (slug === 'about') {
     return normalizeAboutBody(body);
   }
-  return normalizeFaqBody(body);
+  if (slug === 'faq') {
+    return normalizeFaqBody(body);
+  }
+  return normalizeRoomsBody(body);
 }
 
 function getDefaultSitePage(slug) {
@@ -620,6 +645,61 @@ router.get('/api/admin/reports', async (req, res) => {
       }
     }
 
+    if (!source || source === 'chat_message') {
+      try {
+        const params = [];
+        params.push(maxSourceRows);
+
+        const chatMessageResult = await pool.query(
+          `SELECT
+            r.id,
+            r.message_id,
+            r.thread_id,
+            r.reason,
+            r.status,
+            r.created_at,
+            r.reporter_uid,
+            COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS reporter_name,
+            COALESCE(sp.display_name, sa.display_name, sa.username, sa.email) AS sender_name
+           FROM chat_message_reports r
+           JOIN accounts ra ON ra.uid = r.reporter_uid
+           LEFT JOIN profiles rp ON rp.uid = r.reporter_uid
+           LEFT JOIN accounts sa ON sa.uid = r.message_sender_uid
+           LEFT JOIN profiles sp ON sp.uid = r.message_sender_uid
+           ORDER BY r.created_at DESC
+           LIMIT $${params.length}`,
+          params
+        );
+
+        chatMessageResult.rows.forEach((row) => {
+          const normalizedStatus =
+            row.status === 'pending'
+              ? 'open'
+              : row.status === 'reviewed'
+                ? 'under_review'
+                : 'resolved_no_action';
+          reports.push({
+            id: `chat_message:${row.id}`,
+            source: 'chat_message',
+            status: normalizedStatus,
+            targetType: 'chat_message',
+            targetId: row.message_id ? String(row.message_id) : null,
+            targetName: row.sender_name || 'Conversation message',
+            reporterUid: row.reporter_uid || null,
+            reporterName: row.reporter_name || 'Member',
+            reason: row.reason || null,
+            course: null,
+            createdAt: row.created_at,
+            threadId: row.thread_id ? String(row.thread_id) : null,
+          });
+        });
+      } catch (chatReportError) {
+        if (chatReportError && chatReportError.code !== '42P01') {
+          throw chatReportError;
+        }
+      }
+    }
+
     let filtered = reports;
     if (status && status !== 'all') {
       filtered = filtered.filter((item) => String(item.status || '').toLowerCase() === status);
@@ -812,6 +892,86 @@ router.patch('/api/admin/accounts/:uid/role', async (req, res) => {
   }
 });
 
+router.post('/api/admin/accounts/:uid/transfer-ownership', async (req, res) => {
+  const targetUid = sanitizeText(req.params.uid, 120);
+  const transferToken = sanitizeText(req.body && req.body.transferToken, 40).toUpperCase();
+
+  if (!targetUid) {
+    return res.status(400).json({ ok: false, message: 'Invalid target user.' });
+  }
+  if (req.adminViewer.platform_role !== 'owner') {
+    return res.status(403).json({ ok: false, message: 'Only owner can transfer ownership.' });
+  }
+  if (targetUid === req.adminViewer.uid) {
+    return res.status(400).json({ ok: false, message: 'You already own this account.' });
+  }
+  if (transferToken !== 'TRANSFER') {
+    return res.status(400).json({ ok: false, message: 'Transfer confirmation token is invalid.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const currentOwnerResult = await client.query(
+      `SELECT uid, COALESCE(platform_role, 'member') AS platform_role
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1`,
+      [req.adminViewer.uid]
+    );
+    if (!currentOwnerResult.rows.length || currentOwnerResult.rows[0].platform_role !== 'owner') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Current account is no longer owner.' });
+    }
+
+    const targetResult = await client.query(
+      `SELECT uid, COALESCE(platform_role, 'member') AS platform_role, COALESCE(is_banned, false) AS is_banned
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1`,
+      [targetUid]
+    );
+    if (!targetResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Target user not found.' });
+    }
+    const target = targetResult.rows[0];
+    if (target.is_banned === true) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Cannot transfer ownership to a banned account.' });
+    }
+    if (target.platform_role === 'owner') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Target account is already owner.' });
+    }
+
+    await client.query(
+      `UPDATE accounts
+       SET platform_role = CASE
+         WHEN uid = $1 THEN 'owner'
+         WHEN uid = $2 THEN 'admin'
+         ELSE platform_role
+       END
+       WHERE uid IN ($1, $2)`,
+      [targetUid, req.adminViewer.uid]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ ok: true, message: 'Ownership transferred successfully.' });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // ignore rollback errors
+    }
+    console.error('Admin ownership transfer failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to transfer ownership.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
   const targetUid = sanitizeText(req.params.uid, 120);
   const reason = sanitizeText(req.body && req.body.reason, 600);
@@ -918,7 +1078,7 @@ router.delete('/api/admin/accounts/:uid', async (req, res) => {
 router.get('/api/admin/communities', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, course_name
+      `SELECT id, course_name, description
        FROM communities
        ORDER BY lower(course_name) ASC`
     );
@@ -927,11 +1087,47 @@ router.get('/api/admin/communities', async (req, res) => {
       communities: result.rows.map((row) => ({
         id: Number(row.id),
         courseName: row.course_name,
+        description: row.description || '',
       })),
     });
   } catch (error) {
     console.error('Admin communities fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load communities.' });
+  }
+});
+
+router.patch('/api/admin/communities/:id/details', async (req, res) => {
+  const communityId = parsePositiveInt(req.params.id);
+  if (!communityId) {
+    return res.status(400).json({ ok: false, message: 'Invalid community id.' });
+  }
+
+  const description = sanitizeText(req.body && req.body.description, 4000);
+
+  try {
+    const result = await pool.query(
+      `UPDATE communities
+       SET description = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, course_name, description`,
+      [communityId, description || null]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Community not found.' });
+    }
+    const community = result.rows[0];
+    return res.json({
+      ok: true,
+      community: {
+        id: Number(community.id),
+        courseName: community.course_name,
+        description: community.description || '',
+      },
+    });
+  } catch (error) {
+    console.error('Admin community details update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update community details.' });
   }
 });
 

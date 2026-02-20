@@ -167,7 +167,7 @@ body {
 
 .library-header h1 {
   margin: 8px 0 6px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 2rem;
 }
 
@@ -603,7 +603,7 @@ body {
 
 .upload-modal-card h2 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 1.7rem;
   color: #14364f;
 }

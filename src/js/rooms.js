@@ -29,6 +29,7 @@ const roomForm = document.getElementById('roomForm');
 const meetNameInput = document.getElementById('meetNameInput');
 const meetIdPreview = document.getElementById('meetIdPreview');
 const visibilityInput = document.getElementById('visibilityInput');
+const courseContextLabel = document.getElementById('courseContextLabel');
 const communityInput = document.getElementById('communityInput');
 const passwordField = document.getElementById('passwordField');
 const meetPasswordInput = document.getElementById('meetPasswordInput');
@@ -318,6 +319,18 @@ async function apiRequest(url, options = {}) {
     throw new Error(data.message || 'Request failed.');
   }
   return data;
+}
+
+async function loadRoomsContentSettings() {
+  if (!courseContextLabel) return;
+  try {
+    const data = await apiRequest('/api/site-pages/rooms');
+    const body = data && data.page && data.page.body ? data.page.body : {};
+    const label = typeof body.courseContextLabel === 'string' ? body.courseContextLabel.trim() : '';
+    courseContextLabel.textContent = label || 'Course context';
+  } catch (error) {
+    courseContextLabel.textContent = 'Course context';
+  }
 }
 
 function contextForRoomDefaults() {
@@ -868,6 +881,7 @@ if (leaveCallButton) {
 async function init() {
   const prejoinedRoom = consumePrejoinedRoom();
   try {
+    await loadRoomsContentSettings();
     await loadBootstrap();
     await loadRooms();
     if (prejoinedRoom && prejoinedRoom.joinUrl) {

@@ -53,10 +53,20 @@ const faqItems = document.getElementById('faqItems');
 const saveFaqPage = document.getElementById('saveFaqPage');
 const reloadFaqPage = document.getElementById('reloadFaqPage');
 const faqPageMessage = document.getElementById('faqPageMessage');
+const spacesCommunitySelect = document.getElementById('spacesCommunitySelect');
+const spacesCommunityDescription = document.getElementById('spacesCommunityDescription');
+const saveSpacesCommunity = document.getElementById('saveSpacesCommunity');
+const reloadSpacesCommunities = document.getElementById('reloadSpacesCommunities');
+const spacesCommunityMessage = document.getElementById('spacesCommunityMessage');
+const spacesRoomContextLabel = document.getElementById('spacesRoomContextLabel');
+const saveSpacesRoom = document.getElementById('saveSpacesRoom');
+const reloadSpacesRooms = document.getElementById('reloadSpacesRooms');
+const spacesRoomMessage = document.getElementById('spacesRoomMessage');
 
 let viewerRole = 'member';
 let viewerUid = '';
 let currentContentTab = 'main-posts';
+let cachedCommunities = [];
 
 function escapeHtml(value) {
   const stringValue = String(value ?? '');
@@ -239,6 +249,13 @@ function buildDeleteControl(uid, userType) {
   return `<button class="danger-button" data-action="delete-account" data-uid="${escapeHtml(uid)}">Delete account</button>`;
 }
 
+function buildTransferOwnershipControl(uid, userType, status) {
+  if (viewerRole !== 'owner') return '';
+  if (!uid || uid === viewerUid || userType === 'owner') return '';
+  if (status === 'banned') return '';
+  return `<button class="secondary-button" data-action="transfer-ownership" data-uid="${escapeHtml(uid)}">Transfer owner</button>`;
+}
+
 async function loadAccounts() {
   const params = new URLSearchParams({
     page: '1',
@@ -261,7 +278,8 @@ async function loadAccounts() {
         const roleControl = buildRoleControl(account.uid, account.userType);
         const banControl = buildBanControl(account.uid, account.status, account.userType);
         const deleteControl = buildDeleteControl(account.uid, account.userType);
-        const actions = [banControl, deleteControl].filter(Boolean).join('');
+        const transferOwnershipControl = buildTransferOwnershipControl(account.uid, account.userType, account.status);
+        const actions = [banControl, deleteControl, transferOwnershipControl].filter(Boolean).join('');
         return `
           <tr>
             <td>${escapeHtml(account.uid)}</td>
@@ -283,18 +301,123 @@ async function loadAccounts() {
 }
 
 async function loadCommunities() {
-  if (!moderatorCommunity) return;
+  if (!moderatorCommunity && !spacesCommunitySelect) return;
   try {
     const data = await apiRequest('/api/admin/communities');
-    moderatorCommunity.innerHTML = '<option value="">Select community</option>';
-    data.communities.forEach((community) => {
-      const option = document.createElement('option');
-      option.value = String(community.id);
-      option.textContent = community.courseName;
-      moderatorCommunity.appendChild(option);
-    });
+    cachedCommunities = Array.isArray(data.communities) ? data.communities : [];
+
+    if (moderatorCommunity) {
+      moderatorCommunity.innerHTML = '<option value="">Select community</option>';
+      cachedCommunities.forEach((community) => {
+        const option = document.createElement('option');
+        option.value = String(community.id);
+        option.textContent = community.courseName;
+        moderatorCommunity.appendChild(option);
+      });
+    }
+
+    if (spacesCommunitySelect) {
+      spacesCommunitySelect.innerHTML = '<option value="">Select community</option>';
+      cachedCommunities.forEach((community) => {
+        const option = document.createElement('option');
+        option.value = String(community.id);
+        option.textContent = community.courseName;
+        spacesCommunitySelect.appendChild(option);
+      });
+    }
+
+    syncCommunityEditorSelection();
   } catch (error) {
-    moderatorCommunity.innerHTML = '<option value="">Unable to load communities</option>';
+    cachedCommunities = [];
+    if (moderatorCommunity) {
+      moderatorCommunity.innerHTML = '<option value="">Unable to load communities</option>';
+    }
+    if (spacesCommunitySelect) {
+      spacesCommunitySelect.innerHTML = '<option value="">Unable to load communities</option>';
+    }
+  }
+}
+
+function findCommunityById(id) {
+  const numericId = Number(id);
+  if (!numericId) return null;
+  return cachedCommunities.find((item) => Number(item.id) === numericId) || null;
+}
+
+function syncCommunityEditorSelection() {
+  if (!spacesCommunitySelect || !spacesCommunityDescription) return;
+  const selected = findCommunityById(spacesCommunitySelect.value);
+  if (!selected) {
+    spacesCommunityDescription.value = '';
+    spacesCommunityDescription.disabled = true;
+    return;
+  }
+  spacesCommunityDescription.disabled = false;
+  spacesCommunityDescription.value = selected.description || '';
+}
+
+async function saveCommunityEditor() {
+  if (!spacesCommunitySelect || !spacesCommunityDescription) return;
+  setInlineMessage(spacesCommunityMessage, '');
+  const communityId = Number(spacesCommunitySelect.value);
+  if (!communityId) {
+    setInlineMessage(spacesCommunityMessage, 'Select a community first.');
+    return;
+  }
+  try {
+    const payload = { description: spacesCommunityDescription.value };
+    const data = await apiRequest(`/api/admin/communities/${communityId}/details`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const updated = data.community || null;
+    if (updated) {
+      cachedCommunities = cachedCommunities.map((item) =>
+        Number(item.id) === Number(updated.id) ? { ...item, description: updated.description || '' } : item
+      );
+    }
+    setInlineMessage(spacesCommunityMessage, 'Community description updated.', 'success');
+    setPageMessage('Community settings saved.', 'success');
+  } catch (error) {
+    setInlineMessage(spacesCommunityMessage, error.message);
+  }
+}
+
+async function loadRoomContextLabelEditor() {
+  if (!spacesRoomContextLabel) return;
+  setInlineMessage(spacesRoomMessage, '');
+  try {
+    const data = await apiRequest('/api/admin/site-pages/rooms');
+    const page = data.page || {};
+    const body = page.body || {};
+    spacesRoomContextLabel.value = body.courseContextLabel || 'Course context';
+    setInlineMessage(spacesRoomMessage, '');
+  } catch (error) {
+    setInlineMessage(spacesRoomMessage, error.message);
+  }
+}
+
+async function saveRoomContextLabelEditor() {
+  if (!spacesRoomContextLabel) return;
+  setInlineMessage(spacesRoomMessage, '');
+  try {
+    await apiRequest('/api/admin/site-pages/rooms', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Rooms settings',
+        subtitle: 'Configurable labels for Rooms UI',
+        body: {
+          courseContextLabel: spacesRoomContextLabel.value,
+        },
+      }),
+    });
+    setInlineMessage(spacesRoomMessage, 'Room context label updated.', 'success');
+    setPageMessage('Rooms settings saved.', 'success');
+    await loadRoomContextLabelEditor();
+  } catch (error) {
+    setInlineMessage(spacesRoomMessage, error.message);
   }
 }
 
@@ -692,6 +815,38 @@ accountsTableBody.addEventListener('click', async (event) => {
     } catch (error) {
       setPageMessage(error.message);
     }
+    return;
+  }
+
+  if (action === 'transfer-ownership') {
+    if (viewerRole !== 'owner') {
+      setPageMessage('Only owner can transfer ownership.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Transfer ownership to this account? Your account will be downgraded to admin.'
+    );
+    if (!confirmed) return;
+
+    const finalCheck = window.prompt('Type TRANSFER to confirm ownership transfer:', '');
+    if (finalCheck !== 'TRANSFER') {
+      setPageMessage('Ownership transfer cancelled.');
+      return;
+    }
+
+    try {
+      await apiRequest(`/api/admin/accounts/${encodeURIComponent(uid)}/transfer-ownership`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transferToken: finalCheck }),
+      });
+      setPageMessage('Ownership transferred. Refreshing account list...', 'success');
+      await loadAdminContext();
+      await loadAccounts();
+    } catch (error) {
+      setPageMessage(error.message);
+    }
   }
 });
 
@@ -780,6 +935,35 @@ if (reloadFaqPage) {
   reloadFaqPage.addEventListener('click', loadFaqPageEditor);
 }
 
+if (spacesCommunitySelect) {
+  spacesCommunitySelect.addEventListener('change', () => {
+    setInlineMessage(spacesCommunityMessage, '');
+    syncCommunityEditorSelection();
+  });
+}
+
+if (saveSpacesCommunity) {
+  saveSpacesCommunity.addEventListener('click', saveCommunityEditor);
+}
+
+if (reloadSpacesCommunities) {
+  reloadSpacesCommunities.addEventListener('click', async () => {
+    setInlineMessage(spacesCommunityMessage, '');
+    await loadCommunities();
+  });
+}
+
+if (saveSpacesRoom) {
+  saveSpacesRoom.addEventListener('click', saveRoomContextLabelEditor);
+}
+
+if (reloadSpacesRooms) {
+  reloadSpacesRooms.addEventListener('click', async () => {
+    setInlineMessage(spacesRoomMessage, '');
+    await loadRoomContextLabelEditor();
+  });
+}
+
 async function init() {
   try {
     await loadAdminContext();
@@ -790,6 +974,7 @@ async function init() {
       loadAccounts(),
       loadAboutPageEditor(),
       loadFaqPageEditor(),
+      loadRoomContextLabelEditor(),
     ]);
     setContentHeaders(currentContentTab);
     await loadContent();

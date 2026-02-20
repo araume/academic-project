@@ -1,9 +1,15 @@
 const express = require('express');
+const multer = require('multer');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
-const { getSignedUrl } = require('../services/storage');
+const { getSignedUrl, uploadToStorage } = require('../services/storage');
 
 const router = express.Router();
+const MESSAGE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MESSAGE_ATTACHMENT_MAX_BYTES },
+});
 
 const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
 const ACTIVE_WINDOW_MINUTES = 5;
@@ -66,6 +72,72 @@ async function signPhotoIfNeeded(photoLink) {
     console.error('Photo signing failed:', error);
     return null;
   }
+}
+
+async function signChatAttachmentIfNeeded(attachment) {
+  if (!attachment || !attachment.type) return null;
+  const normalizedType = attachment.type === 'video' ? 'video' : 'image';
+  const key = attachment.key || null;
+  let link = attachment.link || null;
+
+  if (key && !String(key).startsWith('http')) {
+    try {
+      link = await getSignedUrl(key, SIGNED_TTL);
+    } catch (error) {
+      console.error('Chat attachment signing failed:', error);
+      link = null;
+    }
+  } else if (key && String(key).startsWith('http')) {
+    link = key;
+  }
+
+  return {
+    type: normalizedType,
+    key,
+    link,
+    filename: attachment.filename || null,
+    mimeType: attachment.mimeType || null,
+    sizeBytes: Number.isInteger(attachment.sizeBytes) ? attachment.sizeBytes : null,
+  };
+}
+
+function formatReplySnippet(body) {
+  if (!body) return '';
+  const compact = String(body).replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
+}
+
+async function mapChatMessageRow(row) {
+  const attachment = await signChatAttachmentIfNeeded({
+    type: row.attachment_type || null,
+    key: row.attachment_key || null,
+    link: row.attachment_link || null,
+    filename: row.attachment_filename || null,
+    mimeType: row.attachment_mime_type || null,
+    sizeBytes: row.attachment_size_bytes != null ? Number(row.attachment_size_bytes) : null,
+  });
+
+  const replyTo = row.parent_message_id
+    ? {
+        id: Number(row.parent_message_id),
+        senderUid: row.parent_sender_uid || null,
+        senderName: row.parent_sender_name || 'Member',
+        bodySnippet: formatReplySnippet(row.parent_body),
+      }
+    : null;
+
+  return {
+    id: Number(row.id),
+    threadId: Number(row.thread_id),
+    senderUid: row.sender_uid,
+    senderName: row.sender_name,
+    senderPhotoLink: await signPhotoIfNeeded(row.sender_photo_link),
+    body: row.body || '',
+    attachment,
+    replyTo,
+    createdAt: row.created_at,
+  };
 }
 
 function buildDisplayName(row) {
@@ -158,7 +230,57 @@ async function ensureConnectionsTables() {
       thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
       sender_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
       body TEXT NOT NULL,
+      parent_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL,
+      attachment_type TEXT CHECK (attachment_type IN ('image', 'video')),
+      attachment_key TEXT,
+      attachment_link TEXT,
+      attachment_filename TEXT,
+      attachment_mime_type TEXT,
+      attachment_size_bytes INTEGER CHECK (attachment_size_bytes IS NULL OR attachment_size_bytes >= 0),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS parent_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS attachment_key TEXT;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS attachment_link TEXT;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS attachment_filename TEXT;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS attachment_mime_type TEXT;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS attachment_size_bytes INTEGER;
+
+    ALTER TABLE chat_messages
+      DROP CONSTRAINT IF EXISTS chat_messages_attachment_type_check;
+    ALTER TABLE chat_messages
+      ADD CONSTRAINT chat_messages_attachment_type_check
+      CHECK (attachment_type IS NULL OR attachment_type IN ('image', 'video'));
+
+    CREATE TABLE IF NOT EXISTS chat_message_reports (
+      id BIGSERIAL PRIMARY KEY,
+      message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      reporter_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      message_sender_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'dismissed')),
+      resolution_note TEXT,
+      resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (message_id, reporter_uid)
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_typing (
+      thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (thread_id, user_uid)
     );
 
     CREATE TABLE IF NOT EXISTS blocked_users (
@@ -199,6 +321,11 @@ async function ensureConnectionsTables() {
     CREATE INDEX IF NOT EXISTS chat_participants_user_status_idx ON chat_participants(user_uid, status);
     CREATE INDEX IF NOT EXISTS chat_participants_thread_status_idx ON chat_participants(thread_id, status);
     CREATE INDEX IF NOT EXISTS chat_messages_thread_created_idx ON chat_messages(thread_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS chat_messages_parent_idx ON chat_messages(parent_message_id);
+    CREATE INDEX IF NOT EXISTS chat_message_reports_status_created_idx ON chat_message_reports(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS chat_message_reports_thread_idx ON chat_message_reports(thread_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS chat_message_reports_reporter_idx ON chat_message_reports(reporter_uid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS chat_typing_thread_updated_idx ON chat_typing(thread_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS blocked_users_blocker_idx ON blocked_users(blocker_uid);
     CREATE INDEX IF NOT EXISTS blocked_users_blocked_idx ON blocked_users(blocked_uid);
     CREATE INDEX IF NOT EXISTS hidden_post_authors_user_idx ON hidden_post_authors(user_uid);
@@ -1821,6 +1948,7 @@ router.get('/api/connections/conversations', async (req, res) => {
          ct.title,
          ct.created_at,
          lm.body AS last_message_body,
+         lm.attachment_type AS last_message_attachment_type,
          lm.created_at AS last_message_at,
          lm.sender_uid AS last_message_sender_uid
        FROM chat_threads ct
@@ -1829,7 +1957,7 @@ router.get('/api/connections/conversations', async (req, res) => {
         AND cp.user_uid = $1
         AND cp.status = 'active'
        LEFT JOIN LATERAL (
-         SELECT cm.body, cm.created_at, cm.sender_uid
+         SELECT cm.body, cm.attachment_type, cm.created_at, cm.sender_uid
          FROM chat_messages cm
          WHERE cm.thread_id = ct.id
          ORDER BY cm.created_at DESC, cm.id DESC
@@ -1868,6 +1996,12 @@ router.get('/api/connections/conversations', async (req, res) => {
               createdAt: row.last_message_at,
               senderUid: row.last_message_sender_uid,
             }
+          : row.last_message_attachment_type
+            ? {
+                body: `[${row.last_message_attachment_type === 'video' ? 'Video' : 'Image'}]`,
+                createdAt: row.last_message_at,
+                senderUid: row.last_message_sender_uid,
+              }
           : null,
       };
     });
@@ -1908,29 +2042,32 @@ router.get('/api/connections/conversations/:id/messages', async (req, res) => {
          cm.thread_id,
          cm.sender_uid,
          cm.body,
+         cm.parent_message_id,
+         cm.attachment_type,
+         cm.attachment_key,
+         cm.attachment_link,
+         cm.attachment_filename,
+         cm.attachment_mime_type,
+         cm.attachment_size_bytes,
          cm.created_at,
          COALESCE(p.display_name, a.display_name, a.username, a.email) AS sender_name,
-         p.photo_link AS sender_photo_link
+         p.photo_link AS sender_photo_link,
+         pm.body AS parent_body,
+         pm.sender_uid AS parent_sender_uid,
+         COALESCE(pp.display_name, pa.display_name, pa.username, pa.email) AS parent_sender_name
        FROM chat_messages cm
        JOIN accounts a ON a.uid = cm.sender_uid
        LEFT JOIN profiles p ON p.uid = cm.sender_uid
+       LEFT JOIN chat_messages pm ON pm.id = cm.parent_message_id
+       LEFT JOIN accounts pa ON pa.uid = pm.sender_uid
+       LEFT JOIN profiles pp ON pp.uid = pm.sender_uid
        WHERE cm.thread_id = $1
        ORDER BY cm.created_at DESC, cm.id DESC
        LIMIT $2 OFFSET $3`,
       [threadId, pageSize, offset]
     );
 
-    const messages = await Promise.all(
-      result.rows.map(async (row) => ({
-        id: Number(row.id),
-        threadId: Number(row.thread_id),
-        senderUid: row.sender_uid,
-        senderName: row.sender_name,
-        senderPhotoLink: await signPhotoIfNeeded(row.sender_photo_link),
-        body: row.body,
-        createdAt: row.created_at,
-      }))
-    );
+    const messages = await Promise.all(result.rows.map((row) => mapChatMessageRow(row)));
 
     messages.reverse();
 
@@ -1941,7 +2078,7 @@ router.get('/api/connections/conversations/:id/messages', async (req, res) => {
   }
 });
 
-router.post('/api/connections/conversations/:id/messages', async (req, res) => {
+router.post('/api/connections/conversations/:id/messages', upload.single('attachment'), async (req, res) => {
   if (!enforceRateLimit(req, res, 'conversation_message_send', 90)) return;
 
   const threadId = Number(req.params.id);
@@ -1950,8 +2087,14 @@ router.post('/api/connections/conversations/:id/messages', async (req, res) => {
   }
 
   const body = sanitizeText(req.body && req.body.body, 2000);
-  if (!body) {
-    return res.status(400).json({ ok: false, message: 'Message body is required.' });
+  const parentMessageIdRaw = Number(req.body && req.body.parentMessageId);
+  const parentMessageId = Number.isInteger(parentMessageIdRaw) && parentMessageIdRaw > 0
+    ? parentMessageIdRaw
+    : null;
+  const attachmentFile = req.file || null;
+
+  if (!body && !attachmentFile) {
+    return res.status(400).json({ ok: false, message: 'Write a message or attach a file.' });
   }
 
   try {
@@ -1969,41 +2112,273 @@ router.post('/api/connections/conversations/:id/messages', async (req, res) => {
       return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
     }
 
+    let attachment = null;
+    if (attachmentFile) {
+      const mime = String(attachmentFile.mimetype || '').toLowerCase();
+      const isImage = mime.startsWith('image/');
+      const isVideo = mime.startsWith('video/');
+      if (!isImage && !isVideo) {
+        return res.status(400).json({ ok: false, message: 'Only image and video attachments are allowed.' });
+      }
+
+      const uploaded = await uploadToStorage({
+        buffer: attachmentFile.buffer,
+        filename: attachmentFile.originalname || `chat-upload-${Date.now()}`,
+        mimeType: mime || 'application/octet-stream',
+        prefix: 'connections/messages',
+      });
+
+      attachment = {
+        type: isVideo ? 'video' : 'image',
+        key: uploaded.key,
+        link: null,
+        filename: attachmentFile.originalname || null,
+        mimeType: mime || null,
+        sizeBytes: Number.isInteger(attachmentFile.size) ? attachmentFile.size : null,
+      };
+    }
+
+    let validParentMessageId = null;
+    if (parentMessageId) {
+      const parentResult = await pool.query(
+        `SELECT id
+         FROM chat_messages
+         WHERE id = $1
+           AND thread_id = $2
+         LIMIT 1`,
+        [parentMessageId, threadId]
+      );
+      if (!parentResult.rows.length) {
+        return res.status(400).json({ ok: false, message: 'Reply target message was not found.' });
+      }
+      validParentMessageId = parentMessageId;
+    }
+
     const insertResult = await pool.query(
-      `INSERT INTO chat_messages (thread_id, sender_uid, body)
-       VALUES ($1, $2, $3)
-       RETURNING id, created_at`,
-      [threadId, req.user.uid, body]
+      `INSERT INTO chat_messages (
+         thread_id,
+         sender_uid,
+         body,
+         parent_message_id,
+         attachment_type,
+         attachment_key,
+         attachment_link,
+         attachment_filename,
+         attachment_mime_type,
+         attachment_size_bytes
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        threadId,
+        req.user.uid,
+        body || '',
+        validParentMessageId,
+        attachment ? attachment.type : null,
+        attachment ? attachment.key : null,
+        attachment ? attachment.link : null,
+        attachment ? attachment.filename : null,
+        attachment ? attachment.mimeType : null,
+        attachment ? attachment.sizeBytes : null,
+      ]
     );
 
-    const senderRow = await pool.query(
+    const messageId = Number(insertResult.rows[0].id);
+    await pool.query(
+      `DELETE FROM chat_typing
+       WHERE thread_id = $1 AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+
+    const messageRowResult = await pool.query(
       `SELECT
+         cm.id,
+         cm.thread_id,
+         cm.sender_uid,
+         cm.body,
+         cm.parent_message_id,
+         cm.attachment_type,
+         cm.attachment_key,
+         cm.attachment_link,
+         cm.attachment_filename,
+         cm.attachment_mime_type,
+         cm.attachment_size_bytes,
+         cm.created_at,
          COALESCE(p.display_name, a.display_name, a.username, a.email) AS sender_name,
-         p.photo_link AS sender_photo_link
-       FROM accounts a
-       LEFT JOIN profiles p ON p.uid = a.uid
-       WHERE a.uid = $1
+         p.photo_link AS sender_photo_link,
+         pm.body AS parent_body,
+         pm.sender_uid AS parent_sender_uid,
+         COALESCE(pp.display_name, pa.display_name, pa.username, pa.email) AS parent_sender_name
+       FROM chat_messages cm
+       JOIN accounts a ON a.uid = cm.sender_uid
+       LEFT JOIN profiles p ON p.uid = cm.sender_uid
+       LEFT JOIN chat_messages pm ON pm.id = cm.parent_message_id
+       LEFT JOIN accounts pa ON pa.uid = pm.sender_uid
+       LEFT JOIN profiles pp ON pp.uid = pm.sender_uid
+       WHERE cm.id = $1
        LIMIT 1`,
-      [req.user.uid]
+      [messageId]
     );
 
-    const sender = senderRow.rows[0] || {};
+    const row = messageRowResult.rows[0];
+    if (!row) {
+      return res.status(500).json({ ok: false, message: 'Message created but could not be loaded.' });
+    }
+    const message = await mapChatMessageRow(row);
 
     return res.json({
       ok: true,
-      message: {
-        id: Number(insertResult.rows[0].id),
-        threadId,
-        senderUid: req.user.uid,
-        senderName: sender.sender_name || req.user.displayName || req.user.username || req.user.email,
-        senderPhotoLink: await signPhotoIfNeeded(sender.sender_photo_link),
-        body,
-        createdAt: insertResult.rows[0].created_at,
-      },
+      message,
     });
   } catch (error) {
     console.error('Message send failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to send message.' });
+  }
+});
+
+router.post('/api/connections/messages/:id/report', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_message_report', 30)) return;
+
+  const messageId = Number(req.params.id);
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid message id.' });
+  }
+
+  const reason = sanitizeText(req.body && req.body.reason, 500) || null;
+
+  try {
+    const messageResult = await pool.query(
+      `SELECT cm.id, cm.thread_id, cm.sender_uid
+       FROM chat_messages cm
+       JOIN chat_participants cp
+         ON cp.thread_id = cm.thread_id
+        AND cp.user_uid = $2
+        AND cp.status = 'active'
+       WHERE cm.id = $1
+       LIMIT 1`,
+      [messageId, req.user.uid]
+    );
+
+    const messageRow = messageResult.rows[0];
+    if (!messageRow) {
+      return res.status(404).json({ ok: false, message: 'Message not found in your conversations.' });
+    }
+    if (messageRow.sender_uid === req.user.uid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own message.' });
+    }
+
+    await pool.query(
+      `INSERT INTO chat_message_reports
+         (message_id, thread_id, reporter_uid, message_sender_uid, reason, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'pending', NOW(), NOW())
+       ON CONFLICT (message_id, reporter_uid)
+       DO UPDATE SET reason = EXCLUDED.reason, status = 'pending', updated_at = NOW()`,
+      [messageId, Number(messageRow.thread_id), req.user.uid, messageRow.sender_uid, reason]
+    );
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Message report failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to report message.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/typing', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_typing', 240)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  const isTyping = req.body && req.body.isTyping === false ? false : true;
+
+  try {
+    const participantCheck = await pool.query(
+      `SELECT id
+       FROM chat_participants
+       WHERE thread_id = $1
+         AND user_uid = $2
+         AND status = 'active'
+       LIMIT 1`,
+      [threadId, req.user.uid]
+    );
+    if (!participantCheck.rows.length) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+
+    if (!isTyping) {
+      await pool.query(
+        `DELETE FROM chat_typing
+         WHERE thread_id = $1 AND user_uid = $2`,
+        [threadId, req.user.uid]
+      );
+      return res.json({ ok: true, typing: false });
+    }
+
+    await pool.query(
+      `INSERT INTO chat_typing (thread_id, user_uid, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (thread_id, user_uid)
+       DO UPDATE SET updated_at = NOW()`,
+      [threadId, req.user.uid]
+    );
+
+    return res.json({ ok: true, typing: true });
+  } catch (error) {
+    console.error('Typing update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to update typing state.' });
+  }
+});
+
+router.get('/api/connections/conversations/:id/typing', async (req, res) => {
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const participantCheck = await pool.query(
+      `SELECT id
+       FROM chat_participants
+       WHERE thread_id = $1
+         AND user_uid = $2
+         AND status = 'active'
+       LIMIT 1`,
+      [threadId, req.user.uid]
+    );
+    if (!participantCheck.rows.length) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+
+    const typingResult = await pool.query(
+      `SELECT
+         ct.user_uid,
+         ct.updated_at,
+         COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name
+       FROM chat_typing ct
+       JOIN accounts a ON a.uid = ct.user_uid
+       LEFT JOIN profiles p ON p.uid = ct.user_uid
+       JOIN chat_participants cp
+         ON cp.thread_id = ct.thread_id
+        AND cp.user_uid = ct.user_uid
+        AND cp.status = 'active'
+       WHERE ct.thread_id = $1
+         AND ct.user_uid <> $2
+         AND ct.updated_at >= NOW() - INTERVAL '8 seconds'
+       ORDER BY ct.updated_at DESC`,
+      [threadId, req.user.uid]
+    );
+
+    const typingUsers = typingResult.rows.map((row) => ({
+      uid: row.user_uid,
+      displayName: row.display_name || 'Member',
+      updatedAt: row.updated_at,
+    }));
+    return res.json({ ok: true, typingUsers });
+  } catch (error) {
+    console.error('Typing fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load typing users.' });
   }
 });
 
@@ -2043,6 +2418,13 @@ router.get('/api/connections/bootstrap', async (req, res) => {
     console.error('Connections bootstrap failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load connections dashboard.' });
   }
+});
+
+router.use('/api/connections', (err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ ok: false, message: 'Attachment exceeds 25MB limit.' });
+  }
+  return next(err);
 });
 
 module.exports = router;

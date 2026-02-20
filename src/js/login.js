@@ -488,7 +488,9 @@ async function populateCourses() {
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith('#'));
 
-    const uniqueCourses = Array.from(new Set(courses));
+    const uniqueCourses = Array.from(new Set(courses)).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' })
+    );
     uniqueCourses.forEach((course) => {
       const option = document.createElement('option');
       option.value = course;

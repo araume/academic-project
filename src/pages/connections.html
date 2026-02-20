@@ -6,7 +6,7 @@
   <title>Connections</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/connections.css" />
   <link rel="stylesheet" href="/src/styles/nav.css" />
   <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
@@ -101,7 +101,10 @@
       <article class="chat-card card">
         <div class="chat-title-row">
           <h2>Chats</h2>
-          <button type="button" class="secondary-button" id="openGroupModal">New group</button>
+          <div class="chat-actions">
+            <button type="button" class="secondary-button" id="chatFocusToggle">Expand chat</button>
+            <button type="button" class="secondary-button" id="openGroupModal">New group</button>
+          </div>
         </div>
         <div class="chat-shell">
           <aside class="conversation-sidebar" id="conversationList"></aside>
@@ -111,9 +114,29 @@
               <p id="activeConversationMeta">Messages stay inside this panel and won’t expand the page.</p>
             </header>
             <div class="conversation-messages" id="messageList"></div>
+            <div class="typing-indicator" id="typingIndicator"></div>
             <form class="message-form" id="messageForm">
-              <input type="text" id="messageInput" maxlength="2000" placeholder="Write a message..." disabled />
-              <button type="submit" id="messageSend" disabled>Send</button>
+              <div class="reply-preview is-hidden" id="replyPreview">
+                <div class="reply-preview-copy">
+                  <strong id="replyPreviewAuthor"></strong>
+                  <span id="replyPreviewText"></span>
+                </div>
+                <button type="button" class="mini-ghost" id="clearReplyButton">Clear</button>
+              </div>
+              <div class="attachment-preview is-hidden" id="messageAttachmentPreview">
+                <span id="messageAttachmentName">No attachment</span>
+                <button type="button" class="mini-ghost" id="removeMessageAttachmentButton">Remove</button>
+              </div>
+              <div class="message-toolbar">
+                <button type="button" class="toolbar-button" id="emojiToggleButton" aria-label="Insert emoji">😊</button>
+                <label for="messageAttachmentInput" class="toolbar-button" title="Attach image or video">📎</label>
+                <input type="file" id="messageAttachmentInput" accept="image/*,video/*" class="is-hidden" />
+              </div>
+              <div class="emoji-picker is-hidden" id="emojiPicker"></div>
+              <div class="message-compose-row">
+                <input type="text" id="messageInput" maxlength="2000" placeholder="Write a message..." disabled />
+                <button type="submit" id="messageSend" disabled>Send</button>
+              </div>
             </form>
             <p class="form-message" id="messageFeedback"></p>
           </section>

@@ -214,7 +214,7 @@ body {
 
 .hero-card h1 {
   margin: 8px 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(1.8rem, 2.7vw, 2.3rem);
 }
 
@@ -240,7 +240,7 @@ body {
 .community-list-head h2 {
   margin: 0;
   font-size: 1.04rem;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
 .community-list-head span {
@@ -378,7 +378,7 @@ body {
 
 .selected-placeholder h2 {
   margin: 0 0 8px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
 .selected-placeholder p {
@@ -406,7 +406,7 @@ body {
 
 .selected-head h2 {
   margin: 6px 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
 .selected-actions {
@@ -467,7 +467,7 @@ body {
 .feed-head h3,
 .moderation-head h3 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
 .feed-actions {
@@ -909,7 +909,7 @@ a.community-name-link:hover {
 
 .members-modal-head h3 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
 .members-modal-head input {

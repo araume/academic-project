@@ -275,7 +275,57 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
   sender_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
   body TEXT NOT NULL,
+  parent_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL,
+  attachment_type TEXT CHECK (attachment_type IN ('image', 'video')),
+  attachment_key TEXT,
+  attachment_link TEXT,
+  attachment_filename TEXT,
+  attachment_mime_type TEXT,
+  attachment_size_bytes INTEGER CHECK (attachment_size_bytes IS NULL OR attachment_size_bytes >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS parent_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_key TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_link TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_filename TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_mime_type TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_size_bytes INTEGER;
+
+ALTER TABLE chat_messages
+  DROP CONSTRAINT IF EXISTS chat_messages_attachment_type_check;
+ALTER TABLE chat_messages
+  ADD CONSTRAINT chat_messages_attachment_type_check
+  CHECK (attachment_type IS NULL OR attachment_type IN ('image', 'video'));
+
+CREATE TABLE IF NOT EXISTS chat_message_reports (
+  id BIGSERIAL PRIMARY KEY,
+  message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  reporter_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  message_sender_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'dismissed')),
+  resolution_note TEXT,
+  resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (message_id, reporter_uid)
+);
+
+CREATE TABLE IF NOT EXISTS chat_typing (
+  thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (thread_id, user_uid)
 );
 
 CREATE TABLE IF NOT EXISTS blocked_users (
@@ -470,6 +520,11 @@ CREATE INDEX IF NOT EXISTS chat_requests_requester_status_idx ON chat_requests(r
 CREATE INDEX IF NOT EXISTS chat_participants_user_status_idx ON chat_participants(user_uid, status);
 CREATE INDEX IF NOT EXISTS chat_participants_thread_status_idx ON chat_participants(thread_id, status);
 CREATE INDEX IF NOT EXISTS chat_messages_thread_created_idx ON chat_messages(thread_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS chat_messages_parent_idx ON chat_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS chat_message_reports_status_created_idx ON chat_message_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS chat_message_reports_thread_idx ON chat_message_reports(thread_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS chat_message_reports_reporter_idx ON chat_message_reports(reporter_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS chat_typing_thread_updated_idx ON chat_typing(thread_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS blocked_users_blocker_idx ON blocked_users(blocker_uid);
 CREATE INDEX IF NOT EXISTS blocked_users_blocked_idx ON blocked_users(blocked_uid);
 CREATE INDEX IF NOT EXISTS hidden_post_authors_user_idx ON hidden_post_authors(user_uid);
@@ -603,7 +658,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 );
 
 CREATE TABLE IF NOT EXISTS site_page_content (
-  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq')),
+  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms')),
   title TEXT NOT NULL,
   subtitle TEXT NOT NULL DEFAULT '',
   body JSONB NOT NULL DEFAULT '{}'::jsonb,
