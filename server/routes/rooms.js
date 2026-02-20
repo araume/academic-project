@@ -96,7 +96,6 @@ function normalizeCourseName(value) {
   if (typeof value !== 'string') return '';
   return value.trim().toLowerCase();
 }
-
 function randomBase64Url(bytes) {
   return crypto
     .randomBytes(bytes)
@@ -237,7 +236,6 @@ async function loadAllowedHostCourseNames(uid, client = pool) {
 
   return Array.from(names);
 }
-
 async function getCommunityById(communityId, client = pool) {
   if (!communityId) return null;
   const result = await client.query(
@@ -505,7 +503,6 @@ router.get('/api/rooms/bootstrap', async (req, res) => {
       const normalized = normalizeCourseName(community.courseName);
       return normalized && allowedHostCourseSet.has(normalized);
     });
-
     let pendingRequestsToReview = 0;
     if (canReviewRequests) {
       const pendingCountResult = await pool.query(
@@ -850,7 +847,6 @@ router.post('/api/rooms/requests', async (req, res) => {
         });
       }
     }
-
     const canCreateDirect = await canCreateRoomDirect(viewer, input.visibility, input.communityId);
     if (canCreateDirect) {
       return res.status(400).json({
@@ -859,6 +855,25 @@ router.post('/api/rooms/requests', async (req, res) => {
       });
     }
 
+    if (input.visibility === 'course_exclusive') {
+      const allowedHostCourseNames = await loadAllowedHostCourseNames(viewer.uid);
+      const allowedHostCourseSet = new Set(allowedHostCourseNames);
+      const selectedCourseName = normalizeCourseName(community && community.course_name);
+      if (!selectedCourseName || !allowedHostCourseSet.has(selectedCourseName)) {
+        return res.status(403).json({
+          ok: false,
+          message: 'You can only request course rooms for your main course or listed sub-courses.',
+        });
+      }
+
+      const hasMembership = await hasCommunityMembership(input.communityId, viewer.uid);
+      if (!hasMembership) {
+        return res.status(403).json({
+          ok: false,
+          message: 'You must be a member of the selected community to request a course-exclusive room.',
+        });
+      }
+    }
     const pendingCountResult = await pool.query(
       `SELECT COUNT(*)::int AS total
        FROM room_requests

@@ -117,7 +117,6 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMPTZ NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS document_likes (
   id SERIAL PRIMARY KEY,
   document_uuid UUID NOT NULL REFERENCES documents(uuid) ON DELETE CASCADE,
