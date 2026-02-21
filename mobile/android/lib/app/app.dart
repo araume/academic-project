@@ -2,15 +2,27 @@ import 'package:flutter/material.dart';
 
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/session_controller.dart';
+import '../features/chat/data/chat_repository.dart';
+import '../features/home/data/home_repository.dart';
 import '../features/home/presentation/home_shell.dart';
+import '../features/library/data/library_repository.dart';
+import '../features/notifications/data/notifications_repository.dart';
 
 class ThesisLiteApp extends StatefulWidget {
   const ThesisLiteApp({
     super.key,
     required this.sessionController,
+    required this.homeRepository,
+    required this.libraryRepository,
+    required this.notificationsRepository,
+    required this.chatRepository,
   });
 
   final SessionController sessionController;
+  final HomeRepository homeRepository;
+  final LibraryRepository libraryRepository;
+  final NotificationsRepository notificationsRepository;
+  final ChatRepository chatRepository;
 
   @override
   State<ThesisLiteApp> createState() => _ThesisLiteAppState();
@@ -31,7 +43,7 @@ class _ThesisLiteAppState extends State<ThesisLiteApp> {
         final status = widget.sessionController.status;
 
         return MaterialApp(
-          title: 'Thesis Lite',
+          title: 'MyBuddy',
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
             colorSchemeSeed: const Color(0xFF0B6E4F),
@@ -48,6 +60,10 @@ class _ThesisLiteAppState extends State<ThesisLiteApp> {
               ),
             SessionStatus.authenticated => HomeShell(
                 controller: widget.sessionController,
+                homeRepository: widget.homeRepository,
+                libraryRepository: widget.libraryRepository,
+                notificationsRepository: widget.notificationsRepository,
+                chatRepository: widget.chatRepository,
               ),
           },
         );
@@ -61,10 +77,6 @@ class _CheckingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }

@@ -4,17 +4,11 @@ import '../../../core/network/api_exception.dart';
 import '../data/auth_repository.dart';
 import '../domain/auth_session.dart';
 
-enum SessionStatus {
-  checking,
-  unauthenticated,
-  submitting,
-  authenticated,
-}
+enum SessionStatus { checking, unauthenticated, submitting, authenticated }
 
 class SessionController extends ChangeNotifier {
-  SessionController({
-    required AuthRepository authRepository,
-  }) : _authRepository = authRepository;
+  SessionController({required AuthRepository authRepository})
+      : _authRepository = authRepository;
 
   final AuthRepository _authRepository;
 
@@ -33,7 +27,9 @@ class SessionController extends ChangeNotifier {
 
     try {
       _session = await _authRepository.restoreSession();
-      _status = _session == null ? SessionStatus.unauthenticated : SessionStatus.authenticated;
+      _status = _session == null
+          ? SessionStatus.unauthenticated
+          : SessionStatus.authenticated;
     } catch (_) {
       _session = null;
       _status = SessionStatus.unauthenticated;
@@ -41,19 +37,13 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> login({
-    required String email,
-    required String password,
-  }) async {
+  Future<bool> login({required String email, required String password}) async {
     _status = SessionStatus.submitting;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      _session = await _authRepository.login(
-        email: email,
-        password: password,
-      );
+      _session = await _authRepository.login(email: email, password: password);
       _status = SessionStatus.authenticated;
       notifyListeners();
       return true;

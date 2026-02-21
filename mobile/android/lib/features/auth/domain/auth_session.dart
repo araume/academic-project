@@ -15,7 +15,10 @@ class AuthSession {
     return AuthSession(
       uid: (json['uid'] as String? ?? '').trim(),
       email: (json['email'] as String? ?? '').trim(),
-      displayName: ((json['displayName'] as String?) ?? (json['username'] as String?) ?? '').trim(),
+      displayName: ((json['displayName'] as String?) ??
+              (json['username'] as String?) ??
+              '')
+          .trim(),
       course: (json['course'] as String? ?? '').trim(),
     );
   }

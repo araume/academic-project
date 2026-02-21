@@ -6,22 +6,69 @@ import 'core/network/api_client.dart';
 import 'core/storage/token_store.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/presentation/session_controller.dart';
+import 'features/chat/data/chat_repository.dart';
+import 'features/home/data/home_repository.dart';
+import 'features/library/data/library_repository.dart';
+import 'features/notifications/data/notifications_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
+  final String apiBaseUrl;
+  try {
+    apiBaseUrl = Env.apiBaseUrl;
+  } catch (error) {
+    runApp(
+      _BootErrorApp(
+        message: 'Startup configuration error.\n$error',
+      ),
+    );
+    return;
+  }
+
   final tokenStore = TokenStore();
-  final apiClient = ApiClient(
-    baseUrl: Env.apiBaseUrl,
-    tokenStore: tokenStore,
-  );
+  final apiClient = ApiClient(baseUrl: apiBaseUrl, tokenStore: tokenStore);
+
   final authRepository = AuthRepository(
     apiClient: apiClient,
     tokenStore: tokenStore,
   );
   final sessionController = SessionController(authRepository: authRepository);
 
+  final homeRepository = HomeRepository(apiClient: apiClient);
+  final libraryRepository = LibraryRepository(apiClient: apiClient);
+  final notificationsRepository = NotificationsRepository(apiClient: apiClient);
+  final chatRepository = ChatRepository(apiClient: apiClient);
+
   runApp(
-    ThesisLiteApp(sessionController: sessionController),
+    ThesisLiteApp(
+      sessionController: sessionController,
+      homeRepository: homeRepository,
+      libraryRepository: libraryRepository,
+      notificationsRepository: notificationsRepository,
+      chatRepository: chatRepository,
+    ),
   );
+}
+
+class _BootErrorApp extends StatelessWidget {
+  const _BootErrorApp({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Center(
+              child: Text(message),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

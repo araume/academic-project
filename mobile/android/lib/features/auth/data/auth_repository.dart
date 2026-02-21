@@ -4,10 +4,8 @@ import '../../../core/storage/token_store.dart';
 import '../domain/auth_session.dart';
 
 class AuthRepository {
-  AuthRepository({
-    required ApiClient apiClient,
-    required TokenStore tokenStore,
-  })  : _apiClient = apiClient,
+  AuthRepository({required ApiClient apiClient, required TokenStore tokenStore})
+      : _apiClient = apiClient,
         _tokenStore = tokenStore;
 
   final ApiClient _apiClient;
@@ -20,10 +18,7 @@ class AuthRepository {
     final response = await _apiClient.postJson(
       '/api/login',
       authenticated: false,
-      body: <String, dynamic>{
-        'email': email.trim(),
-        'password': password,
-      },
+      body: <String, dynamic>{'email': email.trim(), 'password': password},
     );
 
     final token = (response.data['token'] as String? ?? '').trim();
@@ -70,10 +65,7 @@ class AuthRepository {
 
   Future<void> logout() async {
     try {
-      await _apiClient.postJson(
-        '/api/logout',
-        authenticated: true,
-      );
+      await _apiClient.postJson('/api/logout', authenticated: true);
     } finally {
       await _tokenStore.clear();
     }

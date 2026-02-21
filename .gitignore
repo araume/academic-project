@@ -2,3 +2,8 @@
 /node_modules
 env.txt
 /plan
+
+# Mobile signing secrets
+mobile/android/android/key.properties
+mobile/android/android/*.jks
+mobile/android/android/*.keystore

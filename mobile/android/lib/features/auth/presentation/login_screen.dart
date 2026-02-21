@@ -43,9 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final errorMessage = widget.controller.errorMessage;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Thesis Lite Login'),
-      ),
+      appBar: AppBar(title: const Text('MyBuddy Login')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -57,9 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'Email',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Email'),
                   validator: (value) {
                     final text = (value ?? '').trim();
                     if (text.isEmpty) return 'Email is required.';
@@ -71,9 +67,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextFormField(
                   controller: _passwordController,
                   obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Password'),
                   validator: (value) {
                     if ((value ?? '').isEmpty) return 'Password is required.';
                     return null;
