@@ -911,10 +911,11 @@ a.comment-author-link:hover {
 }
 
 .side-card {
-  background: var(--card);
+  background: #f6f3ee;
+  border: 1px solid #e0d9cf;
   border-radius: 18px;
   padding: 20px;
-  box-shadow: var(--shadow);
+  box-shadow: 0 12px 24px rgba(15, 38, 57, 0.06);
   height: clamp(180px, 24vh, 240px);
   overflow: hidden;
 }
