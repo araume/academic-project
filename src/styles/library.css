@@ -19,6 +19,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: #efeeec;
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -149,9 +150,10 @@ body {
 }
 
 .library {
-  padding: 12px 48px 60px;
+  padding: 12px clamp(16px, 4vw, 48px) 60px;
   display: grid;
   gap: 24px;
+  min-width: 0;
 }
 
 .library-header {
@@ -196,7 +198,7 @@ body {
   display: flex;
   gap: 10px;
   flex: 1;
-  min-width: 260px;
+  min-width: 0;
 }
 
 .search-bar input {
@@ -735,5 +737,12 @@ body {
 
   .filters {
     width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .search-bar {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
   }
 }

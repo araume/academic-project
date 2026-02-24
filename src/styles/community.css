@@ -23,6 +23,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: radial-gradient(circle at top right, #f7f3ef, var(--bg) 36%);
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -168,8 +169,9 @@ body {
   display: grid;
   grid-template-columns: minmax(320px, 0.84fr) minmax(0, 1.44fr);
   gap: 24px;
-  padding: 18px 48px 48px;
+  padding: 18px clamp(16px, 4vw, 48px) 48px;
   min-height: 100vh;
+  min-width: 0;
 }
 
 .community-shell.is-feed-focus {
@@ -190,6 +192,7 @@ body {
   gap: 18px;
   min-height: 0;
   align-content: start;
+  min-width: 0;
 }
 
 .card {
@@ -1122,8 +1125,17 @@ a.community-name-link:hover {
     grid-template-columns: 1fr;
   }
 
+  .community-workspace,
+  .selected-content {
+    min-height: 0;
+  }
+
   .community-list {
-    max-height: 380px;
+    max-height: min(34vh, 360px);
+  }
+
+  .feed-list {
+    max-height: min(48vh, 500px);
   }
 }
 
@@ -1171,11 +1183,23 @@ a.community-name-link:hover {
     width: 100%;
     justify-content: space-between;
   }
+
+  .community-list,
+  .feed-list,
+  .moderation-list,
+  .members-modal-list,
+  .library-picker-list {
+    max-height: none;
+  }
 }
 
 @media (max-width: 640px) {
   .top-nav {
     padding: 12px 20px;
+  }
+
+  .community-shell {
+    padding: 12px 14px 24px;
   }
 
   .comment-form {

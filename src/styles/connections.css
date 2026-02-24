@@ -22,6 +22,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: #efeeec;
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -162,11 +163,12 @@ body {
 }
 
 .connections-shell {
-  padding: 16px 48px 48px;
+  padding: 16px clamp(16px, 4vw, 48px) 48px;
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(460px, 1.2fr);
   gap: 24px;
   align-items: start;
+  min-width: 0;
 }
 
 .connections-left,
@@ -581,7 +583,8 @@ a.connection-name-link:hover {
   padding: 16px;
   display: grid;
   gap: 12px;
-  min-height: 540px;
+  min-height: clamp(460px, calc(100dvh - var(--app-nav-height, 86px) - 96px), 760px);
+  min-width: 0;
 }
 
 .chat-title-row {
@@ -601,7 +604,9 @@ a.connection-name-link:hover {
   display: grid;
   grid-template-columns: 250px 1fr;
   gap: 14px;
-  min-height: 450px;
+  min-height: 0;
+  height: 100%;
+  min-width: 0;
 }
 
 .conversation-sidebar {
@@ -609,11 +614,12 @@ a.connection-name-link:hover {
   border-radius: 14px;
   padding: 10px;
   overflow-y: auto;
-  max-height: 450px;
+  max-height: min(56vh, 520px);
   display: grid;
   align-content: start;
   grid-auto-rows: max-content;
   gap: 8px;
+  min-width: 0;
 }
 
 .conversation-item {
@@ -647,7 +653,9 @@ a.connection-name-link:hover {
   padding: 12px;
   display: grid;
   grid-template-rows: auto 1fr auto auto auto;
-  min-height: 450px;
+  min-height: 0;
+  height: 100%;
+  min-width: 0;
 }
 
 .conversation-header h3 {
@@ -680,7 +688,9 @@ a.connection-name-link:hover {
   background: #f8fafb;
   padding: 10px;
   overflow-y: auto;
-  max-height: 290px;
+  max-height: none;
+  height: 100%;
+  min-height: 0;
   display: grid;
   align-content: start;
   gap: 8px;
@@ -1007,6 +1017,10 @@ body.chat-focus-mode .conversation-messages {
     grid-template-columns: 1fr;
   }
 
+  .chat-card {
+    min-height: min(76dvh, 760px);
+  }
+
   .chat-shell {
     grid-template-columns: 220px 1fr;
   }
@@ -1032,10 +1046,24 @@ body.chat-focus-mode .conversation-messages {
 
   .chat-shell {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .conversation-sidebar {
-    max-height: 180px;
+    max-height: min(34vh, 260px);
+  }
+
+  .chat-card {
+    min-height: 0;
+  }
+
+  .conversation-panel {
+    min-height: min(56dvh, 640px);
+    height: auto;
+  }
+
+  .conversation-messages {
+    min-height: 220px;
   }
 }
 
@@ -1050,7 +1078,15 @@ body.chat-focus-mode .conversation-messages {
   }
 
   .search-form,
-  .message-form {
+  .message-compose-row {
     grid-template-columns: 1fr;
+  }
+
+  .message-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .message-bubble {
+    max-width: 92%;
   }
 }

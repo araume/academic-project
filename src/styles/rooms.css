@@ -21,6 +21,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: radial-gradient(circle at top right, #f7f3ef, var(--bg) 36%);
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -166,8 +167,9 @@ body {
   display: grid;
   grid-template-columns: minmax(320px, 0.84fr) minmax(0, 1.44fr);
   gap: 24px;
-  padding: 18px 48px 48px;
+  padding: 18px clamp(16px, 4vw, 48px) 48px;
   min-height: 100vh;
+  min-width: 0;
 }
 
 .rooms-left,
@@ -176,6 +178,7 @@ body {
   gap: 18px;
   min-height: 0;
   align-content: start;
+  min-width: 0;
 }
 
 .rooms-main {
@@ -311,7 +314,7 @@ body {
   padding: 18px;
   display: grid;
   gap: 12px;
-  min-height: calc(100vh - 170px);
+  min-height: min(680px, calc(100dvh - var(--app-nav-height, 86px) - 34px));
   align-content: start;
 }
 
@@ -618,6 +621,7 @@ body {
 .room-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .room-actions button {
@@ -940,5 +944,32 @@ body {
   .call-placeholder {
     min-height: 0;
     height: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .rooms-shell {
+    padding: 12px 14px 24px;
+  }
+
+  .context-card,
+  .request-card,
+  .workspace-card,
+  .call-panel-card {
+    padding: 14px;
+  }
+
+  .room-actions button {
+    flex: 1 1 auto;
+  }
+
+  .modal {
+    padding: 10px;
+  }
+
+  .modal-card {
+    max-height: calc(100dvh - 20px);
+    padding: 18px 16px;
+    border-radius: 18px;
   }
 }

@@ -19,6 +19,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: #efeeec;
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -162,13 +163,15 @@ body {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 32px;
-  padding: 12px 48px 60px;
+  padding: 12px clamp(16px, 4vw, 48px) 60px;
   align-items: start;
+  min-width: 0;
 }
 
 .feed {
   display: grid;
   gap: 24px;
+  min-width: 0;
 }
 
 .posts-feed {
@@ -421,6 +424,8 @@ a.comment-author-link:hover {
   width: 100%;
   box-shadow: var(--shadow);
   position: relative;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
 }
 
 .spotlight-modal-card {
@@ -1106,6 +1111,15 @@ a.sidecard-item {
   .top-nav,
   .dashboard {
     padding: 20px;
+  }
+
+  .composer {
+    flex-wrap: wrap;
+  }
+
+  .composer-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .nav-logo {

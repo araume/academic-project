@@ -11,10 +11,16 @@ body {
   margin: 0;
   padding-top: 0 !important;
   scroll-padding-top: calc(var(--app-nav-height) + 10px);
+  overflow-x: hidden;
 }
 
 body > .top-nav + * {
   margin-top: var(--app-nav-height) !important;
+}
+
+html,
+body {
+  max-width: 100%;
 }
 
 body,
@@ -627,21 +633,38 @@ h6 {
     --app-nav-link-track: auto;
   }
 
+  body > .top-nav + * {
+    margin-top: 0 !important;
+  }
+
   .top-nav {
-    padding: 8px 14px !important;
+    position: sticky !important;
+    padding: 8px 12px !important;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    column-gap: 8px;
+    justify-content: space-between;
+  }
+
+  .nav-left {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .nav-logo {
-    width: 70px !important;
+    width: 52px !important;
+    margin-left: 8px;
   }
 
   .nav-links {
+    order: 2;
     position: static;
     transform: none;
-    width: auto;
+    width: 100%;
     justify-content: flex-start;
     gap: 6px !important;
     overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .nav-links a {
@@ -656,8 +679,11 @@ h6 {
   }
 
   .nav-actions {
+    order: 1;
+    flex: 0 0 auto;
     background: transparent;
     padding-left: 0;
+    margin-left: auto;
   }
 
   .avatar-circle {
@@ -672,5 +698,20 @@ h6 {
   .search-modal {
     max-height: min(84vh, 760px);
     padding: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  :root {
+    --app-nav-icon-size: 18px;
+    --app-nav-link-size: 34px;
+  }
+
+  .top-nav {
+    padding: 8px 10px !important;
+  }
+
+  .nav-actions {
+    gap: 6px !important;
   }
 }
