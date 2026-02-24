@@ -582,6 +582,8 @@ a.connection-name-link:hover {
 .chat-card {
   padding: 16px;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
   gap: 12px;
   min-height: clamp(460px, calc(100dvh - var(--app-nav-height, 86px) - 96px), 760px);
   min-width: 0;
@@ -592,6 +594,7 @@ a.connection-name-link:hover {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  min-height: 0;
 }
 
 .chat-actions {

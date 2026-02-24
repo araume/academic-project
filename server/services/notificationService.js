@@ -1,4 +1,5 @@
 const pool = require('../db/pool');
+const { sendPushToUsers } = require('./pushService');
 
 const NOTIFICATION_TYPES = new Set([
   'following_new_post',
@@ -230,6 +231,30 @@ async function createNotificationsForRecipients(input = {}) {
     values
   );
 
+  try {
+    const actorDisplayName = actorUid
+      ? await resolveActorDisplayName(actorUid)
+      : (type === 'community_rules_required' ? 'Community' : 'Someone');
+    const pushPayload = buildPushPayload({
+      type,
+      actorDisplayName,
+      entityType,
+      entityId,
+      targetUrl,
+      meta,
+    });
+    if (pushPayload) {
+      await sendPushToUsers({
+        recipientUids: allowedRecipients,
+        title: pushPayload.title,
+        body: pushPayload.body,
+        data: pushPayload.data,
+      });
+    }
+  } catch (error) {
+    console.error('Notification push dispatch failed:', error);
+  }
+
   return { inserted: allowedRecipients.length };
 }
 
@@ -364,6 +389,76 @@ async function isBlockedEitherDirection(uidA, uidB) {
     }
     throw error;
   }
+}
+
+async function resolveActorDisplayName(uid) {
+  if (!uid) return 'Someone';
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(p.display_name, a.display_name, a.username, a.email) AS name
+       FROM accounts a
+       LEFT JOIN profiles p ON p.uid = a.uid
+       WHERE a.uid = $1
+       LIMIT 1`,
+      [uid]
+    );
+    const row = result.rows[0];
+    return row && row.name ? String(row.name).trim() : 'Someone';
+  } catch (error) {
+    console.error('Notification actor lookup failed:', error);
+    return 'Someone';
+  }
+}
+
+function buildPushPayload({ type, actorDisplayName, entityType, entityId, targetUrl, meta }) {
+  const safeActor = actorDisplayName || 'Someone';
+  const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle.trim() : 'your post';
+  const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle.trim() : 'your upload';
+  const communityName = typeof meta.communityName === 'string' ? meta.communityName.trim() : 'your community';
+
+  if (type === 'following_new_post') {
+    return {
+      title: 'New post from someone you follow',
+      body: `${safeActor} shared: ${postTitle || 'a new post'}`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'post_liked') {
+    return {
+      title: 'Your post got a like',
+      body: `${safeActor} liked ${postTitle || 'your post'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'post_commented') {
+    return {
+      title: 'New comment on your post',
+      body: `${safeActor} commented on ${postTitle || 'your post'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'document_liked') {
+    return {
+      title: 'Your document got a like',
+      body: `${safeActor} liked ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'document_commented') {
+    return {
+      title: 'New comment on your document',
+      body: `${safeActor} commented on ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'community_rules_required') {
+    return {
+      title: 'Community update',
+      body: `Please review the latest rules in ${communityName}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  return null;
 }
 
 module.exports = {

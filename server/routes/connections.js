@@ -3,6 +3,7 @@ const multer = require('multer');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getSignedUrl, uploadToStorage } = require('../services/storage');
+const { sendPushToUsers } = require('../services/pushService');
 
 const router = express.Router();
 const MESSAGE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
@@ -2383,6 +2384,50 @@ router.post('/api/connections/conversations/:id/messages', upload.single('attach
       return res.status(500).json({ ok: false, message: 'Message created but could not be loaded.' });
     }
     const message = await mapChatMessageRow(row);
+
+    try {
+      const pushRecipientsResult = await pool.query(
+        `SELECT cp.user_uid
+         FROM chat_participants cp
+         LEFT JOIN chat_thread_user_state cts
+           ON cts.thread_id = cp.thread_id
+          AND cts.user_uid = cp.user_uid
+         WHERE cp.thread_id = $1
+           AND cp.status = 'active'
+           AND cp.user_uid <> $2
+           AND COALESCE(cts.is_muted, false) = false
+           AND NOT EXISTS (
+             SELECT 1
+             FROM blocked_users bu
+             WHERE (bu.blocker_uid = cp.user_uid AND bu.blocked_uid = $2)
+                OR (bu.blocker_uid = $2 AND bu.blocked_uid = cp.user_uid)
+           )`,
+        [threadId, req.user.uid]
+      );
+      const recipientUids = pushRecipientsResult.rows.map((entry) => entry.user_uid).filter(Boolean);
+      if (recipientUids.length) {
+        const senderName = req.user.displayName || req.user.username || req.user.email || 'Someone';
+        let preview = String(body || '').trim();
+        if (!preview && attachment) {
+          preview = attachment.type === 'video' ? '[Video]' : '[Image]';
+        }
+        if (!preview) preview = 'New message';
+        if (preview.length > 140) preview = `${preview.slice(0, 140).trim()}...`;
+
+        await sendPushToUsers({
+          recipientUids,
+          title: senderName,
+          body: preview,
+          data: {
+            type: 'chat_message',
+            threadId: String(threadId),
+            messageId: String(message.id || messageId),
+          },
+        });
+      }
+    } catch (pushError) {
+      console.error('Chat push dispatch failed:', pushError);
+    }
 
     return res.json({
       ok: true,

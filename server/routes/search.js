@@ -3,6 +3,7 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const { getSignedUrl } = require('../services/storage');
+const { hasAdminPrivileges } = require('../services/roleAccess');
 
 const router = express.Router();
 
@@ -315,20 +316,23 @@ async function searchDocuments({ viewer, query, limit }) {
   const where = [];
   const userCourse = viewer && viewer.course ? String(viewer.course).trim() : '';
   const userUid = viewer && viewer.uid ? viewer.uid : '';
+  const isPrivilegedViewer = hasAdminPrivileges(viewer);
 
-  if (userCourse && userUid) {
-    values.push(userCourse);
-    const courseParam = values.length;
-    values.push(userUid);
-    const uidParam = values.length;
-    where.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    values.push(userUid);
-    where.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-  } else {
-    where.push(`d.visibility = 'public'`);
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      where.push(
+        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      where.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      where.push(`d.visibility = 'public'`);
+    }
   }
 
   if (userUid) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'app/app.dart';
@@ -15,47 +17,67 @@ import 'features/personal/data/personal_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  final String apiBaseUrl;
-  try {
-    apiBaseUrl = Env.apiBaseUrl;
-  } catch (error) {
-    runApp(
-      _BootErrorApp(
-        message: 'Startup configuration error.\n$error',
-      ),
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    Zone.current.handleUncaughtError(
+      details.exception,
+      details.stack ?? StackTrace.current,
     );
-    return;
-  }
+  };
 
-  final tokenStore = TokenStore();
-  final apiClient = ApiClient(baseUrl: apiBaseUrl, tokenStore: tokenStore);
+  runZonedGuarded(
+    () {
+      final String apiBaseUrl;
+      try {
+        apiBaseUrl = Env.apiBaseUrl;
+      } catch (error) {
+        runApp(
+          _BootErrorApp(
+            message: 'Startup configuration error.\n$error',
+          ),
+        );
+        return;
+      }
 
-  final authRepository = AuthRepository(
-    apiClient: apiClient,
-    tokenStore: tokenStore,
-  );
-  final sessionController = SessionController(authRepository: authRepository);
+      final tokenStore = TokenStore();
+      final apiClient = ApiClient(baseUrl: apiBaseUrl, tokenStore: tokenStore);
 
-  final homeRepository = HomeRepository(apiClient: apiClient);
-  final libraryRepository = LibraryRepository(apiClient: apiClient);
-  final notificationsRepository = NotificationsRepository(apiClient: apiClient);
-  final chatRepository = ChatRepository(apiClient: apiClient);
-  final personalRepository = PersonalRepository(apiClient: apiClient);
-  final pushNotificationsService = PushNotificationsService(
-    repository: notificationsRepository,
-  );
+      final authRepository = AuthRepository(
+        apiClient: apiClient,
+        tokenStore: tokenStore,
+      );
+      final sessionController =
+          SessionController(authRepository: authRepository);
 
-  runApp(
-    ThesisLiteApp(
-      sessionController: sessionController,
-      homeRepository: homeRepository,
-      libraryRepository: libraryRepository,
-      notificationsRepository: notificationsRepository,
-      chatRepository: chatRepository,
-      personalRepository: personalRepository,
-      pushNotificationsService: pushNotificationsService,
-    ),
+      final homeRepository = HomeRepository(apiClient: apiClient);
+      final libraryRepository = LibraryRepository(apiClient: apiClient);
+      final notificationsRepository =
+          NotificationsRepository(apiClient: apiClient);
+      final chatRepository = ChatRepository(apiClient: apiClient);
+      final personalRepository = PersonalRepository(apiClient: apiClient);
+      final pushNotificationsService = PushNotificationsService(
+        repository: notificationsRepository,
+      );
+
+      runApp(
+        ThesisLiteApp(
+          sessionController: sessionController,
+          homeRepository: homeRepository,
+          libraryRepository: libraryRepository,
+          notificationsRepository: notificationsRepository,
+          chatRepository: chatRepository,
+          personalRepository: personalRepository,
+          pushNotificationsService: pushNotificationsService,
+        ),
+      );
+    },
+    (error, stackTrace) {
+      runApp(
+        _BootErrorApp(
+          message: 'Startup failed.\n$error',
+        ),
+      );
+    },
   );
 }
 

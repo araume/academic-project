@@ -222,6 +222,24 @@ CREATE INDEX IF NOT EXISTS notifications_recipient_unread_idx
 CREATE INDEX IF NOT EXISTS notifications_actor_idx
   ON notifications(actor_uid);
 
+CREATE TABLE IF NOT EXISTS push_device_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  platform TEXT NOT NULL DEFAULT 'android'
+    CHECK (platform IN ('android', 'ios', 'web')),
+  device_id TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS push_device_tokens_user_active_idx
+  ON push_device_tokens(user_uid, is_active, updated_at DESC);
+CREATE INDEX IF NOT EXISTS push_device_tokens_last_seen_idx
+  ON push_device_tokens(last_seen_at DESC);
+
 CREATE TABLE IF NOT EXISTS user_presence (
   uid TEXT PRIMARY KEY REFERENCES accounts(uid) ON DELETE CASCADE,
   last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

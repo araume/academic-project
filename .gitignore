@@ -7,3 +7,5 @@ env.txt
 mobile/android/android/key.properties
 mobile/android/android/*.jks
 mobile/android/android/*.keystore
+mobile/android/android/app/google-services.json
+mobile_release_bash.md

@@ -12,7 +12,7 @@ class PushNotificationsService {
       : _repository = repository;
 
   final NotificationsRepository _repository;
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  FirebaseMessaging? _messaging;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
@@ -37,11 +37,12 @@ class PushNotificationsService {
     }
 
     try {
+      _messaging = FirebaseMessaging.instance;
       await _configureLocalNotifications();
       _foregroundMessageSubscription = FirebaseMessaging.onMessage.listen(
         _onForegroundMessage,
       );
-      _tokenRefreshSubscription = _messaging.onTokenRefresh.listen((token) {
+      _tokenRefreshSubscription = _messaging!.onTokenRefresh.listen((token) {
         _activeToken = token;
         if (_isAuthenticated) {
           unawaited(_safeRegisterToken(token));
@@ -56,11 +57,12 @@ class PushNotificationsService {
 
   Future<void> syncAuthState(bool isAuthenticated) async {
     _isAuthenticated = isAuthenticated;
-    if (!_pushEnabled) return;
+    final messaging = _messaging;
+    if (!_pushEnabled || messaging == null) return;
 
     if (isAuthenticated) {
-      await _requestPermission();
-      final token = await _messaging.getToken();
+      await _requestPermission(messaging);
+      final token = await messaging.getToken();
       if (token != null && token.isNotEmpty) {
         _activeToken = token;
         await _safeRegisterToken(token);
@@ -68,7 +70,7 @@ class PushNotificationsService {
       return;
     }
 
-    final token = _activeToken ?? await _messaging.getToken();
+    final token = _activeToken ?? await messaging.getToken();
     if (token != null && token.isNotEmpty) {
       await _safeUnregisterToken(token);
     }
@@ -79,9 +81,9 @@ class PushNotificationsService {
     await _foregroundMessageSubscription?.cancel();
   }
 
-  Future<void> _requestPermission() async {
+  Future<void> _requestPermission(FirebaseMessaging messaging) async {
     try {
-      await _messaging.requestPermission(
+      await messaging.requestPermission(
         alert: true,
         announcement: false,
         badge: true,

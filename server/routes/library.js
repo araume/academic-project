@@ -16,6 +16,7 @@ const {
   normalizeStorageKey,
 } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
+const { hasAdminPrivileges } = require('../services/roleAccess');
 const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
 
 const router = express.Router();
@@ -373,22 +374,25 @@ function buildDocumentContextText(document, excerpt) {
 async function loadAccessibleDocumentForUser(user, uuid) {
   const userCourse = user && user.course ? user.course : null;
   const userUid = user && user.uid ? user.uid : null;
+  const isPrivilegedViewer = hasAdminPrivileges(user);
   const filters = ['d.uuid = $1'];
   const values = [uuid];
 
-  if (userCourse && userUid) {
-    values.push(userCourse);
-    const courseParam = values.length;
-    values.push(userUid);
-    const uidParam = values.length;
-    filters.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    values.push(userUid);
-    filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-  } else {
-    filters.push(`d.visibility = 'public'`);
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      filters.push(
+        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
   }
 
   const query = `
@@ -427,6 +431,7 @@ router.get('/api/library/documents', async (req, res) => {
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 12), 1), 50);
   const userCourse = req.user && req.user.course ? req.user.course : null;
   const userUid = req.user && req.user.uid ? req.user.uid : null;
+  const isPrivilegedViewer = hasAdminPrivileges(req.user);
 
   const filters = [];
   const countValues = [];
@@ -443,19 +448,21 @@ router.get('/api/library/documents', async (req, res) => {
     filters.push(`d.course = $${countValues.length}`);
   }
 
-  if (userCourse && userUid) {
-    countValues.push(userCourse);
-    const courseParam = countValues.length;
-    countValues.push(userUid);
-    const uidParam = countValues.length;
-    filters.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    countValues.push(userUid);
-    filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${countValues.length})`);
-  } else {
-    filters.push(`d.visibility = 'public'`);
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      countValues.push(userCourse);
+      const courseParam = countValues.length;
+      countValues.push(userUid);
+      const uidParam = countValues.length;
+      filters.push(
+        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      countValues.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${countValues.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
   }
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -532,22 +539,25 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
   try {
     const userCourse = req.user && req.user.course ? req.user.course : null;
     const userUid = req.user && req.user.uid ? req.user.uid : null;
+    const isPrivilegedViewer = hasAdminPrivileges(req.user);
     const filters = ['d.uuid = $1'];
     const values = [uuid];
 
-    if (userCourse && userUid) {
-      values.push(userCourse);
-      const courseParam = values.length;
-      values.push(userUid);
-      const uidParam = values.length;
-      filters.push(
-        `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-      );
-    } else if (userUid) {
-      values.push(userUid);
-      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-    } else {
-      filters.push(`d.visibility = 'public'`);
+    if (!isPrivilegedViewer) {
+      if (userCourse && userUid) {
+        values.push(userCourse);
+        const courseParam = values.length;
+        values.push(userUid);
+        const uidParam = values.length;
+        filters.push(
+          `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+        );
+      } else if (userUid) {
+        values.push(userUid);
+        filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+      } else {
+        filters.push(`d.visibility = 'public'`);
+      }
     }
 
     const query = `
