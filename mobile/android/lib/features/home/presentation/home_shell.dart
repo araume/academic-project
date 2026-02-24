@@ -96,12 +96,14 @@ class _HomeShellState extends State<HomeShell> {
                   height: 38,
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
-                      colors: [Color(0xFFD6C9C2), Color(0xFFB9A79D)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppPalette.primary, AppPalette.accent],
                     ),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0x220F2639)),
+                    border: Border.all(color: AppPalette.outline),
                   ),
-                  child: const Icon(Icons.logout, size: 20),
+                  child: const Icon(Icons.logout, size: 20, color: Colors.white),
                 ),
               ),
             ),
@@ -119,7 +121,7 @@ class _HomeShellState extends State<HomeShell> {
             borderRadius: BorderRadius.circular(24),
             boxShadow: const [
               BoxShadow(
-                color: Color(0x220F2639),
+                color: Color(0x17042A47),
                 blurRadius: 18,
                 offset: Offset(0, 8),
               ),

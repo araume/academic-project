@@ -45,4 +45,32 @@ class NotificationsRepository {
     final response = await _apiClient.postJson('/api/notifications/$id/read');
     return (response.data['unreadCount'] as num? ?? 0).toInt();
   }
+
+  Future<void> registerPushToken({
+    required String token,
+    String platform = 'android',
+    String? deviceId,
+  }) async {
+    final safeToken = token.trim();
+    if (safeToken.isEmpty) return;
+
+    await _apiClient.postJson(
+      '/api/notifications/push-token',
+      body: <String, dynamic>{
+        'token': safeToken,
+        'platform': platform.trim().isEmpty ? 'android' : platform.trim(),
+        if ((deviceId ?? '').trim().isNotEmpty) 'deviceId': deviceId!.trim(),
+      },
+    );
+  }
+
+  Future<void> unregisterPushToken(String token) async {
+    final safeToken = token.trim();
+    if (safeToken.isEmpty) return;
+
+    await _apiClient.postJson(
+      '/api/notifications/push-token/remove',
+      body: <String, dynamic>{'token': safeToken},
+    );
+  }
 }

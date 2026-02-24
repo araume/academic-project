@@ -5,6 +5,11 @@ class ChatConversation {
     required this.threadType,
     required this.lastMessage,
     required this.lastMessageAt,
+    this.unreadCount = 0,
+    this.isRead = true,
+    this.isArchived = false,
+    this.isMuted = false,
+    this.canLeave = false,
   });
 
   final int id;
@@ -12,15 +17,84 @@ class ChatConversation {
   final String threadType;
   final String lastMessage;
   final DateTime? lastMessageAt;
+  final int unreadCount;
+  final bool isRead;
+  final bool isArchived;
+  final bool isMuted;
+  final bool canLeave;
 
   factory ChatConversation.fromJson(Map<String, dynamic> json) {
-    final lastMessage = (json['lastMessage'] as Map<String, dynamic>?);
+    final rawLastMessage = json['lastMessage'];
+    final lastMessage = rawLastMessage is Map<String, dynamic>
+        ? rawLastMessage
+        : null;
+    final unreadCount = (json['unreadCount'] as num? ?? 0).toInt();
+    final isRead = json['isRead'] is bool
+        ? json['isRead'] as bool
+        : unreadCount <= 0;
+
     return ChatConversation(
       id: (json['id'] as num? ?? 0).toInt(),
       title: (json['title'] as String? ?? 'Conversation').trim(),
       threadType: (json['threadType'] as String? ?? '').trim(),
       lastMessage: (lastMessage?['body'] as String? ?? '').trim(),
       lastMessageAt: _parseDate(lastMessage?['createdAt']),
+      unreadCount: unreadCount,
+      isRead: isRead,
+      isArchived: json['isArchived'] == true,
+      isMuted: json['isMuted'] == true,
+      canLeave: json['canLeave'] == true,
+    );
+  }
+}
+
+class ChatSearchUser {
+  ChatSearchUser({
+    required this.uid,
+    required this.displayName,
+    this.course,
+    this.bio,
+  });
+
+  final String uid;
+  final String displayName;
+  final String? course;
+  final String? bio;
+
+  factory ChatSearchUser.fromJson(Map<String, dynamic> json) {
+    return ChatSearchUser(
+      uid: (json['uid'] as String? ?? '').trim(),
+      displayName: (json['displayName'] as String? ?? 'Member').trim(),
+      course: (json['course'] as String?)?.trim(),
+      bio: (json['bio'] as String?)?.trim(),
+    );
+  }
+}
+
+class ChatStartConversationResult {
+  ChatStartConversationResult({
+    required this.state,
+    required this.requiresApproval,
+    this.threadId,
+    this.requestId,
+  });
+
+  final String state;
+  final bool requiresApproval;
+  final int? threadId;
+  final int? requestId;
+
+  bool get hasThread => (threadId ?? 0) > 0;
+
+  factory ChatStartConversationResult.fromJson(Map<String, dynamic> json) {
+    final rawThreadId = (json['threadId'] as num?)?.toInt();
+    final rawRequestId = (json['requestId'] as num?)?.toInt();
+    return ChatStartConversationResult(
+      state: (json['state'] as String? ?? '').trim(),
+      requiresApproval: json['requiresApproval'] == true,
+      threadId: (rawThreadId != null && rawThreadId > 0) ? rawThreadId : null,
+      requestId:
+          (rawRequestId != null && rawRequestId > 0) ? rawRequestId : null,
     );
   }
 }

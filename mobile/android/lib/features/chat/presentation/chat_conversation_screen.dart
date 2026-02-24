@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/ui/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../data/attachment_policy.dart';
 import '../data/chat_models.dart';
@@ -50,6 +51,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   Timer? _pollTimer;
   bool _loading = true;
   bool _sending = false;
+  bool _conversationArchived = false;
+  bool _conversationMuted = false;
   bool _typingActive = false;
   bool _showEmojiBar = false;
   DateTime? _lastTypingPing;
@@ -65,9 +68,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void initState() {
     super.initState();
+    _conversationArchived = widget.conversation.isArchived;
+    _conversationMuted = widget.conversation.isMuted;
     _loadMessages();
     _loadTypingUsers();
     _inputController.addListener(_onComposerChanged);
+    widget.repository.markConversationRead(widget.conversation.id).catchError((_) {});
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       _loadMessages(silent: true);
       _loadTypingUsers(silent: true);
@@ -470,12 +476,159 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     });
   }
 
+  Future<void> _runConversationAction(String action) async {
+    try {
+      if (action == 'mark_read') {
+        await widget.repository.markConversationRead(widget.conversation.id);
+        if (!mounted) return;
+        showAppSnackBar(context, 'Conversation marked as read.');
+        return;
+      }
+
+      if (action == 'archive') {
+        await widget.repository.setConversationArchived(
+          conversationId: widget.conversation.id,
+          archived: true,
+        );
+        if (!mounted) return;
+        setState(() {
+          _conversationArchived = true;
+        });
+        showAppSnackBar(context, 'Conversation archived.');
+        return;
+      }
+
+      if (action == 'unarchive') {
+        await widget.repository.setConversationArchived(
+          conversationId: widget.conversation.id,
+          archived: false,
+        );
+        if (!mounted) return;
+        setState(() {
+          _conversationArchived = false;
+        });
+        showAppSnackBar(context, 'Conversation moved to active.');
+        return;
+      }
+
+      if (action == 'mute') {
+        await widget.repository.setConversationMuted(
+          conversationId: widget.conversation.id,
+          muted: true,
+        );
+        if (!mounted) return;
+        setState(() {
+          _conversationMuted = true;
+        });
+        showAppSnackBar(context, 'Notifications muted.');
+        return;
+      }
+
+      if (action == 'unmute') {
+        await widget.repository.setConversationMuted(
+          conversationId: widget.conversation.id,
+          muted: false,
+        );
+        if (!mounted) return;
+        setState(() {
+          _conversationMuted = false;
+        });
+        showAppSnackBar(context, 'Notifications unmuted.');
+        return;
+      }
+
+      if (action == 'delete') {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete conversation'),
+            content: const Text('Delete this conversation from your chat list?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        await widget.repository.deleteConversation(widget.conversation.id);
+        if (!mounted) return;
+        showAppSnackBar(context, 'Conversation deleted.');
+        Navigator.of(context).pop();
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      showAppSnackBar(context, error.message, isError: true);
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(context, 'Conversation action failed.', isError: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.conversation.title),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: 'Conversation options',
+            onSelected: _runConversationAction,
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(
+                value: 'mark_read',
+                child: Row(
+                  children: [
+                    Icon(Icons.mark_chat_read_outlined),
+                    SizedBox(width: 8),
+                    Text('Mark as read'),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: _conversationArchived ? 'unarchive' : 'archive',
+                child: Row(
+                  children: [
+                    Icon(_conversationArchived
+                        ? Icons.unarchive_outlined
+                        : Icons.archive_outlined),
+                    const SizedBox(width: 8),
+                    Text(_conversationArchived ? 'Move to active' : 'Archive'),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: _conversationMuted ? 'unmute' : 'mute',
+                child: Row(
+                  children: [
+                    Icon(_conversationMuted
+                        ? Icons.notifications_active_outlined
+                        : Icons.notifications_off_outlined),
+                    const SizedBox(width: 8),
+                    Text(_conversationMuted
+                        ? 'Unmute notifications'
+                        : 'Mute notifications'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline),
+                    SizedBox(width: 8),
+                    Text('Delete conversation'),
+                  ],
+                ),
+              ),
+            ],
+          ),
           IconButton(
             onPressed: () {
               _loadMessages();
@@ -689,6 +842,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         itemBuilder: (context, index) {
           final message = _messages[index];
           final mine = message.senderUid == widget.currentUid;
+          final bubbleColor = mine
+              ? AppPalette.accentStrong
+              : Theme.of(context).colorScheme.surfaceContainerHighest;
+          final textColor = mine ? Colors.white : AppPalette.ink;
+          final subtleTextColor = mine
+              ? Colors.white.withValues(alpha: 0.78)
+              : AppPalette.inkSoft;
 
           return Align(
             alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
@@ -700,9 +860,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: mine
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : Theme.of(context).colorScheme.surfaceContainerHighest,
+                  color: bubbleColor,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: const Color(0x160F2639)),
                 ),
@@ -714,7 +872,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Text(
                           message.senderName,
-                          style: Theme.of(context).textTheme.labelSmall,
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: AppPalette.accentStrong,
+                                  ),
                         ),
                       ),
                     if (message.replyTo != null)
@@ -725,27 +886,44 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                             horizontal: 8, vertical: 6),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
-                          color: Theme.of(context).colorScheme.surface,
+                          color: mine
+                              ? Colors.white.withValues(alpha: 0.16)
+                              : Theme.of(context).colorScheme.surface,
                         ),
                         child: Text(
                           '${message.replyTo!.senderName}: ${message.replyTo!.bodySnippet}',
-                          style: Theme.of(context).textTheme.bodySmall,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: mine ? Colors.white : AppPalette.ink,
+                                  ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    if (message.body.isNotEmpty) Text(message.body),
+                    if (message.body.isNotEmpty)
+                      Text(
+                        message.body,
+                        style: TextStyle(color: textColor),
+                      ),
                     if (message.body.isEmpty && message.attachment == null)
-                      Text(message.bodyOrAttachmentLabel),
+                      Text(
+                        message.bodyOrAttachmentLabel,
+                        style: TextStyle(color: textColor),
+                      ),
                     if (message.attachment != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 6),
-                        child: _buildAttachmentMessage(message.attachment!),
+                        child: _buildAttachmentMessage(
+                          message.attachment!,
+                          textColor: textColor,
+                        ),
                       ),
                     const SizedBox(height: 4),
                     Text(
                       _formatDate(message.createdAt),
-                      style: Theme.of(context).textTheme.labelSmall,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: subtleTextColor,
+                          ),
                     ),
                   ],
                 ),
@@ -757,7 +935,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     );
   }
 
-  Widget _buildAttachmentMessage(ChatAttachment attachment) {
+  Widget _buildAttachmentMessage(
+    ChatAttachment attachment, {
+    required Color textColor,
+  }) {
     final type = attachment.type.trim().toLowerCase();
     if (type == 'image' &&
         attachment.link != null &&
@@ -786,12 +967,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.videocam_outlined, size: 18),
+            Icon(Icons.videocam_outlined, size: 18, color: textColor),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
                 label,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: textColor),
               ),
             ),
           ],
@@ -801,13 +983,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     final fallbackLabel = attachment.filename ?? '[Attachment]';
     if (attachment.link == null || attachment.link!.isEmpty) {
-      return Text(fallbackLabel);
+      return Text(fallbackLabel, style: TextStyle(color: textColor));
     }
     return InkWell(
       onTap: () => _openAttachmentLink(attachment.link!),
       child: Text(
         fallbackLabel,
-        style: const TextStyle(decoration: TextDecoration.underline),
+        style: TextStyle(
+          color: textColor,
+          decoration: TextDecoration.underline,
+        ),
       ),
     );
   }

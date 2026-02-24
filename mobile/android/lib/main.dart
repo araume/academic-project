@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app/app.dart';
 import 'core/config/env.dart';
 import 'core/network/api_client.dart';
+import 'core/notifications/push_notifications_service.dart';
 import 'core/storage/token_store.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/presentation/session_controller.dart';
@@ -41,6 +42,9 @@ void main() {
   final notificationsRepository = NotificationsRepository(apiClient: apiClient);
   final chatRepository = ChatRepository(apiClient: apiClient);
   final personalRepository = PersonalRepository(apiClient: apiClient);
+  final pushNotificationsService = PushNotificationsService(
+    repository: notificationsRepository,
+  );
 
   runApp(
     ThesisLiteApp(
@@ -50,6 +54,7 @@ void main() {
       notificationsRepository: notificationsRepository,
       chatRepository: chatRepository,
       personalRepository: personalRepository,
+      pushNotificationsService: pushNotificationsService,
     ),
   );
 }

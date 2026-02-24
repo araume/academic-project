@@ -10,16 +10,49 @@ class AppPageBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(gradient: appPageGradient),
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: Padding(
-          padding: padding ?? EdgeInsets.zero,
-          child: child,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(gradient: appPageGradient),
         ),
-      ),
+        Positioned(
+          top: -80,
+          right: -20,
+          child: IgnorePointer(
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppPalette.primary.withValues(alpha: 0.08),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: -90,
+          left: -40,
+          child: IgnorePointer(
+            child: Container(
+              width: 250,
+              height: 250,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppPalette.accent.withValues(alpha: 0.06),
+              ),
+            ),
+          ),
+        ),
+        SafeArea(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: padding ?? EdgeInsets.zero,
+            child: child,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -43,12 +76,12 @@ class AppSectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppPalette.card,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0x1A0F2639)),
+        border: Border.all(color: AppPalette.outlineSoft),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x140F2639),
-            blurRadius: 24,
-            offset: Offset(0, 10),
+            color: Color(0x14042A47),
+            blurRadius: 18,
+            offset: Offset(0, 8),
           ),
         ],
       ),

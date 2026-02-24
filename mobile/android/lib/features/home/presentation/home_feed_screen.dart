@@ -350,10 +350,12 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(999),
                       gradient: const LinearGradient(
-                        colors: [Color(0xFFD6C9C2), Color(0xFFB9A79D)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [AppPalette.primary, AppPalette.accent],
                       ),
                     ),
-                    child: const Icon(Icons.edit_note_rounded),
+                    child: const Icon(Icons.edit_note_rounded, color: Colors.white),
                   ),
                   const SizedBox(width: 10),
                   Expanded(

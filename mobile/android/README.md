@@ -25,6 +25,26 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3000
 Use `10.0.2.2` for Android emulator to reach a local backend running on your machine.
 Debug builds allow HTTP for local development; release builds enforce HTTPS only.
 
+## Push notifications (FCM)
+
+Push notifications are supported for:
+- New direct/group chat messages
+- Interactions with your posts/documents (likes/comments)
+
+Setup required:
+1. Add Android Firebase config file:
+   - `mobile/android/android/app/google-services.json`
+2. Configure backend Firebase credentials (Cloud Run env vars):
+   - `FIREBASE_PROJECT_ID` (recommended)
+   - `FIREBASE_SERVICE_ACCOUNT_JSON` (raw JSON) **or**
+   - `FIREBASE_SERVICE_ACCOUNT_BASE64` (base64-encoded JSON)
+3. Install backend dependency and restart server:
+```bash
+npm install
+```
+
+Device tokens are registered automatically after login and removed on logout.
+
 ## Release build
 
 1. Generate signing config (recommended):

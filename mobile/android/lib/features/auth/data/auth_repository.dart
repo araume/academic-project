@@ -3,6 +3,18 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/storage/token_store.dart';
 import '../domain/auth_session.dart';
 
+class SignupResult {
+  SignupResult({
+    required this.message,
+    required this.requiresVerification,
+    required this.emailSent,
+  });
+
+  final String message;
+  final bool requiresVerification;
+  final bool emailSent;
+}
+
 class AuthRepository {
   AuthRepository({required ApiClient apiClient, required TokenStore tokenStore})
       : _apiClient = apiClient,
@@ -10,6 +22,36 @@ class AuthRepository {
 
   final ApiClient _apiClient;
   final TokenStore _tokenStore;
+
+  Future<SignupResult> signup({
+    required String email,
+    required String password,
+    String username = '',
+    String displayName = '',
+    String course = '',
+    String recoveryEmail = '',
+  }) async {
+    final response = await _apiClient.postJson(
+      '/api/signup',
+      authenticated: false,
+      body: <String, dynamic>{
+        'email': email.trim(),
+        'password': password,
+        if (username.trim().isNotEmpty) 'username': username.trim(),
+        if (displayName.trim().isNotEmpty) 'displayName': displayName.trim(),
+        if (course.trim().isNotEmpty) 'course': course.trim(),
+        if (recoveryEmail.trim().isNotEmpty)
+          'recoveryEmail': recoveryEmail.trim(),
+      },
+    );
+
+    return SignupResult(
+      message:
+          (response.data['message'] as String? ?? 'Account created.').trim(),
+      requiresVerification: response.data['requiresVerification'] == true,
+      emailSent: response.data['emailSent'] == true,
+    );
+  }
 
   Future<AuthSession> login({
     required String email,

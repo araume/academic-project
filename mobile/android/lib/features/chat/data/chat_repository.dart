@@ -29,10 +29,16 @@ class ChatRepository {
   Future<List<ChatConversation>> fetchConversations({
     int page = 1,
     int pageSize = 40,
+    String scope = 'active',
   }) async {
+    final normalizedScope = _normalizeConversationScope(scope);
     final response = await _apiClient.getJson(
       '/api/connections/conversations',
-      query: <String, String>{'page': '$page', 'pageSize': '$pageSize'},
+      query: <String, String>{
+        'page': '$page',
+        'pageSize': '$pageSize',
+        'scope': normalizedScope,
+      },
     );
 
     final raw = response.data['conversations'];
@@ -45,6 +51,87 @@ class ChatRepository {
         .map(ChatConversation.fromJson)
         .where((item) => item.id > 0)
         .toList();
+  }
+
+  Future<List<ChatSearchUser>> searchUsers({
+    required String query,
+    int page = 1,
+    int pageSize = 20,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      return <ChatSearchUser>[];
+    }
+
+    final response = await _apiClient.getJson(
+      '/api/connections/search',
+      query: <String, String>{
+        'q': normalizedQuery,
+        'page': '$page',
+        'pageSize': '$pageSize',
+      },
+    );
+
+    final raw = response.data['users'];
+    if (raw is! List) {
+      return <ChatSearchUser>[];
+    }
+
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(ChatSearchUser.fromJson)
+        .where((item) => item.uid.isNotEmpty)
+        .toList();
+  }
+
+  Future<ChatStartConversationResult> startDirectConversation({
+    required String targetUid,
+  }) async {
+    final safeUid = targetUid.trim();
+    if (safeUid.isEmpty) {
+      throw ApiException(statusCode: 400, message: 'targetUid is required.');
+    }
+
+    final response = await _apiClient.postJson(
+      '/api/connections/chat/start',
+      body: <String, dynamic>{'targetUid': safeUid},
+    );
+
+    return ChatStartConversationResult.fromJson(response.data);
+  }
+
+  Future<void> markConversationRead(int conversationId) async {
+    await _apiClient.postJson('/api/connections/conversations/$conversationId/mark-read');
+  }
+
+  Future<void> markConversationUnread(int conversationId) async {
+    await _apiClient.postJson('/api/connections/conversations/$conversationId/mark-unread');
+  }
+
+  Future<void> setConversationArchived({
+    required int conversationId,
+    required bool archived,
+  }) async {
+    await _apiClient.postJson(
+      archived
+          ? '/api/connections/conversations/$conversationId/archive'
+          : '/api/connections/conversations/$conversationId/unarchive',
+    );
+  }
+
+  Future<void> setConversationMuted({
+    required int conversationId,
+    required bool muted,
+  }) async {
+    await _apiClient.postJson(
+      muted
+          ? '/api/connections/conversations/$conversationId/mute'
+          : '/api/connections/conversations/$conversationId/unmute',
+    );
+  }
+
+  Future<void> deleteConversation(int conversationId) async {
+    await _apiClient.deleteJson('/api/connections/conversations/$conversationId');
   }
 
   Future<List<ChatMessage>> fetchMessages(
@@ -161,5 +248,11 @@ class ChatRepository {
         .map(ChatTypingUser.fromJson)
         .where((item) => item.uid.isNotEmpty)
         .toList();
+  }
+
+  String _normalizeConversationScope(String scope) {
+    const allowed = <String>{'active', 'archived', 'all'};
+    final safeScope = scope.trim().toLowerCase();
+    return allowed.contains(safeScope) ? safeScope : 'active';
   }
 }

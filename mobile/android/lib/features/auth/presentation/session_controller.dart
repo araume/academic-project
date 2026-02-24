@@ -15,14 +15,17 @@ class SessionController extends ChangeNotifier {
   SessionStatus _status = SessionStatus.checking;
   AuthSession? _session;
   String? _errorMessage;
+  String? _infoMessage;
 
   SessionStatus get status => _status;
   AuthSession? get session => _session;
   String? get errorMessage => _errorMessage;
+  String? get infoMessage => _infoMessage;
 
   Future<void> bootstrap() async {
     _status = SessionStatus.checking;
     _errorMessage = null;
+    _infoMessage = null;
     notifyListeners();
 
     try {
@@ -40,6 +43,7 @@ class SessionController extends ChangeNotifier {
   Future<bool> login({required String email, required String password}) async {
     _status = SessionStatus.submitting;
     _errorMessage = null;
+    _infoMessage = null;
     notifyListeners();
 
     try {
@@ -62,8 +66,51 @@ class SessionController extends ChangeNotifier {
     }
   }
 
+  Future<bool> signup({
+    required String email,
+    required String password,
+    String username = '',
+    String displayName = '',
+    String course = '',
+    String recoveryEmail = '',
+  }) async {
+    _status = SessionStatus.submitting;
+    _errorMessage = null;
+    _infoMessage = null;
+    notifyListeners();
+
+    try {
+      final result = await _authRepository.signup(
+        email: email,
+        password: password,
+        username: username,
+        displayName: displayName,
+        course: course,
+        recoveryEmail: recoveryEmail,
+      );
+      _session = null;
+      _status = SessionStatus.unauthenticated;
+      _infoMessage = result.message;
+      notifyListeners();
+      return true;
+    } on ApiException catch (error) {
+      _session = null;
+      _status = SessionStatus.unauthenticated;
+      _errorMessage = error.message;
+      notifyListeners();
+      return false;
+    } catch (_) {
+      _session = null;
+      _status = SessionStatus.unauthenticated;
+      _errorMessage = 'Sign up failed. Please try again.';
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<void> logout() async {
     _errorMessage = null;
+    _infoMessage = null;
     notifyListeners();
 
     try {

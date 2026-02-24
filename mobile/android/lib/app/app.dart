@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/notifications/push_notifications_service.dart';
 import '../core/ui/app_theme.dart';
 import '../core/ui/app_ui.dart';
 import '../features/auth/presentation/login_screen.dart';
@@ -20,6 +21,7 @@ class ThesisLiteApp extends StatefulWidget {
     required this.notificationsRepository,
     required this.chatRepository,
     required this.personalRepository,
+    required this.pushNotificationsService,
   });
 
   final SessionController sessionController;
@@ -28,16 +30,26 @@ class ThesisLiteApp extends StatefulWidget {
   final NotificationsRepository notificationsRepository;
   final ChatRepository chatRepository;
   final PersonalRepository personalRepository;
+  final PushNotificationsService pushNotificationsService;
 
   @override
   State<ThesisLiteApp> createState() => _ThesisLiteAppState();
 }
 
 class _ThesisLiteAppState extends State<ThesisLiteApp> {
+  bool _pushAuthSynced = false;
+
   @override
   void initState() {
     super.initState();
     widget.sessionController.bootstrap();
+    widget.pushNotificationsService.initialize();
+  }
+
+  @override
+  void dispose() {
+    widget.pushNotificationsService.dispose();
+    super.dispose();
   }
 
   @override
@@ -46,6 +58,13 @@ class _ThesisLiteAppState extends State<ThesisLiteApp> {
       animation: widget.sessionController,
       builder: (context, _) {
         final status = widget.sessionController.status;
+        final authenticated = status == SessionStatus.authenticated;
+        if (_pushAuthSynced != authenticated) {
+          _pushAuthSynced = authenticated;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.pushNotificationsService.syncAuthState(authenticated);
+          });
+        }
 
         return MaterialApp(
           title: 'MyBuddy',
