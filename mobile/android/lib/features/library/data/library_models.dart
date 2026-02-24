@@ -29,7 +29,7 @@ class LibraryDocument {
   final String? thumbnailLink;
   final DateTime? uploadDate;
 
-  LibraryDocument copyWith({int? popularity, bool? liked}) {
+  LibraryDocument copyWith({int? popularity, bool? liked, int? views}) {
     return LibraryDocument(
       uuid: uuid,
       title: title,
@@ -37,7 +37,7 @@ class LibraryDocument {
       course: course,
       subject: subject,
       uploaderName: uploaderName,
-      views: views,
+      views: views ?? this.views,
       popularity: popularity ?? this.popularity,
       liked: liked ?? this.liked,
       isOwner: isOwner,

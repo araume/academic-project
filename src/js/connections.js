@@ -24,6 +24,12 @@ const requestList = document.getElementById('requestList');
 const conversationList = document.getElementById('conversationList');
 const activeConversationTitle = document.getElementById('activeConversationTitle');
 const activeConversationMeta = document.getElementById('activeConversationMeta');
+const conversationControls = document.getElementById('conversationControls');
+const toggleReadButton = document.getElementById('toggleReadButton');
+const toggleArchiveButton = document.getElementById('toggleArchiveButton');
+const toggleMuteButton = document.getElementById('toggleMuteButton');
+const deleteConversationButton = document.getElementById('deleteConversationButton');
+const leaveConversationButton = document.getElementById('leaveConversationButton');
 const messageList = document.getElementById('messageList');
 const typingIndicator = document.getElementById('typingIndicator');
 const messageForm = document.getElementById('messageForm');
@@ -473,9 +479,16 @@ function renderConversationList() {
 
     const title = document.createElement('h4');
     title.textContent = conversation.title || 'Conversation';
+    if (conversation.unreadCount > 0) {
+      title.textContent = `(${conversation.unreadCount}) ${title.textContent}`;
+    }
 
     const preview = document.createElement('p');
-    preview.textContent = conversation.lastMessage ? conversation.lastMessage.body.slice(0, 72) : 'No messages yet';
+    const previewBody = conversation.lastMessage ? conversation.lastMessage.body.slice(0, 72) : 'No messages yet';
+    const badges = [];
+    if (conversation.isMuted) badges.push('Muted');
+    if (conversation.isArchived) badges.push('Archived');
+    preview.textContent = badges.length ? `${badges.join(' • ')} • ${previewBody}` : previewBody;
 
     button.appendChild(title);
     button.appendChild(preview);
@@ -511,6 +524,39 @@ function renderTypingIndicator() {
   typingIndicator.textContent = `${names[0]}, ${names[1]} and others are typing...`;
 }
 
+function getActiveConversation() {
+  if (!state.activeConversationId) return null;
+  return state.conversations.find((item) => item.id === state.activeConversationId) || null;
+}
+
+function renderConversationControls() {
+  const conversation = getActiveConversation();
+  const hasConversation = Boolean(conversation);
+
+  if (conversationControls) {
+    conversationControls.classList.toggle('is-hidden', !hasConversation);
+  }
+
+  if (toggleReadButton) {
+    toggleReadButton.disabled = !hasConversation;
+    toggleReadButton.textContent = conversation && conversation.isRead ? 'Mark unread' : 'Mark read';
+  }
+  if (toggleArchiveButton) {
+    toggleArchiveButton.disabled = !hasConversation;
+    toggleArchiveButton.textContent = conversation && conversation.isArchived ? 'Unarchive' : 'Archive';
+  }
+  if (toggleMuteButton) {
+    toggleMuteButton.disabled = !hasConversation;
+    toggleMuteButton.textContent = conversation && conversation.isMuted ? 'Unmute' : 'Mute';
+  }
+  if (deleteConversationButton) {
+    deleteConversationButton.disabled = !hasConversation;
+  }
+  if (leaveConversationButton) {
+    leaveConversationButton.disabled = !hasConversation || !(conversation && conversation.canLeave);
+  }
+}
+
 function renderMessages() {
   if (!messageList || !activeConversationTitle || !activeConversationMeta) return;
 
@@ -532,6 +578,7 @@ function renderMessages() {
     clearReplySelection();
     clearMessageAttachment();
     renderTypingIndicator();
+    renderConversationControls();
     renderEmptyState(messageList, 'Pick a conversation to start messaging.');
     return;
   }
@@ -546,6 +593,7 @@ function renderMessages() {
     clearReplySelection();
     clearMessageAttachment();
     renderTypingIndicator();
+    renderConversationControls();
     renderEmptyState(messageList, 'Conversation not found.');
     return;
   }
@@ -558,6 +606,7 @@ function renderMessages() {
   if (emojiToggleButton) emojiToggleButton.disabled = false;
   if (messageAttachmentInput) messageAttachmentInput.disabled = false;
   renderTypingIndicator();
+  renderConversationControls();
 
   const messages = state.messagesByConversation.get(state.activeConversationId) || [];
   if (!messages.length) {
@@ -627,15 +676,17 @@ function renderMessages() {
     const actions = document.createElement('div');
     actions.className = 'message-actions';
 
-    const replyButton = document.createElement('button');
-    replyButton.type = 'button';
-    replyButton.className = 'message-action-button';
-    replyButton.dataset.action = 'reply-message';
-    replyButton.dataset.id = String(message.id);
-    replyButton.textContent = 'Reply';
-    actions.appendChild(replyButton);
+    if (!message.isDeleted) {
+      const replyButton = document.createElement('button');
+      replyButton.type = 'button';
+      replyButton.className = 'message-action-button';
+      replyButton.dataset.action = 'reply-message';
+      replyButton.dataset.id = String(message.id);
+      replyButton.textContent = 'Reply';
+      actions.appendChild(replyButton);
+    }
 
-    if (message.senderUid !== state.me?.uid) {
+    if (!message.isDeleted && message.senderUid !== state.me?.uid) {
       const reportButton = document.createElement('button');
       reportButton.type = 'button';
       reportButton.className = 'message-action-button warn';
@@ -645,7 +696,19 @@ function renderMessages() {
       actions.appendChild(reportButton);
     }
 
-    bubble.appendChild(actions);
+    if (!message.isDeleted && message.senderUid === state.me?.uid) {
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'message-action-button delete';
+      deleteButton.dataset.action = 'delete-message';
+      deleteButton.dataset.id = String(message.id);
+      deleteButton.textContent = 'Delete';
+      actions.appendChild(deleteButton);
+    }
+
+    if (actions.children.length) {
+      bubble.appendChild(actions);
+    }
     messageList.appendChild(bubble);
   });
 
@@ -699,7 +762,7 @@ async function loadRequests() {
 }
 
 async function refreshConversationList(keepSelection = true) {
-  const data = await apiRequest('/api/connections/conversations?page=1&pageSize=40');
+  const data = await apiRequest('/api/connections/conversations?page=1&pageSize=40&scope=all');
   state.conversations = data.conversations || [];
 
   if (!keepSelection || !state.activeConversationId) {
@@ -726,6 +789,12 @@ async function loadConversations(keepSelection = true) {
 async function loadMessages(conversationId) {
   const data = await apiRequest(`/api/connections/conversations/${conversationId}/messages?page=1&pageSize=80`);
   state.messagesByConversation.set(conversationId, data.messages || []);
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (conversation) {
+    conversation.unreadCount = 0;
+    conversation.isRead = true;
+  }
+  renderConversationList();
   renderMessages();
 }
 
@@ -912,6 +981,92 @@ async function handleRequestAction(action, requestId) {
     if (data.threadId) {
       await openConversation(Number(data.threadId));
     }
+  }
+}
+
+async function handleConversationAction(action) {
+  const conversation = getActiveConversation();
+  if (!conversation || !state.activeConversationId) {
+    showMessage(messageFeedback, 'Select a conversation first.');
+    return;
+  }
+
+  const threadId = state.activeConversationId;
+
+  if (action === 'toggle-read') {
+    const endpoint = conversation.isRead ? 'mark-unread' : 'mark-read';
+    await apiRequest(`/api/connections/conversations/${threadId}/${endpoint}`, {
+      method: 'POST',
+    });
+    conversation.isRead = !conversation.isRead;
+    conversation.unreadCount = conversation.isRead ? 0 : Math.max(1, Number(conversation.unreadCount || 0));
+    renderConversationList();
+    renderConversationControls();
+    showMessage(messageFeedback, conversation.isRead ? 'Conversation marked as read.' : 'Conversation marked as unread.', 'success');
+    return;
+  }
+
+  if (action === 'toggle-archive') {
+    const endpoint = conversation.isArchived ? 'unarchive' : 'archive';
+    await apiRequest(`/api/connections/conversations/${threadId}/${endpoint}`, {
+      method: 'POST',
+    });
+    await refreshConversationList(true);
+    showMessage(messageFeedback, conversation.isArchived ? 'Conversation unarchived.' : 'Conversation archived.', 'success');
+    return;
+  }
+
+  if (action === 'toggle-mute') {
+    const endpoint = conversation.isMuted ? 'unmute' : 'mute';
+    await apiRequest(`/api/connections/conversations/${threadId}/${endpoint}`, {
+      method: 'POST',
+    });
+    conversation.isMuted = !conversation.isMuted;
+    renderConversationList();
+    renderConversationControls();
+    showMessage(messageFeedback, conversation.isMuted ? 'Conversation muted.' : 'Conversation unmuted.', 'success');
+    return;
+  }
+
+  if (action === 'delete-conversation') {
+    const confirmed = window.confirm('Delete this conversation from your list? New messages can make it appear again.');
+    if (!confirmed) return;
+    await apiRequest(`/api/connections/conversations/${threadId}`, {
+      method: 'DELETE',
+    });
+    state.messagesByConversation.delete(threadId);
+    state.typingByConversation.delete(threadId);
+    state.activeConversationId = null;
+    await refreshConversationList(false);
+    if (state.activeConversationId) {
+      await Promise.all([loadMessages(state.activeConversationId), loadTypingUsers(state.activeConversationId)]);
+    } else {
+      renderMessages();
+    }
+    showMessage(messageFeedback, 'Conversation deleted from your view.', 'success');
+    return;
+  }
+
+  if (action === 'leave-conversation') {
+    if (!conversation.canLeave) {
+      showMessage(messageFeedback, 'Only group conversations can be left.');
+      return;
+    }
+    const confirmed = window.confirm('Leave this group conversation?');
+    if (!confirmed) return;
+    await apiRequest(`/api/connections/conversations/${threadId}/leave`, {
+      method: 'POST',
+    });
+    state.messagesByConversation.delete(threadId);
+    state.typingByConversation.delete(threadId);
+    state.activeConversationId = null;
+    await refreshConversationList(false);
+    if (state.activeConversationId) {
+      await Promise.all([loadMessages(state.activeConversationId), loadTypingUsers(state.activeConversationId)]);
+    } else {
+      renderMessages();
+    }
+    showMessage(messageFeedback, 'You left the group conversation.', 'success');
   }
 }
 
@@ -1182,6 +1337,27 @@ if (messageList) {
         showMessage(messageFeedback, error.message);
       }
     }
+
+    if (action === 'delete-message') {
+      const confirmed = window.confirm('Delete this message for everyone in the conversation?');
+      if (!confirmed) return;
+      try {
+        const data = await apiRequest(`/api/connections/messages/${messageId}`, {
+          method: 'DELETE',
+        });
+        const activeMessages = state.messagesByConversation.get(state.activeConversationId) || [];
+        const index = activeMessages.findIndex((item) => Number(item.id) === messageId);
+        if (index !== -1) {
+          activeMessages[index] = data.message || activeMessages[index];
+          state.messagesByConversation.set(state.activeConversationId, activeMessages);
+          renderMessages();
+        }
+        await refreshConversationList(true);
+        showMessage(messageFeedback, 'Message deleted.', 'success');
+      } catch (error) {
+        showMessage(messageFeedback, error.message);
+      }
+    }
   });
 }
 
@@ -1239,6 +1415,56 @@ if (chatFocusToggle) {
   });
 }
 
+if (toggleReadButton) {
+  toggleReadButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('toggle-read');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (toggleArchiveButton) {
+  toggleArchiveButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('toggle-archive');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (toggleMuteButton) {
+  toggleMuteButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('toggle-mute');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (deleteConversationButton) {
+  deleteConversationButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('delete-conversation');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (leaveConversationButton) {
+  leaveConversationButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('leave-conversation');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
 if (openGroupModal) {
   openGroupModal.addEventListener('click', async () => {
     try {
@@ -1288,6 +1514,7 @@ async function init() {
   try {
     renderEmojiPicker();
     setChatFocusMode(false);
+    renderConversationControls();
     await loadBootstrap();
     renderUserCards();
     setActiveRequestTab(state.activeRequestTab);

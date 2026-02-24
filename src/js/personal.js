@@ -57,6 +57,7 @@ let activeProposalId = null;
 const openFolders = new Set();
 let selectedContext = null;
 let isSendingMessage = false;
+let conversationCache = new Map();
 
 function setConversationHeader(title, subtitle) {
   if (conversationTitle) {
@@ -273,10 +274,58 @@ function renderMarkdown(text) {
 function updateContextChip() {
   if (!contextChip || !contextLabel) return;
   if (selectedContext) {
-    contextLabel.textContent = selectedContext.title;
+    contextLabel.textContent = selectedContext.title || 'Context document';
     contextChip.classList.remove('is-hidden');
   } else {
     contextChip.classList.add('is-hidden');
+  }
+}
+
+function normalizeContextDoc(contextDoc) {
+  if (!contextDoc || typeof contextDoc !== 'object' || !contextDoc.uuid) {
+    return null;
+  }
+  return {
+    uuid: String(contextDoc.uuid),
+    title: String(contextDoc.title || 'Context document'),
+    course: contextDoc.course || null,
+    subject: contextDoc.subject || null,
+  };
+}
+
+async function persistConversationContext(context) {
+  if (!activeConversationId) return true;
+  try {
+    const response = await fetch(`/api/personal/conversations/${activeConversationId}/context`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contextDoc: context ? { uuid: context.uuid } : null,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to update context.');
+    }
+    const normalized = normalizeContextDoc(data.contextDoc);
+    selectedContext = normalized;
+    const cached = conversationCache.get(activeConversationId);
+    if (cached) {
+      cached.contextDoc = normalized
+        ? {
+            uuid: normalized.uuid,
+            title: normalized.title,
+            course: normalized.course,
+            subject: normalized.subject,
+          }
+        : null;
+      conversationCache.set(activeConversationId, cached);
+    }
+    updateContextChip();
+    return true;
+  } catch (error) {
+    aiMessage.textContent = error.message || 'Unable to update context.';
+    return false;
   }
 }
 
@@ -753,23 +802,28 @@ if (taskModalClose) {
 async function loadConversations() {
   const response = await fetch('/api/personal/conversations');
   const data = await response.json();
+  const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+  conversationCache = new Map(conversations.map((conv) => [String(conv._id), conv]));
   conversationList.innerHTML = '';
   if (!response.ok || !data.ok) {
     conversationList.innerHTML = '<p>Unable to load conversations.</p>';
     return;
   }
-  if (!data.conversations.length) {
+  if (!conversations.length) {
     const empty = document.createElement('p');
     empty.textContent = 'No conversations yet.';
     conversationList.appendChild(empty);
     setConversationHeader('New conversation', 'Start a new chat to see responses.');
     renderEmptyChat('Start a new chat to see responses.');
+    selectedContext = null;
+    updateContextChip();
     return;
   }
-  data.conversations.forEach((conv) => {
+  conversations.forEach((conv) => {
+    const conversationId = String(conv._id);
     const item = document.createElement('div');
     item.className = 'conversation-item';
-    if (activeConversationId === conv._id) {
+    if (activeConversationId === conversationId) {
       item.classList.add('is-active');
     }
     item.innerHTML = `
@@ -781,17 +835,21 @@ async function loadConversations() {
       </div>
     `;
     item.querySelector('[data-action="open"]').addEventListener('click', () => {
-      activeConversationId = conv._id;
-      loadMessages(conv._id);
+      activeConversationId = conversationId;
+      selectedContext = normalizeContextDoc(conv.contextDoc);
+      updateContextChip();
+      loadMessages(conversationId);
       setConversationHeader(conv.title || 'New conversation', 'Private conversation');
       loadConversations();
     });
     item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
-      await fetch(`/api/personal/conversations/${conv._id}`, { method: 'DELETE' });
-      if (activeConversationId === conv._id) {
+      await fetch(`/api/personal/conversations/${conversationId}`, { method: 'DELETE' });
+      if (activeConversationId === conversationId) {
         activeConversationId = null;
         renderEmptyChat('Start a new chat to see responses.');
         setConversationHeader('New conversation', 'Start a new chat to see responses.');
+        selectedContext = null;
+        updateContextChip();
       }
       loadConversations();
     });
@@ -799,9 +857,11 @@ async function loadConversations() {
   });
 
   if (activeConversationId) {
-    const active = data.conversations.find((conv) => conv._id === activeConversationId);
+    const active = conversationCache.get(activeConversationId);
     if (active) {
       setConversationHeader(active.title || 'New conversation', 'Private conversation');
+      selectedContext = normalizeContextDoc(active.contextDoc);
+      updateContextChip();
     }
   }
 }
@@ -814,11 +874,10 @@ async function createConversation() {
   });
   const data = await response.json();
   if (response.ok && data.ok) {
-    activeConversationId = data.conversation._id;
+    activeConversationId = String(data.conversation._id);
     renderEmptyChat();
     setConversationHeader('New conversation', 'Start a new chat to see responses.');
     aiMessage.textContent = '';
-    loadConversations();
   }
 }
 
@@ -841,6 +900,10 @@ async function loadMessages(conversationId) {
   if (!response.ok || !data.ok) {
     messageList.innerHTML = '<p>Unable to load messages.</p>';
     return;
+  }
+  if (data.conversation) {
+    selectedContext = normalizeContextDoc(data.conversation.contextDoc);
+    updateContextChip();
   }
   if (!data.messages.length) {
     renderEmptyChat('Start the conversation with a question or a goal.');
@@ -1041,8 +1104,20 @@ async function loadContextDocs(query = '') {
       <p>${doc.course || 'No course'} • ${doc.subject || 'No subject'}</p>
       <button type="button">Use as context</button>
     `;
-    item.querySelector('button').addEventListener('click', () => {
-      selectedContext = { uuid: doc.uuid, title: doc.title };
+    item.querySelector('button').addEventListener('click', async () => {
+      const nextContext = {
+        uuid: String(doc.uuid),
+        title: doc.title || 'Context document',
+        course: doc.course || null,
+        subject: doc.subject || null,
+      };
+      if (activeConversationId) {
+        const persisted = await persistConversationContext(nextContext);
+        if (!persisted) return;
+      } else {
+        selectedContext = nextContext;
+        updateContextChip();
+      }
       updateContextChip();
       closeModal(contextModal);
     });
@@ -1075,9 +1150,14 @@ if (contextSearch) {
 }
 
 if (clearContext) {
-  clearContext.addEventListener('click', () => {
-    selectedContext = null;
-    updateContextChip();
+  clearContext.addEventListener('click', async () => {
+    if (activeConversationId) {
+      const persisted = await persistConversationContext(null);
+      if (!persisted) return;
+    } else {
+      selectedContext = null;
+      updateContextChip();
+    }
   });
 }
 

@@ -35,6 +35,23 @@ class LibraryRepository {
         .toList();
   }
 
+  Future<LibraryDocument> fetchDocument(String uuid) async {
+    final response = await _apiClient.getJson('/api/library/documents/$uuid');
+    final raw = response.data['document'];
+    if (raw is! Map<String, dynamic>) {
+      throw ApiException(statusCode: 500, message: 'Invalid document response.');
+    }
+    return LibraryDocument.fromJson(raw);
+  }
+
+  Future<int> registerView(String uuid) async {
+    final response = await _apiClient.postJson(
+      '/api/library/documents/$uuid/view',
+      body: const <String, dynamic>{},
+    );
+    return (response.data['views'] as num? ?? 0).toInt();
+  }
+
   Future<int> toggleLike({
     required String documentUuid,
     required bool currentlyLiked,

@@ -109,33 +109,39 @@ function formatReplySnippet(body) {
 }
 
 async function mapChatMessageRow(row) {
-  const attachment = await signChatAttachmentIfNeeded({
-    type: row.attachment_type || null,
-    key: row.attachment_key || null,
-    link: row.attachment_link || null,
-    filename: row.attachment_filename || null,
-    mimeType: row.attachment_mime_type || null,
-    sizeBytes: row.attachment_size_bytes != null ? Number(row.attachment_size_bytes) : null,
-  });
+  const isDeleted = row.deleted_at != null;
+  const attachment = isDeleted
+    ? null
+    : await signChatAttachmentIfNeeded({
+        type: row.attachment_type || null,
+        key: row.attachment_key || null,
+        link: row.attachment_link || null,
+        filename: row.attachment_filename || null,
+        mimeType: row.attachment_mime_type || null,
+        sizeBytes: row.attachment_size_bytes != null ? Number(row.attachment_size_bytes) : null,
+      });
 
   const replyTo = row.parent_message_id
     ? {
         id: Number(row.parent_message_id),
         senderUid: row.parent_sender_uid || null,
         senderName: row.parent_sender_name || 'Member',
-        bodySnippet: formatReplySnippet(row.parent_body),
+        bodySnippet: row.parent_deleted_at ? '[Message deleted]' : formatReplySnippet(row.parent_body),
       }
     : null;
 
+  const senderName = row.sender_name || 'Member';
   return {
     id: Number(row.id),
     threadId: Number(row.thread_id),
     senderUid: row.sender_uid,
-    senderName: row.sender_name,
+    senderName,
     senderPhotoLink: await signPhotoIfNeeded(row.sender_photo_link),
-    body: row.body || '',
+    body: isDeleted ? `${senderName} deleted a message` : (row.body || ''),
     attachment,
     replyTo,
+    isDeleted,
+    deletedAt: row.deleted_at || null,
     createdAt: row.created_at,
   };
 }
@@ -237,6 +243,8 @@ async function ensureConnectionsTables() {
       attachment_filename TEXT,
       attachment_mime_type TEXT,
       attachment_size_bytes INTEGER CHECK (attachment_size_bytes IS NULL OR attachment_size_bytes >= 0),
+      deleted_at TIMESTAMPTZ,
+      deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -254,6 +262,10 @@ async function ensureConnectionsTables() {
       ADD COLUMN IF NOT EXISTS attachment_mime_type TEXT;
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS attachment_size_bytes INTEGER;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
 
     ALTER TABLE chat_messages
       DROP CONSTRAINT IF EXISTS chat_messages_attachment_type_check;
@@ -282,6 +294,29 @@ async function ensureConnectionsTables() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (thread_id, user_uid)
     );
+
+    CREATE TABLE IF NOT EXISTS chat_thread_user_state (
+      thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      last_read_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL,
+      manual_unread BOOLEAN NOT NULL DEFAULT false,
+      is_archived BOOLEAN NOT NULL DEFAULT false,
+      is_muted BOOLEAN NOT NULL DEFAULT false,
+      deleted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (thread_id, user_uid)
+    );
+    ALTER TABLE chat_thread_user_state
+      ADD COLUMN IF NOT EXISTS last_read_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL;
+    ALTER TABLE chat_thread_user_state
+      ADD COLUMN IF NOT EXISTS manual_unread BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE chat_thread_user_state
+      ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE chat_thread_user_state
+      ADD COLUMN IF NOT EXISTS is_muted BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE chat_thread_user_state
+      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS blocked_users (
       id BIGSERIAL PRIMARY KEY,
@@ -322,10 +357,13 @@ async function ensureConnectionsTables() {
     CREATE INDEX IF NOT EXISTS chat_participants_thread_status_idx ON chat_participants(thread_id, status);
     CREATE INDEX IF NOT EXISTS chat_messages_thread_created_idx ON chat_messages(thread_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS chat_messages_parent_idx ON chat_messages(parent_message_id);
+    CREATE INDEX IF NOT EXISTS chat_messages_deleted_idx ON chat_messages(thread_id, deleted_at);
     CREATE INDEX IF NOT EXISTS chat_message_reports_status_created_idx ON chat_message_reports(status, created_at DESC);
     CREATE INDEX IF NOT EXISTS chat_message_reports_thread_idx ON chat_message_reports(thread_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS chat_message_reports_reporter_idx ON chat_message_reports(reporter_uid, created_at DESC);
     CREATE INDEX IF NOT EXISTS chat_typing_thread_updated_idx ON chat_typing(thread_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS chat_thread_user_state_user_idx ON chat_thread_user_state(user_uid, is_archived, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS chat_thread_user_state_thread_idx ON chat_thread_user_state(thread_id, user_uid);
     CREATE INDEX IF NOT EXISTS blocked_users_blocker_idx ON blocked_users(blocker_uid);
     CREATE INDEX IF NOT EXISTS blocked_users_blocked_idx ON blocked_users(blocked_uid);
     CREATE INDEX IF NOT EXISTS hidden_post_authors_user_idx ON hidden_post_authors(user_uid);
@@ -560,6 +598,14 @@ async function createDirectThread(creatorUid, otherUid) {
        DO UPDATE SET status = 'active', left_at = NULL`,
       [threadId, creatorUid, otherUid]
     );
+    await client.query(
+      `INSERT INTO chat_thread_user_state (thread_id, user_uid)
+       VALUES
+         ($1, $2),
+         ($1, $3)
+       ON CONFLICT (thread_id, user_uid) DO NOTHING`,
+      [threadId, creatorUid, otherUid]
+    );
 
     await client.query('COMMIT');
     return threadId;
@@ -624,6 +670,54 @@ async function loadConversationParticipants(threadIds) {
   });
 
   return grouped;
+}
+
+async function ensureConversationUserState(threadId, userUid, client = pool) {
+  await client.query(
+    `INSERT INTO chat_thread_user_state (thread_id, user_uid)
+     VALUES ($1, $2)
+     ON CONFLICT (thread_id, user_uid) DO NOTHING`,
+    [threadId, userUid]
+  );
+}
+
+async function getActiveConversationMembership(threadId, userUid, client = pool) {
+  const result = await client.query(
+    `SELECT
+       ct.id AS thread_id,
+       ct.thread_type,
+       cp.role
+     FROM chat_threads ct
+     JOIN chat_participants cp
+       ON cp.thread_id = ct.id
+      AND cp.user_uid = $2
+      AND cp.status = 'active'
+     WHERE ct.id = $1
+     LIMIT 1`,
+    [threadId, userUid]
+  );
+  return result.rows[0] || null;
+}
+
+async function markConversationRead(threadId, userUid, client = pool) {
+  await ensureConversationUserState(threadId, userUid, client);
+  await client.query(
+    `UPDATE chat_thread_user_state
+     SET
+       last_read_message_id = (
+         SELECT cm.id
+         FROM chat_messages cm
+         WHERE cm.thread_id = $1
+           AND (chat_thread_user_state.deleted_at IS NULL OR cm.created_at > chat_thread_user_state.deleted_at)
+         ORDER BY cm.id DESC
+         LIMIT 1
+       ),
+       manual_unread = false,
+       updated_at = NOW()
+     WHERE thread_id = $1
+       AND user_uid = $2`,
+    [threadId, userUid]
+  );
 }
 
 router.use('/api/connections', requireAuthApi);
@@ -1922,6 +2016,14 @@ router.post('/api/connections/groups', async (req, res) => {
           [threadId, memberUid]
         );
       }
+      await client.query(
+        `INSERT INTO chat_thread_user_state (thread_id, user_uid)
+         SELECT $1, cp.user_uid
+         FROM chat_participants cp
+         WHERE cp.thread_id = $1
+         ON CONFLICT (thread_id, user_uid) DO NOTHING`,
+        [threadId]
+      );
 
       await client.query('COMMIT');
       return res.json({ ok: true, threadId });
@@ -1939,6 +2041,8 @@ router.post('/api/connections/groups', async (req, res) => {
 
 router.get('/api/connections/conversations', async (req, res) => {
   const { page, pageSize, offset } = parsePagination(req, { defaultPageSize: 30, maxPageSize: 60 });
+  const scopeRaw = sanitizeText(req.query.scope || 'active', 16).toLowerCase();
+  const scope = ['active', 'archived', 'all'].includes(scopeRaw) ? scopeRaw : 'active';
 
   try {
     const convoResult = await pool.query(
@@ -1947,25 +2051,49 @@ router.get('/api/connections/conversations', async (req, res) => {
          ct.thread_type,
          ct.title,
          ct.created_at,
+         COALESCE(cts.is_archived, false) AS is_archived,
+         COALESCE(cts.is_muted, false) AS is_muted,
+         COALESCE(cts.manual_unread, false) AS manual_unread,
+         COALESCE(unread.unread_count, 0)::int AS unread_count,
          lm.body AS last_message_body,
          lm.attachment_type AS last_message_attachment_type,
          lm.created_at AS last_message_at,
-         lm.sender_uid AS last_message_sender_uid
+         lm.sender_uid AS last_message_sender_uid,
+         lm.id AS last_message_id,
+         lm.deleted_at AS last_message_deleted_at
        FROM chat_threads ct
        JOIN chat_participants cp
          ON cp.thread_id = ct.id
         AND cp.user_uid = $1
         AND cp.status = 'active'
+       LEFT JOIN chat_thread_user_state cts
+         ON cts.thread_id = ct.id
+        AND cts.user_uid = $1
        LEFT JOIN LATERAL (
-         SELECT cm.body, cm.attachment_type, cm.created_at, cm.sender_uid
+         SELECT cm.id, cm.body, cm.attachment_type, cm.created_at, cm.sender_uid, cm.deleted_at
          FROM chat_messages cm
          WHERE cm.thread_id = ct.id
+           AND (cts.deleted_at IS NULL OR cm.created_at > cts.deleted_at)
          ORDER BY cm.created_at DESC, cm.id DESC
          LIMIT 1
        ) lm ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS unread_count
+         FROM chat_messages cmu
+         WHERE cmu.thread_id = ct.id
+           AND cmu.sender_uid <> $1
+           AND (cts.deleted_at IS NULL OR cmu.created_at > cts.deleted_at)
+           AND (cts.last_read_message_id IS NULL OR cmu.id > cts.last_read_message_id)
+       ) unread ON true
+       WHERE (
+         $4::text = 'all'
+         OR ($4::text = 'archived' AND COALESCE(cts.is_archived, false) = true)
+         OR ($4::text = 'active' AND COALESCE(cts.is_archived, false) = false)
+       )
+         AND (cts.deleted_at IS NULL OR lm.id IS NOT NULL)
        ORDER BY COALESCE(lm.created_at, ct.created_at) DESC
        LIMIT $2 OFFSET $3`,
-      [req.user.uid, pageSize, offset]
+      [req.user.uid, pageSize, offset, scope]
     );
 
     const threadIds = convoResult.rows.map((row) => Number(row.id));
@@ -1985,28 +2113,47 @@ router.get('/api/connections/conversations', async (req, res) => {
         title = 'Group chat';
       }
 
+      const baseUnreadCount = Number(row.unread_count || 0);
+      const unreadCount = row.manual_unread === true ? Math.max(1, baseUnreadCount) : baseUnreadCount;
+      const isRead = unreadCount === 0;
+      let lastMessage = null;
+      if (row.last_message_id != null) {
+        if (row.last_message_deleted_at) {
+          lastMessage = {
+            body: 'Message deleted',
+            createdAt: row.last_message_at,
+            senderUid: row.last_message_sender_uid,
+          };
+        } else if (row.last_message_body) {
+          lastMessage = {
+            body: row.last_message_body,
+            createdAt: row.last_message_at,
+            senderUid: row.last_message_sender_uid,
+          };
+        } else if (row.last_message_attachment_type) {
+          lastMessage = {
+            body: `[${row.last_message_attachment_type === 'video' ? 'Video' : 'Image'}]`,
+            createdAt: row.last_message_at,
+            senderUid: row.last_message_sender_uid,
+          };
+        }
+      }
+
       return {
         id: threadId,
         threadType: row.thread_type,
         title,
         participants,
-        lastMessage: row.last_message_body
-          ? {
-              body: row.last_message_body,
-              createdAt: row.last_message_at,
-              senderUid: row.last_message_sender_uid,
-            }
-          : row.last_message_attachment_type
-            ? {
-                body: `[${row.last_message_attachment_type === 'video' ? 'Video' : 'Image'}]`,
-                createdAt: row.last_message_at,
-                senderUid: row.last_message_sender_uid,
-              }
-          : null,
+        lastMessage,
+        unreadCount,
+        isRead,
+        isArchived: row.is_archived === true,
+        isMuted: row.is_muted === true,
+        canLeave: row.thread_type === 'group',
       };
     });
 
-    return res.json({ ok: true, page, pageSize, conversations });
+    return res.json({ ok: true, page, pageSize, scope, conversations });
   } catch (error) {
     console.error('Conversations fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load conversations.' });
@@ -2022,19 +2169,20 @@ router.get('/api/connections/conversations/:id/messages', async (req, res) => {
   const { page, pageSize, offset } = parsePagination(req, { defaultPageSize: 40, maxPageSize: 80 });
 
   try {
-    const participantCheck = await pool.query(
-      `SELECT id
-       FROM chat_participants
-       WHERE thread_id = $1
-         AND user_uid = $2
-         AND status = 'active'
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+
+    await ensureConversationUserState(threadId, req.user.uid);
+    const stateResult = await pool.query(
+      `SELECT deleted_at
+       FROM chat_thread_user_state
+       WHERE thread_id = $1 AND user_uid = $2
        LIMIT 1`,
       [threadId, req.user.uid]
     );
-
-    if (!participantCheck.rows.length) {
-      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
-    }
+    const deletedAt = stateResult.rows[0] ? stateResult.rows[0].deleted_at : null;
 
     const result = await pool.query(
       `SELECT
@@ -2042,6 +2190,7 @@ router.get('/api/connections/conversations/:id/messages', async (req, res) => {
          cm.thread_id,
          cm.sender_uid,
          cm.body,
+         cm.deleted_at,
          cm.parent_message_id,
          cm.attachment_type,
          cm.attachment_key,
@@ -2053,6 +2202,7 @@ router.get('/api/connections/conversations/:id/messages', async (req, res) => {
          COALESCE(p.display_name, a.display_name, a.username, a.email) AS sender_name,
          p.photo_link AS sender_photo_link,
          pm.body AS parent_body,
+         pm.deleted_at AS parent_deleted_at,
          pm.sender_uid AS parent_sender_uid,
          COALESCE(pp.display_name, pa.display_name, pa.username, pa.email) AS parent_sender_name
        FROM chat_messages cm
@@ -2062,14 +2212,17 @@ router.get('/api/connections/conversations/:id/messages', async (req, res) => {
        LEFT JOIN accounts pa ON pa.uid = pm.sender_uid
        LEFT JOIN profiles pp ON pp.uid = pm.sender_uid
        WHERE cm.thread_id = $1
+         AND ($4::timestamptz IS NULL OR cm.created_at > $4::timestamptz)
        ORDER BY cm.created_at DESC, cm.id DESC
        LIMIT $2 OFFSET $3`,
-      [threadId, pageSize, offset]
+      [threadId, pageSize, offset, deletedAt]
     );
 
     const messages = await Promise.all(result.rows.map((row) => mapChatMessageRow(row)));
 
     messages.reverse();
+
+    await markConversationRead(threadId, req.user.uid);
 
     return res.json({ ok: true, page, pageSize, messages });
   } catch (error) {
@@ -2098,17 +2251,8 @@ router.post('/api/connections/conversations/:id/messages', upload.single('attach
   }
 
   try {
-    const participantCheck = await pool.query(
-      `SELECT id
-       FROM chat_participants
-       WHERE thread_id = $1
-         AND user_uid = $2
-         AND status = 'active'
-       LIMIT 1`,
-      [threadId, req.user.uid]
-    );
-
-    if (!participantCheck.rows.length) {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
       return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
     }
 
@@ -2184,6 +2328,18 @@ router.post('/api/connections/conversations/:id/messages', upload.single('attach
     );
 
     const messageId = Number(insertResult.rows[0].id);
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET
+         deleted_at = NULL,
+         last_read_message_id = $3,
+         manual_unread = false,
+         updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid, messageId]
+    );
     await pool.query(
       `DELETE FROM chat_typing
        WHERE thread_id = $1 AND user_uid = $2`,
@@ -2196,6 +2352,7 @@ router.post('/api/connections/conversations/:id/messages', upload.single('attach
          cm.thread_id,
          cm.sender_uid,
          cm.body,
+         cm.deleted_at,
          cm.parent_message_id,
          cm.attachment_type,
          cm.attachment_key,
@@ -2207,6 +2364,7 @@ router.post('/api/connections/conversations/:id/messages', upload.single('attach
          COALESCE(p.display_name, a.display_name, a.username, a.email) AS sender_name,
          p.photo_link AS sender_photo_link,
          pm.body AS parent_body,
+         pm.deleted_at AS parent_deleted_at,
          pm.sender_uid AS parent_sender_uid,
          COALESCE(pp.display_name, pa.display_name, pa.username, pa.email) AS parent_sender_name
        FROM chat_messages cm
@@ -2236,6 +2394,372 @@ router.post('/api/connections/conversations/:id/messages', upload.single('attach
   }
 });
 
+router.post('/api/connections/conversations/:id/mark-read', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_mark_read', 200)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await markConversationRead(threadId, req.user.uid);
+    return res.json({ ok: true, isRead: true });
+  } catch (error) {
+    console.error('Conversation mark-read failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to mark conversation as read.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/mark-unread', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_mark_unread', 200)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET manual_unread = true, updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    return res.json({ ok: true, isRead: false });
+  } catch (error) {
+    console.error('Conversation mark-unread failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to mark conversation as unread.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/archive', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_archive', 120)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET is_archived = true, updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    return res.json({ ok: true, archived: true });
+  } catch (error) {
+    console.error('Conversation archive failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to archive conversation.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/unarchive', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_unarchive', 120)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET is_archived = false, updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    return res.json({ ok: true, archived: false });
+  } catch (error) {
+    console.error('Conversation unarchive failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to unarchive conversation.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/mute', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_mute', 120)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET is_muted = true, updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    return res.json({ ok: true, muted: true });
+  } catch (error) {
+    console.error('Conversation mute failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to mute conversation notifications.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/unmute', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_unmute', 120)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET is_muted = false, updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    return res.json({ ok: true, muted: false });
+  } catch (error) {
+    console.error('Conversation unmute failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to unmute conversation notifications.' });
+  }
+});
+
+router.delete('/api/connections/conversations/:id', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_delete_for_user', 100)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  try {
+    const membership = await getActiveConversationMembership(threadId, req.user.uid);
+    if (!membership) {
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+    await ensureConversationUserState(threadId, req.user.uid);
+    await pool.query(
+      `UPDATE chat_thread_user_state
+       SET
+         deleted_at = NOW(),
+         manual_unread = false,
+         is_archived = false,
+         last_read_message_id = NULL,
+         updated_at = NOW()
+       WHERE thread_id = $1
+         AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    await pool.query(
+      `DELETE FROM chat_typing
+       WHERE thread_id = $1 AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+    return res.json({ ok: true, deleted: true });
+  } catch (error) {
+    console.error('Conversation delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to delete conversation.' });
+  }
+});
+
+router.post('/api/connections/conversations/:id/leave', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_leave', 80)) return;
+
+  const threadId = Number(req.params.id);
+  if (!Number.isInteger(threadId) || threadId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const membershipResult = await client.query(
+      `SELECT ct.id AS thread_id, ct.thread_type, cp.id AS participant_id, cp.role
+       FROM chat_threads ct
+       JOIN chat_participants cp
+         ON cp.thread_id = ct.id
+        AND cp.user_uid = $2
+        AND cp.status = 'active'
+       WHERE ct.id = $1
+       FOR UPDATE`,
+      [threadId, req.user.uid]
+    );
+    const membership = membershipResult.rows[0];
+    if (!membership) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ ok: false, message: 'You are not a participant in this conversation.' });
+    }
+
+    if (membership.thread_type !== 'group') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Only group conversations can be left.' });
+    }
+
+    if (membership.role === 'owner') {
+      const nextOwnerResult = await client.query(
+        `SELECT id
+         FROM chat_participants
+         WHERE thread_id = $1
+           AND user_uid <> $2
+           AND status = 'active'
+         ORDER BY joined_at ASC, id ASC
+         LIMIT 1
+         FOR UPDATE`,
+        [threadId, req.user.uid]
+      );
+      if (nextOwnerResult.rows[0]) {
+        await client.query(
+          `UPDATE chat_participants
+           SET role = 'owner'
+           WHERE id = $1`,
+          [nextOwnerResult.rows[0].id]
+        );
+      }
+    }
+
+    await client.query(
+      `UPDATE chat_participants
+       SET status = 'left', left_at = NOW(), role = 'member'
+       WHERE thread_id = $1
+         AND user_uid = $2
+         AND status = 'active'`,
+      [threadId, req.user.uid]
+    );
+    await client.query(
+      `DELETE FROM chat_typing
+       WHERE thread_id = $1 AND user_uid = $2`,
+      [threadId, req.user.uid]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ ok: true, left: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Conversation leave failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to leave conversation.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/api/connections/messages/:id', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'conversation_message_delete', 120)) return;
+
+  const messageId = Number(req.params.id);
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Invalid message id.' });
+  }
+
+  try {
+    const messageCheck = await pool.query(
+      `SELECT cm.id, cm.thread_id, cm.sender_uid, cm.deleted_at
+       FROM chat_messages cm
+       JOIN chat_participants cp
+         ON cp.thread_id = cm.thread_id
+        AND cp.user_uid = $2
+        AND cp.status = 'active'
+       WHERE cm.id = $1
+       LIMIT 1`,
+      [messageId, req.user.uid]
+    );
+    const messageRow = messageCheck.rows[0];
+    if (!messageRow) {
+      return res.status(404).json({ ok: false, message: 'Message not found in your conversations.' });
+    }
+    if (messageRow.sender_uid !== req.user.uid) {
+      return res.status(403).json({ ok: false, message: 'You can only delete messages you sent.' });
+    }
+
+    await pool.query(
+      `UPDATE chat_messages
+       SET
+         body = '',
+         attachment_type = NULL,
+         attachment_key = NULL,
+         attachment_link = NULL,
+         attachment_filename = NULL,
+         attachment_mime_type = NULL,
+         attachment_size_bytes = NULL,
+         deleted_at = COALESCE(deleted_at, NOW()),
+         deleted_by_uid = $2
+       WHERE id = $1`,
+      [messageId, req.user.uid]
+    );
+
+    const deletedMessageResult = await pool.query(
+      `SELECT
+         cm.id,
+         cm.thread_id,
+         cm.sender_uid,
+         cm.body,
+         cm.deleted_at,
+         cm.parent_message_id,
+         cm.attachment_type,
+         cm.attachment_key,
+         cm.attachment_link,
+         cm.attachment_filename,
+         cm.attachment_mime_type,
+         cm.attachment_size_bytes,
+         cm.created_at,
+         COALESCE(p.display_name, a.display_name, a.username, a.email) AS sender_name,
+         p.photo_link AS sender_photo_link,
+         pm.body AS parent_body,
+         pm.deleted_at AS parent_deleted_at,
+         pm.sender_uid AS parent_sender_uid,
+         COALESCE(pp.display_name, pa.display_name, pa.username, pa.email) AS parent_sender_name
+       FROM chat_messages cm
+       JOIN accounts a ON a.uid = cm.sender_uid
+       LEFT JOIN profiles p ON p.uid = cm.sender_uid
+       LEFT JOIN chat_messages pm ON pm.id = cm.parent_message_id
+       LEFT JOIN accounts pa ON pa.uid = pm.sender_uid
+       LEFT JOIN profiles pp ON pp.uid = pm.sender_uid
+       WHERE cm.id = $1
+       LIMIT 1`,
+      [messageId]
+    );
+    const deletedMessage = deletedMessageResult.rows[0]
+      ? await mapChatMessageRow(deletedMessageResult.rows[0])
+      : null;
+
+    return res.json({ ok: true, message: deletedMessage });
+  } catch (error) {
+    console.error('Message delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to delete message.' });
+  }
+});
+
 router.post('/api/connections/messages/:id/report', async (req, res) => {
   if (!enforceRateLimit(req, res, 'conversation_message_report', 30)) return;
 
@@ -2248,7 +2772,7 @@ router.post('/api/connections/messages/:id/report', async (req, res) => {
 
   try {
     const messageResult = await pool.query(
-      `SELECT cm.id, cm.thread_id, cm.sender_uid
+      `SELECT cm.id, cm.thread_id, cm.sender_uid, cm.deleted_at
        FROM chat_messages cm
        JOIN chat_participants cp
          ON cp.thread_id = cm.thread_id
@@ -2265,6 +2789,9 @@ router.post('/api/connections/messages/:id/report', async (req, res) => {
     }
     if (messageRow.sender_uid === req.user.uid) {
       return res.status(400).json({ ok: false, message: 'You cannot report your own message.' });
+    }
+    if (messageRow.deleted_at) {
+      return res.status(400).json({ ok: false, message: 'Deleted messages cannot be reported.' });
     }
 
     await pool.query(

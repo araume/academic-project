@@ -112,6 +112,13 @@
             <header class="conversation-header">
               <h3 id="activeConversationTitle">Select a conversation</h3>
               <p id="activeConversationMeta">Messages stay inside this panel and won’t expand the page.</p>
+              <div class="conversation-controls is-hidden" id="conversationControls">
+                <button type="button" class="mini-ghost" id="toggleReadButton" disabled>Mark unread</button>
+                <button type="button" class="mini-ghost" id="toggleArchiveButton" disabled>Archive</button>
+                <button type="button" class="mini-ghost" id="toggleMuteButton" disabled>Mute</button>
+                <button type="button" class="mini-ghost" id="leaveConversationButton" disabled>Leave group</button>
+                <button type="button" class="mini-ghost warn" id="deleteConversationButton" disabled>Delete chat</button>
+              </div>
             </header>
             <div class="conversation-messages" id="messageList"></div>
             <div class="typing-indicator" id="typingIndicator"></div>

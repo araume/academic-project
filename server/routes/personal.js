@@ -998,6 +998,7 @@ router.post('/api/personal/conversations', async (req, res) => {
     const conversation = {
       userUid: req.user.uid,
       title: title ? title.trim() : 'New conversation',
+      contextDoc: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1027,6 +1028,55 @@ router.delete('/api/personal/conversations/:id', async (req, res) => {
   }
 });
 
+router.patch('/api/personal/conversations/:id/context', async (req, res) => {
+  const { id } = req.params;
+  const { contextDoc } = req.body || {};
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+  if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'contextDoc')) {
+    return res.status(400).json({ ok: false, message: 'contextDoc is required.' });
+  }
+  try {
+    const db = await getMongoDb();
+    const conversationId = new ObjectId(id);
+    const conversation = await db
+      .collection('ai_conversations')
+      .findOne({ _id: conversationId, userUid: req.user.uid });
+    if (!conversation) {
+      return res.status(404).json({ ok: false, message: 'Conversation not found.' });
+    }
+
+    let nextContext = null;
+    if (contextDoc && contextDoc.uuid) {
+      const contextDocument = await loadContextDocument(String(contextDoc.uuid));
+      if (!contextDocument) {
+        return res.status(404).json({ ok: false, message: 'Context document not found.' });
+      }
+      nextContext = {
+        uuid: contextDocument.uuid,
+        title: contextDocument.title || 'Context document',
+        course: contextDocument.course || null,
+        subject: contextDocument.subject || null,
+      };
+    }
+
+    await db.collection('ai_conversations').updateOne(
+      { _id: conversationId, userUid: req.user.uid },
+      {
+        $set: {
+          contextDoc: nextContext,
+          updatedAt: new Date(),
+        },
+      }
+    );
+    return res.json({ ok: true, contextDoc: nextContext });
+  } catch (error) {
+    console.error('Conversation context update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update context.' });
+  }
+});
+
 router.get('/api/personal/conversations/:id/messages', async (req, res) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) {
@@ -1035,12 +1085,26 @@ router.get('/api/personal/conversations/:id/messages', async (req, res) => {
   try {
     const db = await getMongoDb();
     const conversationId = new ObjectId(id);
+    const conversation = await db
+      .collection('ai_conversations')
+      .findOne({ _id: conversationId, userUid: req.user.uid });
+    if (!conversation) {
+      return res.status(404).json({ ok: false, message: 'Conversation not found.' });
+    }
     const messages = await db
       .collection('ai_messages')
       .find({ conversationId, userUid: req.user.uid })
       .sort({ createdAt: 1 })
       .toArray();
-    return res.json({ ok: true, messages });
+    return res.json({
+      ok: true,
+      messages,
+      conversation: {
+        _id: conversation._id,
+        title: conversation.title || 'New conversation',
+        contextDoc: conversation.contextDoc || null,
+      },
+    });
   } catch (error) {
     console.error('Messages fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load messages.' });
@@ -1050,6 +1114,7 @@ router.get('/api/personal/conversations/:id/messages', async (req, res) => {
 router.post('/api/personal/conversations/:id/messages', async (req, res) => {
   const { id } = req.params;
   const { content, contextDoc } = req.body || {};
+  const hasContextPayload = Object.prototype.hasOwnProperty.call(req.body || {}, 'contextDoc');
   const streamRequested = wantsMessageStream(req);
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
@@ -1076,22 +1141,38 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
     const db = await getMongoDb();
     const conversationId = new ObjectId(id);
     const now = new Date();
-    const contextUuid = contextDoc && contextDoc.uuid ? contextDoc.uuid : null;
-    const contextDocument = await loadContextDocument(contextUuid);
+    const contextUuid = contextDoc && contextDoc.uuid ? String(contextDoc.uuid) : null;
+    const conversation = await db
+      .collection('ai_conversations')
+      .findOne({ _id: conversationId, userUid: req.user.uid });
+    if (!conversation) {
+      if (streamRequested) {
+        writeNdjsonEvent(res, {
+          type: 'error',
+          message: 'Conversation not found.',
+        });
+        res.end();
+        return;
+      }
+      return res.status(404).json({ ok: false, message: 'Conversation not found.' });
+    }
+    const fallbackContextUuid =
+      !hasContextPayload && conversation.contextDoc && conversation.contextDoc.uuid
+        ? String(conversation.contextDoc.uuid)
+        : null;
+    const resolvedContextUuid = contextUuid || fallbackContextUuid;
+    const contextDocument = await loadContextDocument(resolvedContextUuid);
     const contextExcerpt = await extractContextExcerpt(contextDocument);
     const userMessage = {
       conversationId,
       userUid: req.user.uid,
       role: 'user',
       content: content.trim(),
-      contextDoc: contextUuid ? { uuid: contextUuid } : null,
+      contextDoc: resolvedContextUuid ? { uuid: resolvedContextUuid } : null,
       createdAt: now,
     };
     await db.collection('ai_messages').insertOne(userMessage);
     let conversationTitle = null;
-    const conversation = await db
-      .collection('ai_conversations')
-      .findOne({ _id: conversationId, userUid: req.user.uid });
     const userMessageCount = await db
       .collection('ai_messages')
       .countDocuments({ conversationId, userUid: req.user.uid, role: 'user' });
@@ -1105,6 +1186,17 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
     const conversationUpdate = { updatedAt: now };
     if (conversationTitle) {
       conversationUpdate.title = conversationTitle;
+    }
+    if (hasContextPayload) {
+      conversationUpdate.contextDoc =
+        contextDocument && contextDocument.uuid
+          ? {
+              uuid: contextDocument.uuid,
+              title: contextDocument.title || 'Context document',
+              course: contextDocument.course || null,
+              subject: contextDocument.subject || null,
+            }
+          : null;
     }
 
     await db.collection('ai_conversations').updateOne(

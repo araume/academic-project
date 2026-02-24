@@ -655,10 +655,22 @@ a.connection-name-link:hover {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
+.conversation-header {
+  display: grid;
+  gap: 8px;
+}
+
 .conversation-header p {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.conversation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .conversation-messages {
@@ -786,6 +798,17 @@ a.connection-name-link:hover {
   cursor: pointer;
 }
 
+.mini-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mini-ghost.warn {
+  color: #8a3535;
+  border-color: rgba(138, 53, 53, 0.32);
+  background: #fff7f8;
+}
+
 .emoji-picker {
   display: flex;
   flex-wrap: wrap;
@@ -867,6 +890,10 @@ a.connection-name-link:hover {
   color: #8a3535;
 }
 
+.message-action-button.delete {
+  color: #8a3535;
+}
+
 .form-message {
   margin: 6px 0 0;
   min-height: 16px;
@@ -945,11 +972,34 @@ body.chat-focus-mode .request-card {
 }
 
 body.chat-focus-mode .chat-card {
-  min-height: calc(100vh - 142px);
+  min-height: calc(100vh - var(--app-nav-height, 86px) - 56px);
+  min-height: calc(100dvh - var(--app-nav-height, 86px) - 56px);
+  height: calc(100vh - var(--app-nav-height, 86px) - 56px);
+  height: calc(100dvh - var(--app-nav-height, 86px) - 56px);
+  display: grid;
+  grid-template-rows: auto 1fr;
 }
 
 body.chat-focus-mode .chat-shell {
-  min-height: calc(100vh - 250px);
+  min-height: 0;
+  height: 100%;
+}
+
+body.chat-focus-mode .conversation-sidebar {
+  max-height: none;
+  height: 100%;
+  min-height: 0;
+}
+
+body.chat-focus-mode .conversation-panel {
+  min-height: 0;
+  height: 100%;
+}
+
+body.chat-focus-mode .conversation-messages {
+  max-height: none;
+  min-height: 0;
+  height: 100%;
 }
 
 @media (max-width: 1260px) {

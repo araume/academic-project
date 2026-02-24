@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/ui/app_theme.dart';
+import '../../../core/ui/app_ui.dart';
 import '../data/notifications_models.dart';
 import '../data/notifications_repository.dart';
 
@@ -14,45 +16,110 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  static const int _pageSize = 30;
+
+  final ScrollController _scrollController = ScrollController();
+
   bool _loading = true;
+  bool _loadingMore = false;
   bool _markingAll = false;
+  bool _hasMore = true;
   String? _error;
   int _unreadCount = 0;
+  int _page = 1;
   List<AppNotification> _notifications = <AppNotification>[];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _scrollController.addListener(_onScroll);
+    _load(refresh: true);
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients ||
+        _loading ||
+        _loadingMore ||
+        !_hasMore) {
+      return;
+    }
+    final max = _scrollController.position.maxScrollExtent;
+    final current = _scrollController.offset;
+    if (max - current < 260) {
+      _load();
+    }
+  }
+
+  Future<void> _load({bool refresh = false}) async {
+    if (_loadingMore || (!refresh && !_hasMore)) return;
+
+    if (refresh) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _hasMore = true;
+        _page = 1;
+      });
+    } else {
+      setState(() {
+        _loadingMore = true;
+      });
+    }
 
     try {
-      final page = await widget.repository.fetchNotifications();
+      final nextPage = refresh ? 1 : _page;
+      final page = await widget.repository.fetchNotifications(
+        page: nextPage,
+        pageSize: _pageSize,
+      );
       if (!mounted) return;
+
       setState(() {
-        _notifications = page.notifications;
         _unreadCount = page.unreadCount;
+        if (refresh) {
+          _notifications = page.notifications;
+        } else {
+          final merged = <int, AppNotification>{
+            for (final item in _notifications) item.id: item,
+            for (final item in page.notifications) item.id: item,
+          };
+          _notifications = merged.values.toList();
+        }
+        _hasMore = page.notifications.length >= _pageSize;
+        _page = nextPage + 1;
       });
     } on ApiException catch (error) {
       if (!mounted) return;
-      setState(() {
-        _error = error.message;
-      });
+      if (refresh) {
+        setState(() {
+          _error = error.message;
+        });
+      } else {
+        showAppSnackBar(context, error.message, isError: true);
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _error = 'Failed to load notifications.';
-      });
+      if (refresh) {
+        setState(() {
+          _error = 'Failed to load notifications.';
+        });
+      } else {
+        showAppSnackBar(context, 'Unable to load more notifications.',
+            isError: true);
+      }
     } finally {
       if (mounted) {
         setState(() {
           _loading = false;
+          _loadingMore = false;
         });
       }
     }
@@ -85,14 +152,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       });
     } on ApiException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      showAppSnackBar(context, error.message, isError: true);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to mark notifications as read.')),
-      );
+      showAppSnackBar(context, 'Failed to mark notifications as read.',
+          isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -105,9 +169,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Future<void> _markRead(AppNotification notification) async {
     if (notification.isRead) return;
 
-    final index = _notifications.indexWhere(
-      (item) => item.id == notification.id,
-    );
+    final index =
+        _notifications.indexWhere((item) => item.id == notification.id);
     if (index < 0) return;
 
     setState(() {
@@ -134,9 +197,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _notifications[index] = notification;
         _unreadCount = _unreadCount + 1;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to mark notification as read.')),
-      );
+      showAppSnackBar(context, 'Failed to mark notification as read.',
+          isError: true);
     }
   }
 
@@ -145,29 +207,36 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-          child: Row(
-            children: [
-              Text('Unread: $_unreadCount'),
-              const Spacer(),
-              TextButton.icon(
-                onPressed:
-                    (_markingAll || _unreadCount == 0) ? null : _markAllRead,
-                icon: _markingAll
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.done_all),
-                label: const Text('Mark all read'),
-              ),
-              IconButton(
-                onPressed: _load,
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh',
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: AppSectionCard(
+            child: Row(
+              children: [
+                Text(
+                  'Unread: $_unreadCount',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed:
+                      (_markingAll || _unreadCount == 0) ? null : _markAllRead,
+                  icon: _markingAll
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.done_all),
+                  label: const Text('Mark all read'),
+                ),
+                IconButton(
+                  onPressed: () => _load(refresh: true),
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh',
+                ),
+              ],
+            ),
           ),
         ),
         Expanded(child: _buildBody()),
@@ -177,48 +246,57 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppLoadingState(label: 'Loading notifications...');
     }
 
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!),
-              const SizedBox(height: 10),
-              ElevatedButton(onPressed: _load, child: const Text('Retry')),
-            ],
-          ),
-        ),
-      );
+      return AppErrorState(
+          message: _error!, onRetry: () => _load(refresh: true));
     }
 
     if (_notifications.isEmpty) {
-      return const Center(child: Text('No notifications yet.'));
+      return const AppEmptyState(
+        message: 'No notifications yet.',
+        icon: Icons.notifications_none,
+      );
     }
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(refresh: true),
       child: ListView.builder(
+        controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-        itemCount: _notifications.length,
+        itemCount: _notifications.length + 1,
         itemBuilder: (context, index) {
+          if (index == _notifications.length) {
+            return buildLoadMoreIndicator(_loadingMore);
+          }
+
           final item = _notifications[index];
 
-          return Card(
+          return AppSectionCard(
             margin: const EdgeInsets.only(bottom: 8),
-            color: item.isRead
-                ? null
-                : Theme.of(context).colorScheme.primaryContainer,
             child: ListTile(
               onTap: () => _markRead(item),
-              leading: Icon(_iconForType(item.type)),
-              title: Text(item.message.isEmpty ? 'Notification' : item.message),
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(
+                backgroundColor: item.isRead
+                    ? const Color(0xFFEAE6E1)
+                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.18),
+                child: Icon(_iconForType(item.type), color: AppPalette.ink),
+              ),
+              title: Text(
+                item.message.isEmpty ? 'Notification' : item.message,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight:
+                          item.isRead ? FontWeight.w500 : FontWeight.w700,
+                    ),
+              ),
               subtitle: Text(
                 '${item.actorName} • ${_formatDate(item.createdAt)}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppPalette.inkSoft,
+                    ),
               ),
               trailing: item.isRead
                   ? const Icon(Icons.done, size: 18)

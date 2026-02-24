@@ -320,14 +320,24 @@ body {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
   gap: 10px;
-  min-height: calc(100vh - 170px);
+  min-height: clamp(360px, calc(100vh - var(--app-nav-height, 86px) - 34px), 920px);
+  min-height: clamp(360px, calc(100dvh - var(--app-nav-height, 86px) - 34px), 920px);
+  height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
   position: sticky;
   top: calc(var(--app-nav-height, 86px) + 16px);
 }
 
 .rooms-main.is-call-active .call-panel-card {
   display: grid !important;
-  min-height: calc(100vh - 170px);
+  min-height: clamp(360px, calc(100vh - var(--app-nav-height, 86px) - 34px), 920px);
+  min-height: clamp(360px, calc(100dvh - var(--app-nav-height, 86px) - 34px), 920px);
+  height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
 }
 
 .rooms-main.is-call-active .workspace-card {
@@ -358,22 +368,26 @@ body {
   border-radius: 14px;
   overflow: hidden;
   background: #0f1e2d;
-  min-height: 420px;
+  min-height: 0;
+  height: 100%;
+  display: flex;
 }
 
 .call-frame-wrap iframe {
   width: 100%;
   height: 100%;
-  min-height: 420px;
+  min-height: 0;
   border: 0;
   display: block;
+  flex: 1 1 auto;
 }
 
 .call-placeholder {
   border: 1px dashed rgba(15, 38, 57, 0.2);
   border-radius: 14px;
   background: #fafbfd;
-  min-height: 420px;
+  min-height: 0;
+  height: 100%;
   display: grid;
   place-items: center;
   text-align: center;
@@ -498,6 +512,8 @@ body {
   display: grid;
   gap: 12px;
   min-height: 320px;
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .room-item {
@@ -506,6 +522,9 @@ body {
   padding: 14px;
   display: grid;
   gap: 10px;
+  align-content: start;
+  align-self: start;
+  height: fit-content;
 }
 
 .room-top {
@@ -859,6 +878,16 @@ body {
     position: static;
   }
 
+  .call-panel-card,
+  .rooms-main.is-call-active .call-panel-card {
+    min-height: clamp(300px, 62vh, 700px);
+    min-height: clamp(300px, 62dvh, 700px);
+    height: min(72vh, 760px);
+    height: min(72dvh, 760px);
+    max-height: min(72vh, 760px);
+    max-height: min(72dvh, 760px);
+  }
+
   .context-list,
   .request-list {
     max-height: none;
@@ -896,9 +925,20 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .call-panel-card,
+  .rooms-main.is-call-active .call-panel-card {
+    min-height: clamp(250px, 56vh, 520px);
+    min-height: clamp(250px, 56dvh, 520px);
+    height: min(66vh, 560px);
+    height: min(66dvh, 560px);
+    max-height: min(66vh, 560px);
+    max-height: min(66dvh, 560px);
+  }
+
   .call-frame-wrap,
   .call-frame-wrap iframe,
   .call-placeholder {
-    min-height: 320px;
+    min-height: 0;
+    height: 100%;
   }
 }

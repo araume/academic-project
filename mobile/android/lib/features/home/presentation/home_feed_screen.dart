@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/ui/app_theme.dart';
+import '../../../core/ui/app_ui.dart';
 import '../data/home_models.dart';
 import '../data/home_repository.dart';
 
@@ -14,43 +16,108 @@ class HomeFeedScreen extends StatefulWidget {
 }
 
 class _HomeFeedScreenState extends State<HomeFeedScreen> {
+  static const int _pageSize = 20;
+
   final Set<String> _likingPostIds = <String>{};
+  final ScrollController _scrollController = ScrollController();
+
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
   String? _error;
+  int _page = 1;
   List<FeedPost> _posts = <FeedPost>[];
 
   @override
   void initState() {
     super.initState();
-    _loadPosts();
+    _scrollController.addListener(_onScroll);
+    _loadPosts(refresh: true);
   }
 
-  Future<void> _loadPosts() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients ||
+        _loading ||
+        _loadingMore ||
+        !_hasMore) {
+      return;
+    }
+    final max = _scrollController.position.maxScrollExtent;
+    final current = _scrollController.offset;
+    if (max - current < 260) {
+      _loadPosts();
+    }
+  }
+
+  Future<void> _loadPosts({bool refresh = false}) async {
+    if (_loadingMore || (!refresh && !_hasMore)) return;
+
+    if (refresh) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _hasMore = true;
+        _page = 1;
+      });
+    } else {
+      setState(() {
+        _loadingMore = true;
+      });
+    }
 
     try {
-      final posts = await widget.repository.fetchPosts();
+      final nextPage = refresh ? 1 : _page;
+      final posts = await widget.repository.fetchPosts(
+        page: nextPage,
+        pageSize: _pageSize,
+      );
       if (!mounted) return;
+
       setState(() {
-        _posts = posts;
+        if (refresh) {
+          _posts = posts;
+        } else {
+          final merged = <String, FeedPost>{
+            for (final post in _posts) post.id: post,
+            for (final post in posts) post.id: post,
+          };
+          _posts = merged.values.toList();
+        }
+
+        _hasMore = posts.length >= _pageSize;
+        _page = nextPage + 1;
       });
     } on ApiException catch (error) {
       if (!mounted) return;
-      setState(() {
-        _error = error.message;
-      });
+      if (refresh) {
+        setState(() {
+          _error = error.message;
+        });
+      } else {
+        showAppSnackBar(context, error.message, isError: true);
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _error = 'Failed to load posts.';
-      });
+      if (refresh) {
+        setState(() {
+          _error = 'Failed to load posts.';
+        });
+      } else {
+        showAppSnackBar(context, 'Unable to load more posts.', isError: true);
+      }
     } finally {
       if (mounted) {
         setState(() {
           _loading = false;
+          _loadingMore = false;
         });
       }
     }
@@ -89,7 +156,7 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                 );
                 if (!context.mounted) return;
                 Navigator.of(context).pop();
-                await _loadPosts();
+                await _loadPosts(refresh: true);
               } on ApiException catch (error) {
                 setDialogState(() {
                   formError = error.message;
@@ -113,22 +180,27 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                   children: [
                     TextField(
                       controller: titleController,
-                      decoration: const InputDecoration(labelText: 'Title'),
+                      decoration: const InputDecoration(
+                        labelText: 'Title',
+                        prefixIcon: Icon(Icons.title_rounded),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: contentController,
                       minLines: 3,
                       maxLines: 5,
-                      decoration: const InputDecoration(labelText: 'Content'),
+                      decoration: const InputDecoration(
+                        labelText: 'Content',
+                        prefixIcon: Icon(Icons.notes_rounded),
+                      ),
                     ),
                     if (formError != null) ...[
                       const SizedBox(height: 8),
                       Text(
                         formError!,
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
+                            color: Theme.of(context).colorScheme.error),
                       ),
                     ],
                   ],
@@ -146,7 +218,10 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                       ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
                         )
                       : const Text('Post'),
                 ),
@@ -188,11 +263,9 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
       if (!mounted) return;
       setState(() {
         _posts = _posts
-            .map(
-              (item) => item.id == post.id
-                  ? item.copyWith(likesCount: likesCount)
-                  : item,
-            )
+            .map((item) => item.id == post.id
+                ? item.copyWith(likesCount: likesCount)
+                : item)
             .toList();
       });
     } catch (_) {
@@ -202,16 +275,12 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
             .map(
               (item) => item.id == post.id
                   ? item.copyWith(
-                      liked: post.liked,
-                      likesCount: post.likesCount,
-                    )
+                      liked: post.liked, likesCount: post.likesCount)
                   : item,
             )
             .toList();
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Failed to update like.')));
+      showAppSnackBar(context, 'Failed to update like.', isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -225,6 +294,8 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
     final count = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (_) => _PostCommentsSheet(
         repository: widget.repository,
         postId: post.id,
@@ -235,10 +306,8 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
     if (count == null || !mounted) return;
     setState(() {
       _posts = _posts
-          .map(
-            (item) =>
-                item.id == post.id ? item.copyWith(commentsCount: count) : item,
-          )
+          .map((item) =>
+              item.id == post.id ? item.copyWith(commentsCount: count) : item)
           .toList();
     });
   }
@@ -246,86 +315,113 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppLoadingState(label: 'Loading feed...');
     }
 
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!),
-              const SizedBox(height: 10),
-              ElevatedButton(onPressed: _loadPosts, child: const Text('Retry')),
-            ],
-          ),
-        ),
+      return AppErrorState(
+          message: _error!, onRetry: () => _loadPosts(refresh: true));
+    }
+
+    if (_posts.isEmpty) {
+      return AppEmptyState(
+        message: 'No posts yet. Start the conversation.',
+        icon: Icons.forum_outlined,
+        action: _openCreatePostDialog,
+        actionLabel: 'Create post',
       );
     }
 
     return RefreshIndicator(
-      onRefresh: _loadPosts,
+      onRefresh: () => _loadPosts(refresh: true),
       child: ListView.builder(
+        controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-        itemCount: _posts.length + 1,
+        itemCount: _posts.length + 2,
         itemBuilder: (context, index) {
           if (index == 0) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: FilledButton.icon(
-                onPressed: _openCreatePostDialog,
-                icon: const Icon(Icons.edit),
-                label: const Text('Create post'),
+            return AppSectionCard(
+              margin: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFD6C9C2), Color(0xFFB9A79D)],
+                      ),
+                    ),
+                    child: const Icon(Icons.edit_note_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppPalette.accent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: _openCreatePostDialog,
+                      icon: const Icon(Icons.draw_rounded),
+                      label: const Text('Create post'),
+                    ),
+                  ),
+                ],
               ),
             );
+          }
+
+          if (index == _posts.length + 1) {
+            return buildLoadMoreIndicator(_loadingMore);
           }
 
           final post = _posts[index - 1];
           final isLiking = _likingPostIds.contains(post.id);
 
-          return Card(
+          return AppSectionCard(
             margin: const EdgeInsets.only(bottom: 10),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    post.title.isEmpty ? 'Untitled post' : post.title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    post.content,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${post.uploaderName} • ${_formatDate(post.uploadDate)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: isLiking ? null : () => _toggleLike(post),
-                        icon: Icon(
-                          post.liked ? Icons.favorite : Icons.favorite_border,
-                        ),
-                        label: Text('${post.likesCount}'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  post.title.isEmpty ? 'Untitled post' : post.title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: () => _openComments(post),
-                        icon: const Icon(Icons.comment_outlined),
-                        label: Text('${post.commentsCount}'),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  post.content,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '${post.uploaderName} • ${_formatDate(post.uploadDate)}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppPalette.inkSoft,
                       ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: isLiking ? null : () => _toggleLike(post),
+                      icon: Icon(
+                          post.liked ? Icons.favorite : Icons.favorite_border),
+                      label: Text('${post.likesCount}'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _openComments(post),
+                      icon: const Icon(Icons.comment_outlined),
+                      label: Text('${post.commentsCount}'),
+                    ),
+                  ],
+                ),
+              ],
             ),
           );
         },
@@ -418,14 +514,10 @@ class _PostCommentsSheetState extends State<_PostCommentsSheet> {
       });
     } on ApiException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      showAppSnackBar(context, error.message, isError: true);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Failed to send comment.')));
+      showAppSnackBar(context, 'Failed to send comment.', isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -437,7 +529,7 @@ class _PostCommentsSheetState extends State<_PostCommentsSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final height = MediaQuery.of(context).size.height * 0.8;
+    final height = MediaQuery.of(context).size.height * 0.82;
 
     return PopScope<int>(
       canPop: false,
@@ -452,7 +544,7 @@ class _PostCommentsSheetState extends State<_PostCommentsSheet> {
           padding: EdgeInsets.only(
             left: 12,
             right: 12,
-            top: 12,
+            top: 8,
             bottom: MediaQuery.of(context).viewInsets.bottom + 12,
           ),
           child: Column(
@@ -474,23 +566,30 @@ class _PostCommentsSheetState extends State<_PostCommentsSheet> {
               const SizedBox(height: 8),
               Expanded(
                 child: _loading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const AppLoadingState()
                     : _error != null
-                        ? Center(child: Text(_error!))
+                        ? AppErrorState(message: _error!, onRetry: _load)
                         : _comments.isEmpty
-                            ? const Center(child: Text('No comments yet.'))
+                            ? const AppEmptyState(
+                                message: 'No comments yet.',
+                                icon: Icons.comment_outlined,
+                              )
                             : ListView.builder(
                                 itemCount: _comments.length,
                                 itemBuilder: (context, index) {
                                   final comment = _comments[index];
-                                  return ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(comment.displayName),
-                                    subtitle: Text(comment.content),
-                                    trailing: Text(
-                                      _formatDate(comment.createdAt),
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
+                                  return AppSectionCard(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    child: ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text(comment.displayName),
+                                      subtitle: Text(comment.content),
+                                      trailing: Text(
+                                        _formatDate(comment.createdAt),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
                                     ),
                                   );
                                 },

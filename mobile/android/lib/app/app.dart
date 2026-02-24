@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../core/ui/app_theme.dart';
+import '../core/ui/app_ui.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/session_controller.dart';
 import '../features/chat/data/chat_repository.dart';
@@ -7,6 +9,7 @@ import '../features/home/data/home_repository.dart';
 import '../features/home/presentation/home_shell.dart';
 import '../features/library/data/library_repository.dart';
 import '../features/notifications/data/notifications_repository.dart';
+import '../features/personal/data/personal_repository.dart';
 
 class ThesisLiteApp extends StatefulWidget {
   const ThesisLiteApp({
@@ -16,6 +19,7 @@ class ThesisLiteApp extends StatefulWidget {
     required this.libraryRepository,
     required this.notificationsRepository,
     required this.chatRepository,
+    required this.personalRepository,
   });
 
   final SessionController sessionController;
@@ -23,6 +27,7 @@ class ThesisLiteApp extends StatefulWidget {
   final LibraryRepository libraryRepository;
   final NotificationsRepository notificationsRepository;
   final ChatRepository chatRepository;
+  final PersonalRepository personalRepository;
 
   @override
   State<ThesisLiteApp> createState() => _ThesisLiteAppState();
@@ -45,10 +50,7 @@ class _ThesisLiteAppState extends State<ThesisLiteApp> {
         return MaterialApp(
           title: 'MyBuddy',
           debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            colorSchemeSeed: const Color(0xFF0B6E4F),
-            brightness: Brightness.light,
-          ),
+          theme: buildAppTheme(),
           home: switch (status) {
             SessionStatus.checking => const _CheckingScreen(),
             SessionStatus.unauthenticated => LoginScreen(
@@ -64,6 +66,7 @@ class _ThesisLiteAppState extends State<ThesisLiteApp> {
                 libraryRepository: widget.libraryRepository,
                 notificationsRepository: widget.notificationsRepository,
                 chatRepository: widget.chatRepository,
+                personalRepository: widget.personalRepository,
               ),
           },
         );
@@ -77,6 +80,10 @@ class _CheckingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    return const Scaffold(
+      body: AppPageBackground(
+        child: AppLoadingState(label: 'Preparing MyBuddy...'),
+      ),
+    );
   }
 }

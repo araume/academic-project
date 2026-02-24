@@ -292,6 +292,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   attachment_filename TEXT,
   attachment_mime_type TEXT,
   attachment_size_bytes INTEGER CHECK (attachment_size_bytes IS NULL OR attachment_size_bytes >= 0),
+  deleted_at TIMESTAMPTZ,
+  deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -309,6 +311,10 @@ ALTER TABLE chat_messages
   ADD COLUMN IF NOT EXISTS attachment_mime_type TEXT;
 ALTER TABLE chat_messages
   ADD COLUMN IF NOT EXISTS attachment_size_bytes INTEGER;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
 
 ALTER TABLE chat_messages
   DROP CONSTRAINT IF EXISTS chat_messages_attachment_type_check;
@@ -337,6 +343,30 @@ CREATE TABLE IF NOT EXISTS chat_typing (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, user_uid)
 );
+
+CREATE TABLE IF NOT EXISTS chat_thread_user_state (
+  thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  last_read_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL,
+  manual_unread BOOLEAN NOT NULL DEFAULT false,
+  is_archived BOOLEAN NOT NULL DEFAULT false,
+  is_muted BOOLEAN NOT NULL DEFAULT false,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (thread_id, user_uid)
+);
+
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS last_read_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS manual_unread BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS is_muted BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS blocked_users (
   id BIGSERIAL PRIMARY KEY,
@@ -531,10 +561,13 @@ CREATE INDEX IF NOT EXISTS chat_participants_user_status_idx ON chat_participant
 CREATE INDEX IF NOT EXISTS chat_participants_thread_status_idx ON chat_participants(thread_id, status);
 CREATE INDEX IF NOT EXISTS chat_messages_thread_created_idx ON chat_messages(thread_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS chat_messages_parent_idx ON chat_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS chat_messages_deleted_idx ON chat_messages(thread_id, deleted_at);
 CREATE INDEX IF NOT EXISTS chat_message_reports_status_created_idx ON chat_message_reports(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS chat_message_reports_thread_idx ON chat_message_reports(thread_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS chat_message_reports_reporter_idx ON chat_message_reports(reporter_uid, created_at DESC);
 CREATE INDEX IF NOT EXISTS chat_typing_thread_updated_idx ON chat_typing(thread_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS chat_thread_user_state_user_idx ON chat_thread_user_state(user_uid, is_archived, updated_at DESC);
+CREATE INDEX IF NOT EXISTS chat_thread_user_state_thread_idx ON chat_thread_user_state(thread_id, user_uid);
 CREATE INDEX IF NOT EXISTS blocked_users_blocker_idx ON blocked_users(blocker_uid);
 CREATE INDEX IF NOT EXISTS blocked_users_blocked_idx ON blocked_users(blocked_uid);
 CREATE INDEX IF NOT EXISTS hidden_post_authors_user_idx ON hidden_post_authors(user_uid);

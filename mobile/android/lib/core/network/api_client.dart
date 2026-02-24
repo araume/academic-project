@@ -77,6 +77,36 @@ class ApiClient {
     );
   }
 
+  Future<ApiResponse> patchJson(
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+    bool authenticated = true,
+  }) {
+    return _requestJson(
+      method: 'PATCH',
+      path: path,
+      query: query,
+      body: body,
+      authenticated: authenticated,
+    );
+  }
+
+  Future<ApiResponse> deleteJson(
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+    bool authenticated = true,
+  }) {
+    return _requestJson(
+      method: 'DELETE',
+      path: path,
+      query: query,
+      body: body,
+      authenticated: authenticated,
+    );
+  }
+
   Future<ApiResponse> postMultipart(
     String path, {
     Map<String, String>? fields,

@@ -10,6 +10,7 @@ import 'features/chat/data/chat_repository.dart';
 import 'features/home/data/home_repository.dart';
 import 'features/library/data/library_repository.dart';
 import 'features/notifications/data/notifications_repository.dart';
+import 'features/personal/data/personal_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +40,7 @@ void main() {
   final libraryRepository = LibraryRepository(apiClient: apiClient);
   final notificationsRepository = NotificationsRepository(apiClient: apiClient);
   final chatRepository = ChatRepository(apiClient: apiClient);
+  final personalRepository = PersonalRepository(apiClient: apiClient);
 
   runApp(
     ThesisLiteApp(
@@ -47,6 +49,7 @@ void main() {
       libraryRepository: libraryRepository,
       notificationsRepository: notificationsRepository,
       chatRepository: chatRepository,
+      personalRepository: personalRepository,
     ),
   );
 }

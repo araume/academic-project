@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/ui/app_ui.dart';
 import '../data/attachment_policy.dart';
 import '../data/chat_models.dart';
 import '../data/chat_repository.dart';
@@ -149,9 +150,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         providedMimeType: picked.mimeType,
       );
       if (!validation.isValid) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(validation.errorMessage!)),
-        );
+        showAppSnackBar(context, validation.errorMessage!, isError: true);
         return;
       }
 
@@ -164,9 +163,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       });
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not pick attachment.')),
-      );
+      showAppSnackBar(context, 'Could not pick attachment.', isError: true);
     }
   }
 
@@ -270,14 +267,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       _loadTypingUsers(silent: true);
     } on ApiException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      showAppSnackBar(context, error.message, isError: true);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to send message.')),
-      );
+      showAppSnackBar(context, 'Failed to send message.', isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -493,205 +486,198 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_typingUsers.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: Text(
-                _typingUsersText(_typingUsers),
-                style: Theme.of(context).textTheme.bodySmall,
+      body: AppPageBackground(
+        child: Column(
+          children: [
+            if (_typingUsers.isNotEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: Text(
+                  _typingUsersText(_typingUsers),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
-            ),
-          Expanded(child: _buildMessages()),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_replyTarget != null)
-                    Container(
-                      key: const Key('chat_reply_preview'),
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Replying to ${_replyTarget!.senderName}: ${_replyTarget!.bodyOrAttachmentLabel}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _replyTarget = null;
-                              });
-                            },
-                            icon: const Icon(Icons.close, size: 18),
-                            tooltip: 'Cancel reply',
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (_pendingAttachmentBytes != null)
-                    Container(
-                      key: const Key('chat_pending_attachment_preview'),
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.attach_file, size: 18),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              '${_pendingAttachmentName ?? 'attachment'} • ${_formatBytes(_pendingAttachmentSize ?? 0)}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: _clearAttachment,
-                            icon: const Icon(Icons.close, size: 18),
-                            tooltip: 'Remove attachment',
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (_showEmojiBar)
-                    Container(
-                      key: const Key('chat_emoji_bar'),
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 6),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                      ),
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: _quickEmojis
-                              .map(
-                                (emoji) => Padding(
-                                  padding: const EdgeInsets.only(right: 6),
-                                  child: InkWell(
-                                    onTap: () => _insertEmoji(emoji),
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(6),
-                                      child: Text(emoji,
-                                          style: const TextStyle(fontSize: 20)),
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ),
-                    ),
-                  Row(
+            Expanded(child: _buildMessages()),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: AppSectionCard(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        key: const Key('chat_attach_button'),
-                        onPressed: _sending ? null : _pickAttachment,
-                        icon: const Icon(Icons.attach_file),
-                        tooltip: 'Attach image/video',
-                      ),
-                      IconButton(
-                        key: const Key('chat_emoji_toggle'),
-                        onPressed: _toggleEmojiBar,
-                        icon: Icon(_showEmojiBar
-                            ? Icons.emoji_emotions
-                            : Icons.emoji_emotions_outlined),
-                        tooltip: 'Emoji',
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: _inputController,
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: const InputDecoration(
-                            hintText: 'Type a message...',
+                      if (_replyTarget != null)
+                        Container(
+                          key: const Key('chat_reply_preview'),
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
                           ),
-                          onSubmitted: (_) => _send(),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Replying to ${_replyTarget!.senderName}: ${_replyTarget!.bodyOrAttachmentLabel}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _replyTarget = null;
+                                  });
+                                },
+                                icon: const Icon(Icons.close, size: 18),
+                                tooltip: 'Cancel reply',
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        key: const Key('chat_send_button'),
-                        onPressed: _sending ? null : _send,
-                        icon: _sending
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.send),
+                      if (_pendingAttachmentBytes != null)
+                        Container(
+                          key: const Key('chat_pending_attachment_preview'),
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.attach_file, size: 18),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  '${_pendingAttachmentName ?? 'attachment'} • ${_formatBytes(_pendingAttachmentSize ?? 0)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: _clearAttachment,
+                                icon: const Icon(Icons.close, size: 18),
+                                tooltip: 'Remove attachment',
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_showEmojiBar)
+                        Container(
+                          key: const Key('chat_emoji_bar'),
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 6),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: _quickEmojis
+                                  .map(
+                                    (emoji) => Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: InkWell(
+                                        onTap: () => _insertEmoji(emoji),
+                                        borderRadius: BorderRadius.circular(16),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(6),
+                                          child: Text(emoji,
+                                              style: const TextStyle(
+                                                  fontSize: 20)),
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
+                        ),
+                      Row(
+                        children: [
+                          IconButton(
+                            key: const Key('chat_attach_button'),
+                            onPressed: _sending ? null : _pickAttachment,
+                            icon: const Icon(Icons.attach_file),
+                            tooltip: 'Attach image/video',
+                          ),
+                          IconButton(
+                            key: const Key('chat_emoji_toggle'),
+                            onPressed: _toggleEmojiBar,
+                            icon: Icon(_showEmojiBar
+                                ? Icons.emoji_emotions
+                                : Icons.emoji_emotions_outlined),
+                            tooltip: 'Emoji',
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: _inputController,
+                              minLines: 1,
+                              maxLines: 4,
+                              decoration: const InputDecoration(
+                                hintText: 'Type a message...',
+                              ),
+                              onSubmitted: (_) => _send(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            key: const Key('chat_send_button'),
+                            onPressed: _sending ? null : _send,
+                            icon: _sending
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.send),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildMessages() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppLoadingState();
     }
 
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!),
-              const SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: _loadMessages,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
-      );
+      return AppErrorState(message: _error!, onRetry: _loadMessages);
     }
 
     if (_messages.isEmpty) {
-      return const Center(child: Text('No messages yet.'));
+      return const AppEmptyState(
+        message: 'No messages yet.',
+        icon: Icons.chat_bubble_outline,
+      );
     }
 
     return RefreshIndicator(
@@ -717,7 +703,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   color: mine
                       ? Theme.of(context).colorScheme.primaryContainer
                       : Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0x160F2639)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -866,9 +853,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open attachment link.')),
-      );
+      showAppSnackBar(context, 'Could not open attachment link.',
+          isError: true);
     }
   }
 }

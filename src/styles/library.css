@@ -329,7 +329,7 @@ body {
   display: grid;
   place-items: center;
   padding: 24px;
-  z-index: 50;
+  z-index: 1800;
 }
 
 .modal-card {
