@@ -59,7 +59,7 @@
 
     <section class="library-controls">
       <form id="searchForm" class="search-bar">
-        <input type="text" id="searchInput" placeholder="Search for documents, articles, papers..." />
+        <input type="text" id="searchInput" placeholder="Search by document name or subject/lesson..." />
         <button type="submit">Search</button>
       </form>
       <div class="filters">
@@ -74,6 +74,11 @@
           <option value="az">A - Z</option>
           <option value="za">Z - A</option>
         </select>
+        <button type="button" class="ghost-button uploader-filter-button" id="uploaderFilterButton">Filter by uploader</button>
+      </div>
+      <div class="active-uploader-filter is-hidden" id="activeUploaderFilter">
+        <span id="activeUploaderFilterText"></span>
+        <button type="button" class="link-like-button" id="clearUploaderFilterButton">Clear</button>
       </div>
     </section>
 
@@ -236,6 +241,20 @@
         <button type="submit" class="primary-button">Upload</button>
         <p class="form-message" id="uploadMessage"></p>
       </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="uploaderFilterModal">
+    <div class="modal-card uploader-filter-modal-card">
+      <button class="close-button" id="uploaderFilterClose" aria-label="Close uploader filter">×</button>
+      <h2>Filter by uploader</h2>
+      <p class="detail-description">Search users and view all their uploaded documents.</p>
+      <form class="uploader-filter-search" id="uploaderFilterSearchForm">
+        <input type="text" id="uploaderFilterSearchInput" placeholder="Search uploader name..." />
+        <button type="submit" class="primary-button">Search</button>
+      </form>
+      <div class="uploader-filter-results" id="uploaderFilterResults"></div>
+      <p class="form-message" id="uploaderFilterMessage"></p>
     </div>
   </div>
 

@@ -399,9 +399,10 @@ async function loadAccessibleDocumentForUser(user, uuid) {
     SELECT
       d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
       d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
-      COALESCE(a.display_name, a.username, a.email) AS uploader_name
+      COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name
     FROM documents d
     LEFT JOIN accounts a ON d.uploader_uid = a.uid
+    LEFT JOIN profiles p ON d.uploader_uid = p.uid
     WHERE ${filters.join(' AND ')}
     LIMIT 1
   `;
@@ -423,9 +424,78 @@ router.get('/api/library/courses', async (req, res) => {
   }
 });
 
+router.get('/api/library/uploaders', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const userCourse = req.user && req.user.course ? req.user.course : null;
+  const userUid = req.user && req.user.uid ? req.user.uid : null;
+  const isPrivilegedViewer = hasAdminPrivileges(req.user);
+
+  const values = [];
+  const filters = [];
+
+  if (q) {
+    values.push(`%${q}%`);
+    filters.push(
+      `(COALESCE(p.display_name, a.display_name, a.username, a.email) ILIKE $${values.length}
+        OR a.username ILIKE $${values.length}
+        OR a.email ILIKE $${values.length})`
+    );
+  }
+
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      filters.push(
+        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
+  }
+
+  const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const query = `
+    SELECT
+      d.uploader_uid AS uid,
+      COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+      p.photo_link,
+      COUNT(*)::int AS upload_count
+    FROM documents d
+    JOIN accounts a ON a.uid = d.uploader_uid
+    LEFT JOIN profiles p ON p.uid = d.uploader_uid
+    ${whereClause}
+    GROUP BY d.uploader_uid, COALESCE(p.display_name, a.display_name, a.username, a.email), p.photo_link
+    ORDER BY lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) ASC
+    LIMIT 50
+  `;
+
+  try {
+    const result = await pool.query(query, values);
+    const uploaders = await Promise.all(
+      result.rows.map(async (row) => ({
+        uid: row.uid,
+        displayName: row.display_name || 'Member',
+        photoLink: await signIfNeeded(row.photo_link, { ensureExists: true }),
+        uploadCount: row.upload_count || 0,
+      }))
+    );
+    return res.json({ ok: true, uploaders });
+  } catch (error) {
+    console.error('Uploader filter fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load uploaders.' });
+  }
+});
+
 router.get('/api/library/documents', async (req, res) => {
   const q = (req.query.q || '').trim();
   const course = (req.query.course || '').trim();
+  const uploaderUid = (req.query.uploaderUid || '').trim();
   const sort = (req.query.sort || 'recent').trim();
   const page = Math.max(Number(req.query.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 12), 1), 50);
@@ -439,13 +509,18 @@ router.get('/api/library/documents', async (req, res) => {
   if (q) {
     countValues.push(`%${q}%`);
     filters.push(
-      `(d.title ILIKE $${countValues.length} OR d.description ILIKE $${countValues.length} OR d.filename ILIKE $${countValues.length} OR d.subject ILIKE $${countValues.length})`
+      `(d.title ILIKE $${countValues.length} OR d.subject ILIKE $${countValues.length})`
     );
   }
 
   if (course && course !== 'all') {
     countValues.push(course);
     filters.push(`d.course = $${countValues.length}`);
+  }
+
+  if (uploaderUid) {
+    countValues.push(uploaderUid);
+    filters.push(`d.uploader_uid = $${countValues.length}`);
   }
 
   if (!isPrivilegedViewer) {
@@ -499,11 +574,12 @@ router.get('/api/library/documents', async (req, res) => {
       SELECT
         d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
         d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
-        COALESCE(a.display_name, a.username, a.email) AS uploader_name,
+        COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name,
         CASE WHEN l.id IS NULL THEN false ELSE true END AS liked,
         CASE WHEN d.uploader_uid = $${likedParamIndex} THEN true ELSE false END AS is_owner
       FROM documents d
       LEFT JOIN accounts a ON d.uploader_uid = a.uid
+      LEFT JOIN profiles p ON d.uploader_uid = p.uid
       LEFT JOIN document_likes l ON l.document_uuid = d.uuid AND l.user_uid = $${likedParamIndex}
       ${whereClause}
       ORDER BY ${orderBy}
@@ -564,9 +640,10 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
       SELECT
         d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
         d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
-        COALESCE(a.display_name, a.username, a.email) AS uploader_name
+        COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name
       FROM documents d
       LEFT JOIN accounts a ON d.uploader_uid = a.uid
+      LEFT JOIN profiles p ON d.uploader_uid = p.uid
       WHERE ${filters.join(' AND ')}
       LIMIT 1
     `;

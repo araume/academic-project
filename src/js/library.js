@@ -4,6 +4,10 @@ const searchForm = document.getElementById('searchForm');
 const searchInput = document.getElementById('searchInput');
 const courseFilter = document.getElementById('courseFilter');
 const sortFilter = document.getElementById('sortFilter');
+const uploaderFilterButton = document.getElementById('uploaderFilterButton');
+const activeUploaderFilter = document.getElementById('activeUploaderFilter');
+const activeUploaderFilterText = document.getElementById('activeUploaderFilterText');
+const clearUploaderFilterButton = document.getElementById('clearUploaderFilterButton');
 const uploadCourse = document.getElementById('uploadCourse');
 const uploadToggle = document.getElementById('uploadToggle');
 const uploadModal = document.getElementById('uploadModal');
@@ -50,6 +54,12 @@ const docAiMessages = document.getElementById('docAiMessages');
 const docAiForm = document.getElementById('docAiForm');
 const docAiInput = document.getElementById('docAiInput');
 const docAiMessage = document.getElementById('docAiMessage');
+const uploaderFilterModal = document.getElementById('uploaderFilterModal');
+const uploaderFilterClose = document.getElementById('uploaderFilterClose');
+const uploaderFilterSearchForm = document.getElementById('uploaderFilterSearchForm');
+const uploaderFilterSearchInput = document.getElementById('uploaderFilterSearchInput');
+const uploaderFilterResults = document.getElementById('uploaderFilterResults');
+const uploaderFilterMessage = document.getElementById('uploaderFilterMessage');
 
 const profileToggle = document.getElementById('profileToggle');
 const profileMenu = document.getElementById('profileMenu');
@@ -61,12 +71,15 @@ let lastActive = Date.now();
 let isFetching = false;
 let activeDocAiUuid = null;
 let isSendingDocAi = false;
+let isDocumentUploading = false;
 
 const state = {
   page: 1,
   pageSize: 12,
   q: '',
   course: 'all',
+  uploaderUid: '',
+  uploaderName: '',
   sort: 'recent',
   total: 0,
 };
@@ -92,6 +105,15 @@ function setNavAvatar(photoLink, displayName) {
     return;
   }
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function updateActiveUploaderFilterUI() {
+  if (!activeUploaderFilter || !activeUploaderFilterText) return;
+  const hasFilter = Boolean(state.uploaderUid);
+  activeUploaderFilter.classList.toggle('is-hidden', !hasFilter);
+  if (hasFilter) {
+    activeUploaderFilterText.textContent = `Filtering uploads by: ${state.uploaderName || 'Selected uploader'}`;
+  }
 }
 
 async function loadNavAvatar() {
@@ -175,6 +197,9 @@ async function fetchDocuments() {
       page: state.page,
       pageSize: state.pageSize,
     });
+    if (state.uploaderUid) {
+      params.set('uploaderUid', state.uploaderUid);
+    }
     const response = await fetch(`/api/library/documents?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || !data.ok) {
@@ -437,6 +462,82 @@ async function loadCourses() {
     });
   } catch (error) {
     // Silent failure; user can still type the course manually.
+  }
+}
+
+function renderUploaderResults(uploaders) {
+  if (!uploaderFilterResults) return;
+  clearElement(uploaderFilterResults);
+  if (!Array.isArray(uploaders) || !uploaders.length) {
+    const empty = document.createElement('p');
+    empty.className = 'doc-ai-empty';
+    empty.textContent = 'No matching uploaders found.';
+    uploaderFilterResults.appendChild(empty);
+    return;
+  }
+
+  uploaders.forEach((uploader) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'uploader-row';
+    row.dataset.uid = uploader.uid || '';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'uploader-avatar';
+    if (uploader.photoLink) {
+      const image = document.createElement('img');
+      image.src = uploader.photoLink;
+      image.alt = `${uploader.displayName || 'Member'} profile photo`;
+      avatar.appendChild(image);
+    } else {
+      avatar.textContent = initialsFromName(uploader.displayName || 'Member');
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'uploader-main';
+    const name = document.createElement('strong');
+    name.textContent = uploader.displayName || 'Member';
+    const count = document.createElement('span');
+    count.textContent = `${uploader.uploadCount || 0} upload${uploader.uploadCount === 1 ? '' : 's'}`;
+    meta.appendChild(name);
+    meta.appendChild(count);
+
+    row.appendChild(avatar);
+    row.appendChild(meta);
+    row.addEventListener('click', () => {
+      state.uploaderUid = uploader.uid || '';
+      state.uploaderName = uploader.displayName || 'Member';
+      state.page = 1;
+      updateActiveUploaderFilterUI();
+      closeModal(uploaderFilterModal);
+      fetchDocuments();
+    });
+    uploaderFilterResults.appendChild(row);
+  });
+}
+
+async function searchUploaders() {
+  if (!uploaderFilterResults) return;
+  const query = uploaderFilterSearchInput ? uploaderFilterSearchInput.value.trim() : '';
+  if (uploaderFilterMessage) {
+    uploaderFilterMessage.textContent = '';
+  }
+  try {
+    const params = new URLSearchParams();
+    if (query) {
+      params.set('q', query);
+    }
+    const response = await fetch(`/api/library/uploaders?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Failed to load uploaders.');
+    }
+    renderUploaderResults(data.uploaders || []);
+  } catch (error) {
+    renderUploaderResults([]);
+    if (uploaderFilterMessage) {
+      uploaderFilterMessage.textContent = error.message;
+    }
   }
 }
 
@@ -704,11 +805,21 @@ if (docAiForm) {
 if (uploadForm) {
   uploadForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (isDocumentUploading) {
+      return;
+    }
+    isDocumentUploading = true;
     uploadMessage.textContent = '';
 
     const formData = new FormData(uploadForm);
     const isPrivate = formData.get('visibility') === 'private';
     formData.set('visibility', isPrivate ? 'private' : 'public');
+    const submitButton = uploadForm.querySelector('button[type="submit"]');
+    const originalSubmitLabel = submitButton ? submitButton.textContent : 'Upload';
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = 'Uploading...';
+    }
 
     try {
       const response = await fetch('/api/library/documents', {
@@ -724,6 +835,12 @@ if (uploadForm) {
       fetchDocuments();
     } catch (error) {
       uploadMessage.textContent = error.message;
+    } finally {
+      isDocumentUploading = false;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalSubmitLabel;
+      }
     }
   });
 }
@@ -749,6 +866,37 @@ if (sortFilter) {
   sortFilter.addEventListener('change', () => {
     state.sort = sortFilter.value;
     state.page = 1;
+    fetchDocuments();
+  });
+}
+
+if (uploaderFilterButton && uploaderFilterModal) {
+  uploaderFilterButton.addEventListener('click', async () => {
+    openModal(uploaderFilterModal);
+    await searchUploaders();
+    if (uploaderFilterSearchInput) {
+      uploaderFilterSearchInput.focus();
+    }
+  });
+}
+
+if (uploaderFilterClose && uploaderFilterModal) {
+  uploaderFilterClose.addEventListener('click', () => closeModal(uploaderFilterModal));
+}
+
+if (uploaderFilterSearchForm) {
+  uploaderFilterSearchForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await searchUploaders();
+  });
+}
+
+if (clearUploaderFilterButton) {
+  clearUploaderFilterButton.addEventListener('click', () => {
+    state.uploaderUid = '';
+    state.uploaderName = '';
+    state.page = 1;
+    updateActiveUploaderFilterUI();
     fetchDocuments();
   });
 }
@@ -784,6 +932,14 @@ if (docAiModal) {
   });
 }
 
+if (uploaderFilterModal) {
+  uploaderFilterModal.addEventListener('click', (event) => {
+    if (event.target === uploaderFilterModal) {
+      closeModal(uploaderFilterModal);
+    }
+  });
+}
+
 if (logoutButton) {
   logoutButton.addEventListener('click', async () => {
     try {
@@ -802,5 +958,6 @@ setInterval(() => {
 }, 10000);
 
 loadCourses();
+updateActiveUploaderFilterUI();
 fetchDocuments();
 loadNavAvatar();

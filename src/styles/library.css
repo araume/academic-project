@@ -194,6 +194,29 @@ body {
   flex-wrap: wrap;
 }
 
+.active-uploader-filter {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7fbff;
+  border: 1px solid #d6e4ef;
+  color: #23455e;
+  font-size: 0.9rem;
+}
+
+.link-like-button {
+  border: none;
+  background: transparent;
+  color: #174f73;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+
 .search-bar {
   display: flex;
   gap: 10px;
@@ -250,6 +273,10 @@ body {
   border: 1px solid #d8d8d8;
   background: #fff;
   font-family: inherit;
+}
+
+.uploader-filter-button {
+  padding: 10px 14px;
 }
 
 .document-grid {
@@ -697,6 +724,88 @@ body {
   justify-self: end;
 }
 
+.uploader-filter-modal-card {
+  max-width: 640px;
+  display: grid;
+  gap: 12px;
+}
+
+.uploader-filter-search {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.uploader-filter-search input {
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid #ccd8e0;
+  font-family: inherit;
+}
+
+.uploader-filter-results {
+  max-height: 52vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.uploader-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d7e2ea;
+  background: #f9fcff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: #1c425d;
+}
+
+.uploader-row:hover {
+  border-color: #9db8ca;
+  background: #f1f7fc;
+}
+
+.uploader-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #d8e5ef;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #1c425d;
+}
+
+.uploader-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.uploader-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.uploader-main strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.uploader-main span {
+  display: block;
+  margin-top: 3px;
+  color: #567186;
+  font-size: 0.82rem;
+}
+
 .form-message {
   min-height: 18px;
   margin: 0;
@@ -740,9 +849,17 @@ body {
     flex-wrap: wrap;
   }
 
+  .uploader-filter-button {
+    width: 100%;
+  }
+
   .search-bar {
     width: 100%;
     min-width: 0;
     flex-wrap: wrap;
+  }
+
+  .uploader-filter-search {
+    grid-template-columns: 1fr;
   }
 }
