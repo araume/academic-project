@@ -719,7 +719,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 );
 
 CREATE TABLE IF NOT EXISTS site_page_content (
-  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms')),
+  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app')),
   title TEXT NOT NULL,
   subtitle TEXT NOT NULL DEFAULT '',
   body JSONB NOT NULL DEFAULT '{}'::jsonb,

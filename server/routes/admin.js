@@ -172,7 +172,7 @@ async function cleanupMongoDataForAccount(uid) {
   await Promise.all(cleanupOps);
 }
 
-const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq', 'rooms']);
+const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq', 'rooms', 'mobile-app']);
 
 const DEFAULT_SITE_PAGES = {
   about: {
@@ -224,6 +224,18 @@ const DEFAULT_SITE_PAGES = {
       courseContextLabel: 'Course context',
     },
   },
+  'mobile-app': {
+    title: 'Open Library Lite',
+    subtitle: 'Scan the QR code to download the Android lite app.',
+    body: {
+      description:
+        'Use the lite mobile app to stay connected with your communities, view feed updates, and access core features on the go.',
+      qrImageUrl: '',
+      qrAltText: 'Open Library Lite QR code',
+      downloadUrl: '',
+      downloadLabel: 'Download APK',
+    },
+  },
 };
 
 let ensureSitePagesReadyPromise = null;
@@ -233,7 +245,7 @@ async function ensureSitePagesReady() {
   ensureSitePagesReadyPromise = (async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS site_page_content (
-        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms')),
+        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app')),
         title TEXT NOT NULL,
         subtitle TEXT NOT NULL DEFAULT '',
         body JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -248,7 +260,7 @@ async function ensureSitePagesReady() {
     await pool.query(`
       ALTER TABLE site_page_content
       ADD CONSTRAINT site_page_content_slug_check
-      CHECK (slug IN ('about', 'faq', 'rooms'));
+      CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app'));
     `);
   })().catch((error) => {
     ensureSitePagesReadyPromise = null;
@@ -297,12 +309,25 @@ function normalizeRoomsBody(body = {}) {
   };
 }
 
+function normalizeMobileAppBody(body = {}) {
+  return {
+    description: sanitizeText(body.description, 7000),
+    qrImageUrl: sanitizeText(body.qrImageUrl, 2000),
+    qrAltText: sanitizeText(body.qrAltText, 180) || 'Open Library Lite QR code',
+    downloadUrl: sanitizeText(body.downloadUrl, 2000),
+    downloadLabel: sanitizeText(body.downloadLabel, 80) || 'Download APK',
+  };
+}
+
 function normalizeSitePageBody(slug, body = {}) {
   if (slug === 'about') {
     return normalizeAboutBody(body);
   }
   if (slug === 'faq') {
     return normalizeFaqBody(body);
+  }
+  if (slug === 'mobile-app') {
+    return normalizeMobileAppBody(body);
   }
   return normalizeRoomsBody(body);
 }

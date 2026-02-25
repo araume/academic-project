@@ -229,7 +229,7 @@
       <div class="panel-card">
         <div class="panel-head">
           <h2>Public pages content</h2>
-          <p class="subcopy">Edit what users see in FAQ and About pages.</p>
+          <p class="subcopy">Edit what users see in About, FAQ, and Mobile App modal content.</p>
         </div>
 
         <div class="site-pages-grid">
@@ -292,6 +292,47 @@
                 <button type="button" class="primary-button" id="saveFaqPage">Save FAQ</button>
               </div>
               <p class="inline-message" id="faqPageMessage"></p>
+            </div>
+          </article>
+
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>Mobile app modal</h3>
+              <button type="button" class="secondary-button" id="reloadMobileAppPage">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Title</span>
+                <input type="text" id="mobileAppTitle" maxlength="180" />
+              </label>
+              <label>
+                <span>Subtitle</span>
+                <textarea id="mobileAppSubtitle" rows="2" maxlength="400"></textarea>
+              </label>
+              <label>
+                <span>Description</span>
+                <textarea id="mobileAppDescription" rows="5" maxlength="7000"></textarea>
+              </label>
+              <label>
+                <span>QR image URL</span>
+                <input type="url" id="mobileAppQrImageUrl" maxlength="2000" placeholder="https://..." />
+              </label>
+              <label>
+                <span>QR image alt text</span>
+                <input type="text" id="mobileAppQrAltText" maxlength="180" placeholder="Open Library Lite QR code" />
+              </label>
+              <label>
+                <span>Download URL (optional)</span>
+                <input type="url" id="mobileAppDownloadUrl" maxlength="2000" placeholder="https://..." />
+              </label>
+              <label>
+                <span>Download button label</span>
+                <input type="text" id="mobileAppDownloadLabel" maxlength="80" placeholder="Download APK" />
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveMobileAppPage">Save Mobile App</button>
+              </div>
+              <p class="inline-message" id="mobileAppPageMessage"></p>
             </div>
           </article>
         </div>

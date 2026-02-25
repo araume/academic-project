@@ -53,6 +53,16 @@ const faqItems = document.getElementById('faqItems');
 const saveFaqPage = document.getElementById('saveFaqPage');
 const reloadFaqPage = document.getElementById('reloadFaqPage');
 const faqPageMessage = document.getElementById('faqPageMessage');
+const mobileAppTitle = document.getElementById('mobileAppTitle');
+const mobileAppSubtitle = document.getElementById('mobileAppSubtitle');
+const mobileAppDescription = document.getElementById('mobileAppDescription');
+const mobileAppQrImageUrl = document.getElementById('mobileAppQrImageUrl');
+const mobileAppQrAltText = document.getElementById('mobileAppQrAltText');
+const mobileAppDownloadUrl = document.getElementById('mobileAppDownloadUrl');
+const mobileAppDownloadLabel = document.getElementById('mobileAppDownloadLabel');
+const saveMobileAppPage = document.getElementById('saveMobileAppPage');
+const reloadMobileAppPage = document.getElementById('reloadMobileAppPage');
+const mobileAppPageMessage = document.getElementById('mobileAppPageMessage');
 const spacesCommunitySelect = document.getElementById('spacesCommunitySelect');
 const spacesCommunityDescription = document.getElementById('spacesCommunityDescription');
 const saveSpacesCommunity = document.getElementById('saveSpacesCommunity');
@@ -746,6 +756,53 @@ async function saveFaqPageEditor() {
   }
 }
 
+async function loadMobileAppPageEditor() {
+  if (!mobileAppTitle) return;
+  try {
+    setInlineMessage(mobileAppPageMessage, '');
+    const data = await apiRequest('/api/admin/site-pages/mobile-app');
+    const page = data.page || {};
+    const body = page.body || {};
+    mobileAppTitle.value = page.title || '';
+    mobileAppSubtitle.value = page.subtitle || '';
+    mobileAppDescription.value = body.description || '';
+    mobileAppQrImageUrl.value = body.qrImageUrl || '';
+    mobileAppQrAltText.value = body.qrAltText || '';
+    mobileAppDownloadUrl.value = body.downloadUrl || '';
+    mobileAppDownloadLabel.value = body.downloadLabel || '';
+  } catch (error) {
+    setInlineMessage(mobileAppPageMessage, error.message);
+  }
+}
+
+async function saveMobileAppPageEditor() {
+  if (!mobileAppTitle) return;
+  try {
+    setInlineMessage(mobileAppPageMessage, '');
+    const payload = {
+      title: mobileAppTitle.value,
+      subtitle: mobileAppSubtitle.value,
+      body: {
+        description: mobileAppDescription.value,
+        qrImageUrl: mobileAppQrImageUrl.value,
+        qrAltText: mobileAppQrAltText.value,
+        downloadUrl: mobileAppDownloadUrl.value,
+        downloadLabel: mobileAppDownloadLabel.value,
+      },
+    };
+    await apiRequest('/api/admin/site-pages/mobile-app', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setInlineMessage(mobileAppPageMessage, 'Mobile app modal content updated.', 'success');
+    setPageMessage('Site page content updated.', 'success');
+    await loadMobileAppPageEditor();
+  } catch (error) {
+    setInlineMessage(mobileAppPageMessage, error.message);
+  }
+}
+
 accountsTableBody.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -935,6 +992,14 @@ if (reloadFaqPage) {
   reloadFaqPage.addEventListener('click', loadFaqPageEditor);
 }
 
+if (saveMobileAppPage) {
+  saveMobileAppPage.addEventListener('click', saveMobileAppPageEditor);
+}
+
+if (reloadMobileAppPage) {
+  reloadMobileAppPage.addEventListener('click', loadMobileAppPageEditor);
+}
+
 if (spacesCommunitySelect) {
   spacesCommunitySelect.addEventListener('change', () => {
     setInlineMessage(spacesCommunityMessage, '');
@@ -974,6 +1039,7 @@ async function init() {
       loadAccounts(),
       loadAboutPageEditor(),
       loadFaqPageEditor(),
+      loadMobileAppPageEditor(),
       loadRoomContextLabelEditor(),
     ]);
     setContentHeaders(currentContentTab);

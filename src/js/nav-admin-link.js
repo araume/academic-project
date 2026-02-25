@@ -1,5 +1,10 @@
 (async function initNavEnhancements() {
-  await Promise.all([injectAdminNavLink(), initNotificationsMenu(), initGlobalSearchModal()]);
+  await Promise.all([
+    injectAdminNavLink(),
+    initMobileAppMenuEntry(),
+    initNotificationsMenu(),
+    initGlobalSearchModal(),
+  ]);
 })();
 
 async function injectAdminNavLink() {
@@ -31,6 +36,151 @@ async function injectAdminNavLink() {
   } catch (error) {
     // ignore; nav still works for non-admin users
   }
+}
+
+async function initMobileAppMenuEntry() {
+  const profileMenu = document.getElementById('profileMenu');
+  if (!profileMenu) return;
+
+  let mobileAppButton = profileMenu.querySelector('[data-action="open-mobile-app-modal"]');
+  if (!mobileAppButton) {
+    mobileAppButton = document.createElement('button');
+    mobileAppButton.type = 'button';
+    mobileAppButton.dataset.action = 'open-mobile-app-modal';
+    mobileAppButton.textContent = 'Mobile app';
+
+    const preferencesLink = profileMenu.querySelector('a[href="/preferences"]');
+    if (preferencesLink) {
+      profileMenu.insertBefore(mobileAppButton, preferencesLink);
+    } else {
+      profileMenu.appendChild(mobileAppButton);
+    }
+  }
+
+  if (mobileAppButton.dataset.bound === '1') return;
+  mobileAppButton.dataset.bound = '1';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mobile-app-overlay is-hidden';
+  overlay.innerHTML = `
+    <div class="mobile-app-modal" role="dialog" aria-modal="true" aria-labelledby="mobileAppModalTitle">
+      <div class="mobile-app-modal-head">
+        <h3 id="mobileAppModalTitle">Open Library Lite</h3>
+        <button type="button" class="mobile-app-modal-close" aria-label="Close mobile app modal">×</button>
+      </div>
+      <p class="mobile-app-modal-subtitle" id="mobileAppModalSubtitle">Scan the QR code to download the Android lite app.</p>
+      <p class="mobile-app-modal-description" id="mobileAppModalDescription"></p>
+      <div class="mobile-app-modal-qr-wrap">
+        <img class="mobile-app-modal-qr is-hidden" id="mobileAppModalQr" alt="Open Library Lite QR code" />
+        <p class="mobile-app-modal-qr-empty is-hidden" id="mobileAppModalQrEmpty">QR code is not configured yet.</p>
+      </div>
+      <div class="mobile-app-modal-actions" id="mobileAppModalActions"></div>
+      <p class="mobile-app-modal-message" id="mobileAppModalMessage"></p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const closeButton = overlay.querySelector('.mobile-app-modal-close');
+  const modalTitle = overlay.querySelector('#mobileAppModalTitle');
+  const modalSubtitle = overlay.querySelector('#mobileAppModalSubtitle');
+  const modalDescription = overlay.querySelector('#mobileAppModalDescription');
+  const qrImage = overlay.querySelector('#mobileAppModalQr');
+  const qrEmpty = overlay.querySelector('#mobileAppModalQrEmpty');
+  const actions = overlay.querySelector('#mobileAppModalActions');
+  const message = overlay.querySelector('#mobileAppModalMessage');
+
+  const closeModal = () => {
+    overlay.classList.add('is-hidden');
+  };
+
+  function showMessage(text) {
+    if (!message) return;
+    message.textContent = text || '';
+  }
+
+  function renderMobileAppPage(page) {
+    const payload = page || {};
+    const body = payload.body || {};
+    const title = String(payload.title || '').trim() || 'Open Library Lite';
+    const subtitle = String(payload.subtitle || '').trim() || 'Scan the QR code to download the Android lite app.';
+    const description = String(body.description || '').trim();
+    const qrImageUrl = String(body.qrImageUrl || '').trim();
+    const qrAltText = String(body.qrAltText || '').trim() || 'Open Library Lite QR code';
+    const downloadUrl = String(body.downloadUrl || '').trim();
+    const downloadLabel = String(body.downloadLabel || '').trim() || 'Download APK';
+
+    if (modalTitle) modalTitle.textContent = title;
+    if (modalSubtitle) modalSubtitle.textContent = subtitle;
+    if (modalDescription) {
+      modalDescription.textContent = description || 'Open Library Lite helps you stay connected on mobile.';
+    }
+
+    if (actions) {
+      actions.innerHTML = '';
+      if (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://')) {
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'mobile-app-download-link';
+        link.textContent = downloadLabel;
+        actions.appendChild(link);
+      }
+    }
+
+    if (qrImage && qrEmpty) {
+      if (qrImageUrl.startsWith('http://') || qrImageUrl.startsWith('https://') || qrImageUrl.startsWith('/')) {
+        qrImage.src = qrImageUrl;
+        qrImage.alt = qrAltText;
+        qrImage.classList.remove('is-hidden');
+        qrEmpty.classList.add('is-hidden');
+      } else {
+        qrImage.classList.add('is-hidden');
+        qrImage.removeAttribute('src');
+        qrEmpty.classList.remove('is-hidden');
+      }
+    }
+  }
+
+  async function openModal() {
+    overlay.classList.remove('is-hidden');
+    showMessage('Loading mobile app details...');
+    try {
+      const response = await fetch('/api/site-pages/mobile-app');
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || !data.ok || !data.page) {
+        throw new Error(data && data.message ? data.message : 'Unable to load mobile app details.');
+      }
+      renderMobileAppPage(data.page);
+      showMessage('');
+    } catch (error) {
+      renderMobileAppPage(null);
+      showMessage(error.message || 'Unable to load mobile app details.');
+    }
+  }
+
+  mobileAppButton.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    profileMenu.classList.add('is-hidden');
+    await openModal();
+  });
+
+  if (closeButton) {
+    closeButton.addEventListener('click', closeModal);
+  }
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !overlay.classList.contains('is-hidden')) {
+      closeModal();
+    }
+  });
 }
 
 function escapeHtml(value) {
