@@ -43,7 +43,8 @@ class PersonalRepository {
 
   Future<void> deleteFolder(String folderId) async {
     if (folderId.trim().isEmpty) return;
-    await _apiClient.deleteJson('/api/personal/journal-folders/${folderId.trim()}');
+    await _apiClient
+        .deleteJson('/api/personal/journal-folders/${folderId.trim()}');
   }
 
   Future<void> createJournal({
@@ -218,6 +219,22 @@ class PersonalRepository {
 
   Future<ProfileData> fetchMyProfile() async {
     final response = await _apiClient.getJson('/api/profile');
+    final raw = response.data['profile'];
+    if (raw is! Map<String, dynamic>) {
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: 'Invalid profile response.',
+      );
+    }
+    return ProfileData.fromJson(raw);
+  }
+
+  Future<ProfileData> fetchProfileByUid(String uid) async {
+    final safeUid = uid.trim();
+    if (safeUid.isEmpty) {
+      throw ApiException(statusCode: 400, message: 'Missing user id.');
+    }
+    final response = await _apiClient.getJson('/api/profile/$safeUid');
     final raw = response.data['profile'];
     if (raw is! Map<String, dynamic>) {
       throw ApiException(

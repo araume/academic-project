@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/ui/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
+import '../../../core/notifications/push_notifications_service.dart';
 import '../../auth/presentation/session_controller.dart';
 import '../../chat/data/chat_repository.dart';
 import '../../chat/presentation/chat_screen.dart';
@@ -11,6 +12,8 @@ import '../../notifications/data/notifications_repository.dart';
 import '../../notifications/presentation/notifications_screen.dart';
 import '../../personal/data/personal_repository.dart';
 import '../../personal/presentation/personal_screen.dart';
+import '../../preferences/data/preferences_repository.dart';
+import '../../preferences/presentation/preferences_screen.dart';
 import '../data/home_repository.dart';
 import 'home_feed_screen.dart';
 
@@ -23,6 +26,8 @@ class HomeShell extends StatefulWidget {
     required this.notificationsRepository,
     required this.chatRepository,
     required this.personalRepository,
+    required this.preferencesRepository,
+    required this.pushNotificationsService,
   });
 
   final SessionController controller;
@@ -31,6 +36,8 @@ class HomeShell extends StatefulWidget {
   final NotificationsRepository notificationsRepository;
   final ChatRepository chatRepository;
   final PersonalRepository personalRepository;
+  final PreferencesRepository preferencesRepository;
+  final PushNotificationsService pushNotificationsService;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -44,11 +51,15 @@ class _HomeShellState extends State<HomeShell> {
     LibraryScreen(repository: widget.libraryRepository),
     ChatScreen(repository: widget.chatRepository),
     NotificationsScreen(repository: widget.notificationsRepository),
-    PersonalScreen(repository: widget.personalRepository),
+    PersonalScreen(
+      repository: widget.personalRepository,
+      pushNotificationsService: widget.pushNotificationsService,
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final bodyBottomInset = MediaQuery.of(context).padding.bottom + 90;
     final titles = <String>[
       'Home',
       'Library',
@@ -85,6 +96,38 @@ class _HomeShellState extends State<HomeShell> {
         ),
         actions: [
           Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Tooltip(
+              message: 'Preferences',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => PreferencesScreen(
+                        repository: widget.preferencesRepository,
+                      ),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: AppPalette.outline),
+                  ),
+                  child: const Icon(
+                    Icons.tune_rounded,
+                    size: 20,
+                    color: AppPalette.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.only(right: 12),
             child: Tooltip(
               message: 'Logout',
@@ -103,7 +146,8 @@ class _HomeShellState extends State<HomeShell> {
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(color: AppPalette.outline),
                   ),
-                  child: const Icon(Icons.logout, size: 20, color: Colors.white),
+                  child:
+                      const Icon(Icons.logout, size: 20, color: Colors.white),
                 ),
               ),
             ),
@@ -112,7 +156,10 @@ class _HomeShellState extends State<HomeShell> {
       ),
       extendBody: true,
       body: AppPageBackground(
-        child: IndexedStack(index: _selectedIndex, children: _tabs),
+        child: Padding(
+          padding: EdgeInsets.only(bottom: bodyBottomInset),
+          child: IndexedStack(index: _selectedIndex, children: _tabs),
+        ),
       ),
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),

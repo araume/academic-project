@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/notifications/push_notifications_service.dart';
 import '../../../core/ui/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../library/data/library_models.dart';
@@ -12,9 +13,14 @@ import '../data/personal_models.dart';
 import '../data/personal_repository.dart';
 
 class PersonalScreen extends StatelessWidget {
-  const PersonalScreen({super.key, required this.repository});
+  const PersonalScreen({
+    super.key,
+    required this.repository,
+    required this.pushNotificationsService,
+  });
 
   final PersonalRepository repository;
+  final PushNotificationsService pushNotificationsService;
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +47,10 @@ class PersonalScreen extends StatelessWidget {
             child: TabBarView(
               children: [
                 _JournalsTab(repository: repository),
-                _TasksTab(repository: repository),
+                _TasksTab(
+                  repository: repository,
+                  pushNotificationsService: pushNotificationsService,
+                ),
                 _AssistantTab(repository: repository),
                 _ProfileTab(repository: repository),
                 _PeopleTab(repository: repository),
@@ -450,9 +459,13 @@ class _JournalsTabState extends State<_JournalsTab> {
 }
 
 class _TasksTab extends StatefulWidget {
-  const _TasksTab({required this.repository});
+  const _TasksTab({
+    required this.repository,
+    required this.pushNotificationsService,
+  });
 
   final PersonalRepository repository;
+  final PushNotificationsService pushNotificationsService;
 
   @override
   State<_TasksTab> createState() => _TasksTabState();
@@ -480,6 +493,7 @@ class _TasksTabState extends State<_TasksTab> {
       setState(() {
         _tasks = tasks;
       });
+      await widget.pushNotificationsService.syncTaskDueReminders(tasks);
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -631,6 +645,7 @@ class _TasksTabState extends State<_TasksTab> {
             )
             .toList();
       });
+      await widget.pushNotificationsService.syncTaskDueReminders(_tasks);
     } on ApiException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -646,6 +661,7 @@ class _TasksTabState extends State<_TasksTab> {
       setState(() {
         _tasks = _tasks.where((item) => item.id != task.id).toList();
       });
+      await widget.pushNotificationsService.syncTaskDueReminders(_tasks);
     } on ApiException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -788,6 +804,7 @@ class _AssistantTabState extends State<_AssistantTab> {
   String? _activeProposalId;
   String? _contextDocUuid;
   String? _contextDocTitle;
+  bool _conversationsExpanded = true;
 
   @override
   void initState() {
@@ -893,6 +910,15 @@ class _AssistantTabState extends State<_AssistantTab> {
         SnackBar(content: Text(error.message)),
       );
     }
+  }
+
+  Future<void> _selectConversation(PersonalConversation conversation) async {
+    if (_activeConversationId == conversation.id) return;
+    setState(() {
+      _activeConversationId = conversation.id;
+      _activeProposalId = null;
+    });
+    await _loadMessages();
   }
 
   Future<void> _sendMessage() async {
@@ -1110,6 +1136,67 @@ class _AssistantTabState extends State<_AssistantTab> {
     );
   }
 
+  Widget _buildConversationList() {
+    if (_conversations.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(12, 0, 12, 8),
+        child: AppSectionCard(
+          child: Text('No conversations yet.'),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: AppSectionCard(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: ExpansionTile(
+          initiallyExpanded: _conversationsExpanded,
+          onExpansionChanged: (expanded) {
+            setState(() {
+              _conversationsExpanded = expanded;
+            });
+          },
+          title: Text('Conversations (${_conversations.length})'),
+          children: _conversations.map((conversation) {
+            final active = conversation.id == _activeConversationId;
+            final title = conversation.title.trim().isEmpty
+                ? 'New conversation'
+                : conversation.title.trim();
+
+            return ListTile(
+              selected: active,
+              selectedTileColor:
+                  AppPalette.navIndicator.withValues(alpha: 0.45),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              title: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+              subtitle: Text(
+                _formatDateTime(conversation.updatedAt),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => _selectConversation(conversation),
+              trailing: IconButton(
+                onPressed: () => _deleteConversation(conversation),
+                tooltip: 'Delete',
+                icon: const Icon(Icons.delete_outline, size: 20),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -1173,46 +1260,7 @@ class _AssistantTabState extends State<_AssistantTab> {
               ],
             ),
           ),
-        SizedBox(
-          height: 54,
-          child: _conversations.isEmpty
-              ? const Center(child: Text('No conversations yet.'))
-              : ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  scrollDirection: Axis.horizontal,
-                  itemBuilder: (context, index) {
-                    final conv = _conversations[index];
-                    final active = conv.id == _activeConversationId;
-                    return Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ChoiceChip(
-                          selected: active,
-                          label: Text(
-                            conv.title.isEmpty
-                                ? 'New conversation'
-                                : conv.title,
-                          ),
-                          onSelected: (_) async {
-                            setState(() {
-                              _activeConversationId = conv.id;
-                              _activeProposalId = null;
-                            });
-                            await _loadMessages();
-                          },
-                        ),
-                        IconButton(
-                          onPressed: () => _deleteConversation(conv),
-                          icon: const Icon(Icons.close, size: 18),
-                          tooltip: 'Delete',
-                        ),
-                      ],
-                    );
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(width: 6),
-                  itemCount: _conversations.length,
-                ),
-        ),
+        _buildConversationList(),
         if (_activeProposalId != null && _activeProposalId!.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
@@ -1764,6 +1812,17 @@ class _PeopleTabState extends State<_PeopleTab> {
     });
   }
 
+  Future<void> _openUserProfile(PersonSearchUser user) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _PersonProfileScreen(
+          repository: widget.repository,
+          user: user,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -1823,6 +1882,7 @@ class _PeopleTabState extends State<_PeopleTab> {
             margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               contentPadding: EdgeInsets.zero,
+              onTap: () => _openUserProfile(user),
               leading: CircleAvatar(
                 backgroundImage: (user.photoLink ?? '').isEmpty
                     ? null
@@ -1850,6 +1910,176 @@ class _PeopleTabState extends State<_PeopleTab> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _PersonProfileScreen extends StatefulWidget {
+  const _PersonProfileScreen({
+    required this.repository,
+    required this.user,
+  });
+
+  final PersonalRepository repository;
+  final PersonSearchUser user;
+
+  @override
+  State<_PersonProfileScreen> createState() => _PersonProfileScreenState();
+}
+
+class _PersonProfileScreenState extends State<_PersonProfileScreen> {
+  bool _loading = true;
+  String? _error;
+  ProfileData? _profile;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final profile =
+          await widget.repository.fetchProfileByUid(widget.user.uid);
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Unable to load profile.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fallbackName = widget.user.displayName.trim().isEmpty
+        ? 'Profile'
+        : widget.user.displayName.trim();
+    final resolvedName = (_profile?.displayName ?? '').trim();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(resolvedName.isEmpty ? fallbackName : resolvedName),
+      ),
+      body: AppPageBackground(
+        child: _buildBody(),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) {
+      return const AppLoadingState(label: 'Loading profile...');
+    }
+    if (_error != null) {
+      return AppErrorState(message: _error!, onRetry: _load);
+    }
+
+    final profile = _profile;
+    if (profile == null) {
+      return const AppEmptyState(
+        message: 'Profile not available.',
+        icon: Icons.person_off_outlined,
+      );
+    }
+
+    final sections = <Widget>[
+      Center(
+        child: CircleAvatar(
+          radius: 46,
+          backgroundImage: (profile.photoLink ?? '').isEmpty
+              ? null
+              : NetworkImage(profile.photoLink!),
+          child: (profile.photoLink ?? '').isEmpty
+              ? const Icon(Icons.person, size: 38)
+              : null,
+        ),
+      ),
+      const SizedBox(height: 10),
+      Text(
+        profile.displayName.isEmpty
+            ? widget.user.displayName
+            : profile.displayName,
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        profile.bio.isEmpty ? 'No bio provided.' : profile.bio,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: AppPalette.inkSoft,
+            ),
+      ),
+      const SizedBox(height: 14),
+      _buildField(
+          'Main course', profile.mainCourse ?? widget.user.course ?? ''),
+      _buildField('Sub courses', profile.subCourses.join(', ')),
+      _buildField('Facebook', profile.facebook),
+      _buildField('LinkedIn', profile.linkedin),
+      _buildField('Instagram', profile.instagram),
+      _buildField('GitHub', profile.github),
+      _buildField('Portfolio', profile.portfolio),
+    ];
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 14, 12, 16),
+        children: [
+          AppSectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: sections,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildField(String label, String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              '$label:',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppPalette.inkSoft,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+          Expanded(
+            child: Text(trimmed),
+          ),
+        ],
       ),
     );
   }

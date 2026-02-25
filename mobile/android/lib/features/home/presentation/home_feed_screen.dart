@@ -1,8 +1,15 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:mime/mime.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/ui/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
+import '../../library/data/library_models.dart';
 import '../data/home_models.dart';
 import '../data/home_repository.dart';
 
@@ -15,10 +22,23 @@ class HomeFeedScreen extends StatefulWidget {
   State<HomeFeedScreen> createState() => _HomeFeedScreenState();
 }
 
+class _PickedPostAttachment {
+  _PickedPostAttachment({
+    required this.name,
+    required this.bytes,
+    required this.mimeType,
+  });
+
+  final String name;
+  final List<int> bytes;
+  final String mimeType;
+}
+
 class _HomeFeedScreenState extends State<HomeFeedScreen> {
   static const int _pageSize = 20;
 
   final Set<String> _likingPostIds = <String>{};
+  final Set<String> _bookmarkingPostIds = <String>{};
   final ScrollController _scrollController = ScrollController();
 
   bool _loading = true;
@@ -126,14 +146,16 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
   Future<void> _openCreatePostDialog() async {
     final titleController = TextEditingController();
     final contentController = TextEditingController();
+    _PickedPostAttachment? pickedAttachment;
+    LibraryDocument? selectedLibraryDocument;
     var submitting = false;
     String? formError;
 
     await showDialog<void>(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (dialogContext, setDialogState) {
             Future<void> submit() async {
               final title = titleController.text.trim();
               final content = contentController.text.trim();
@@ -153,9 +175,14 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                 await widget.repository.createPost(
                   title: title,
                   content: content,
+                  attachmentBytes: pickedAttachment?.bytes,
+                  attachmentFilename: pickedAttachment?.name,
+                  attachmentMimeType: pickedAttachment?.mimeType,
+                  libraryDocumentUuid: selectedLibraryDocument?.uuid,
+                  libraryDocumentTitle: selectedLibraryDocument?.title,
                 );
-                if (!context.mounted) return;
-                Navigator.of(context).pop();
+                if (!dialogContext.mounted) return;
+                Navigator.of(dialogContext).pop();
                 await _loadPosts(refresh: true);
               } on ApiException catch (error) {
                 setDialogState(() {
@@ -195,12 +222,138 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                         prefixIcon: Icon(Icons.notes_rounded),
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Attachment (optional)',
+                        style: Theme.of(dialogContext).textTheme.labelMedium,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: submitting
+                              ? null
+                              : () async {
+                                  final picked = await _pickPostAttachment();
+                                  if (!dialogContext.mounted ||
+                                      picked == null) {
+                                    return;
+                                  }
+                                  setDialogState(() {
+                                    pickedAttachment = picked;
+                                    selectedLibraryDocument = null;
+                                    formError = null;
+                                  });
+                                },
+                          icon: const Icon(Icons.attach_file),
+                          label: const Text('Upload file'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: submitting
+                              ? null
+                              : () async {
+                                  final selected =
+                                      await _pickLibraryDocumentForPost();
+                                  if (!dialogContext.mounted ||
+                                      selected == null) {
+                                    return;
+                                  }
+                                  setDialogState(() {
+                                    selectedLibraryDocument = selected;
+                                    pickedAttachment = null;
+                                    formError = null;
+                                  });
+                                },
+                          icon: const Icon(Icons.menu_book_outlined),
+                          label: const Text('Open Library'),
+                        ),
+                      ],
+                    ),
+                    if (pickedAttachment != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color: AppPalette.stone,
+                          border: Border.all(color: AppPalette.outlineSoft),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.insert_drive_file_outlined,
+                                size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                pickedAttachment!.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: submitting
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        pickedAttachment = null;
+                                      });
+                                    },
+                              child: const Text('Remove'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    if (selectedLibraryDocument != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color: AppPalette.stone,
+                          border: Border.all(color: AppPalette.outlineSoft),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.description_outlined, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                selectedLibraryDocument!.title.trim().isEmpty
+                                    ? 'Open Library document'
+                                    : selectedLibraryDocument!.title.trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: submitting
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        selectedLibraryDocument = null;
+                                      });
+                                    },
+                              child: const Text('Remove'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     if (formError != null) ...[
                       const SizedBox(height: 8),
                       Text(
                         formError!,
                         style: TextStyle(
-                            color: Theme.of(context).colorScheme.error),
+                          color: Theme.of(dialogContext).colorScheme.error,
+                        ),
                       ),
                     ],
                   ],
@@ -208,8 +361,9 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed:
-                      submitting ? null : () => Navigator.of(context).pop(),
+                  onPressed: submitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
@@ -234,6 +388,202 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
 
     titleController.dispose();
     contentController.dispose();
+  }
+
+  Future<_PickedPostAttachment?> _pickPostAttachment() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const <String>[
+        'jpg',
+        'jpeg',
+        'png',
+        'gif',
+        'webp',
+        'bmp',
+        'mp4',
+        'mov',
+        'webm',
+        'mkv',
+        'avi',
+      ],
+      allowMultiple: false,
+      withData: true,
+    );
+
+    if (result == null || result.files.isEmpty) {
+      return null;
+    }
+
+    final file = result.files.first;
+    var bytes = file.bytes;
+    if (bytes == null && file.path != null && file.path!.isNotEmpty) {
+      bytes = await File(file.path!).readAsBytes();
+    }
+    if (bytes == null || bytes.isEmpty) {
+      if (mounted) {
+        showAppSnackBar(context, 'Could not read selected file.',
+            isError: true);
+      }
+      return null;
+    }
+
+    final fallbackMime = _inferMimeTypeFromName(file.name);
+    final detectedMime = (lookupMimeType(
+              file.name,
+              headerBytes: bytes.take(16).toList(),
+            ) ??
+            fallbackMime)
+        .trim()
+        .toLowerCase();
+    if (!detectedMime.startsWith('image/') &&
+        !detectedMime.startsWith('video/')) {
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          'Unsupported file type. Upload an image or video instead.',
+          isError: true,
+        );
+      }
+      return null;
+    }
+
+    return _PickedPostAttachment(
+      name: file.name.trim().isEmpty ? 'attachment.bin' : file.name.trim(),
+      bytes: bytes,
+      mimeType: detectedMime,
+    );
+  }
+
+  String _inferMimeTypeFromName(String filename) {
+    final parts = filename.toLowerCase().split('.');
+    final ext = parts.length > 1 ? parts.last : '';
+    return switch (ext) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      'bmp' => 'image/bmp',
+      'mp4' => 'video/mp4',
+      'mov' => 'video/quicktime',
+      'webm' => 'video/webm',
+      'mkv' => 'video/x-matroska',
+      'avi' => 'video/x-msvideo',
+      _ => '',
+    };
+  }
+
+  Future<LibraryDocument?> _pickLibraryDocumentForPost() async {
+    final searchController = TextEditingController();
+    List<LibraryDocument> docs = <LibraryDocument>[];
+    String? localError;
+    bool loadingDocs = true;
+    bool initialized = false;
+
+    Future<void> loadDocs(StateSetter setDialogState) async {
+      setDialogState(() {
+        loadingDocs = true;
+        localError = null;
+      });
+      try {
+        final result = await widget.repository.fetchLibraryDocumentsForPicker(
+          query: searchController.text,
+        );
+        setDialogState(() {
+          docs = result;
+        });
+      } on ApiException catch (error) {
+        setDialogState(() {
+          localError = error.message;
+        });
+      } catch (_) {
+        setDialogState(() {
+          localError = 'Unable to load documents.';
+        });
+      } finally {
+        setDialogState(() {
+          loadingDocs = false;
+        });
+      }
+    }
+
+    final selected = await showDialog<LibraryDocument>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            if (!initialized) {
+              initialized = true;
+              Future<void>.microtask(() => loadDocs(setDialogState));
+            }
+            return AlertDialog(
+              title: const Text('Select Open Library document'),
+              content: SizedBox(
+                width: 460,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      decoration: const InputDecoration(
+                        hintText: 'Search documents',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onSubmitted: (_) => loadDocs(setDialogState),
+                    ),
+                    const SizedBox(height: 10),
+                    if (loadingDocs) const LinearProgressIndicator(),
+                    if (localError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(localError!),
+                      ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 280,
+                      child: docs.isEmpty
+                          ? const Center(child: Text('No documents found.'))
+                          : ListView.builder(
+                              itemCount: docs.length,
+                              itemBuilder: (context, index) {
+                                final doc = docs[index];
+                                return ListTile(
+                                  title: Text(
+                                    doc.title.trim().isEmpty
+                                        ? 'Untitled document'
+                                        : doc.title.trim(),
+                                  ),
+                                  subtitle: Text(
+                                    '${doc.course} • ${doc.subject}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(doc),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => loadDocs(setDialogState),
+                  child: const Text('Search'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    searchController.dispose();
+    return selected;
   }
 
   Future<void> _toggleLike(FeedPost post) async {
@@ -290,6 +640,132 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
     }
   }
 
+  Future<void> _toggleBookmark(FeedPost post) async {
+    if (_bookmarkingPostIds.contains(post.id)) return;
+
+    setState(() {
+      _bookmarkingPostIds.add(post.id);
+      _posts = _posts
+          .map(
+            (item) => item.id == post.id
+                ? item.copyWith(bookmarked: !item.bookmarked)
+                : item,
+          )
+          .toList();
+    });
+
+    try {
+      await widget.repository.toggleBookmark(
+        postId: post.id,
+        currentlyBookmarked: post.bookmarked,
+      );
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        post.bookmarked ? 'Bookmark removed.' : 'Post bookmarked.',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _posts = _posts
+            .map(
+              (item) => item.id == post.id
+                  ? item.copyWith(bookmarked: post.bookmarked)
+                  : item,
+            )
+            .toList();
+      });
+      showAppSnackBar(context, 'Failed to update bookmark.', isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bookmarkingPostIds.remove(post.id);
+        });
+      }
+    }
+  }
+
+  Future<void> _sharePost(FeedPost post) async {
+    final link = widget.repository.buildPostShareLink(post.id);
+    try {
+      await Clipboard.setData(ClipboardData(text: link));
+      if (!mounted) return;
+      showAppSnackBar(context, 'Post link copied.');
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(context, 'Unable to copy link.', isError: true);
+    }
+  }
+
+  Future<void> _reportPost(FeedPost post) async {
+    try {
+      await widget.repository.reportPost(postId: post.id);
+      if (!mounted) return;
+      showAppSnackBar(context, 'Report submitted. Thank you.');
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      showAppSnackBar(context, error.message, isError: true);
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(context, 'Unable to report post.', isError: true);
+    }
+  }
+
+  Future<void> _openAttachment(FeedPost post) async {
+    final attachment = post.attachment;
+    if (attachment == null) return;
+
+    if (attachment.normalizedType == 'library_doc') {
+      await _openLibraryAttachment(attachment);
+      return;
+    }
+    await _openAttachmentLink(attachment.link);
+  }
+
+  Future<void> _openLibraryAttachment(FeedAttachment attachment) async {
+    final uuid = (attachment.libraryDocumentUuid ?? '').trim();
+    if (uuid.isEmpty) {
+      showAppSnackBar(context, 'Invalid Open Library document.', isError: true);
+      return;
+    }
+
+    try {
+      final link = await widget.repository.fetchLibraryDocumentLink(uuid);
+      if (!mounted) return;
+      if ((link ?? '').isEmpty) {
+        showAppSnackBar(context, 'This document is unavailable.',
+            isError: true);
+        return;
+      }
+      await _openAttachmentLink(link);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      showAppSnackBar(context, error.message, isError: true);
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(context, 'Unable to open document.', isError: true);
+    }
+  }
+
+  Future<void> _openAttachmentLink(String? rawLink) async {
+    final link = (rawLink ?? '').trim();
+    if (link.isEmpty) {
+      showAppSnackBar(context, 'Attachment link unavailable.', isError: true);
+      return;
+    }
+
+    final uri = Uri.tryParse(link);
+    if (uri == null) {
+      showAppSnackBar(context, 'Invalid attachment URL.', isError: true);
+      return;
+    }
+
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      showAppSnackBar(context, 'Could not open attachment.', isError: true);
+    }
+  }
+
   Future<void> _openComments(FeedPost post) async {
     final count = await showModalBottomSheet<int>(
       context: context,
@@ -310,6 +786,159 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
               item.id == post.id ? item.copyWith(commentsCount: count) : item)
           .toList();
     });
+  }
+
+  Future<void> _handleMenuSelection(FeedPost post, String value) async {
+    switch (value) {
+      case 'bookmark':
+        await _toggleBookmark(post);
+        break;
+      case 'share':
+        await _sharePost(post);
+        break;
+      case 'report':
+        await _reportPost(post);
+        break;
+    }
+  }
+
+  Widget _buildPostHeader(FeedPost post) {
+    final name =
+        post.uploaderName.trim().isEmpty ? 'Member' : post.uploaderName;
+    final image = (post.uploaderPhotoLink ?? '').trim();
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 20,
+          backgroundColor: AppPalette.stone,
+          foregroundImage: image.isEmpty ? null : NetworkImage(image),
+          child: image.isEmpty ? const Icon(Icons.person_outline) : null,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _formatDate(post.uploadDate),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppPalette.inkSoft,
+                    ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuButton<String>(
+          tooltip: 'Post actions',
+          onSelected: (value) => _handleMenuSelection(post, value),
+          itemBuilder: (context) => [
+            PopupMenuItem<String>(
+              value: 'bookmark',
+              child:
+                  Text(post.bookmarked ? 'Remove bookmark' : 'Bookmark post'),
+            ),
+            const PopupMenuItem<String>(
+              value: 'share',
+              child: Text('Share link'),
+            ),
+            const PopupMenuItem<String>(
+              value: 'report',
+              child: Text('Report post'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAttachmentActionChip({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget? _buildPostAttachment(FeedPost post) {
+    final attachment = post.attachment;
+    if (attachment == null) {
+      return null;
+    }
+
+    final type = attachment.normalizedType;
+    final hasLink = (attachment.link ?? '').trim().isNotEmpty;
+    final title = (attachment.title ?? '').trim();
+    final filename = (attachment.filename ?? '').trim();
+    final label = title.isNotEmpty
+        ? title
+        : (filename.isNotEmpty ? filename : 'Open attachment');
+
+    if (type == 'image' && hasLink) {
+      final imageUrl = attachment.link!.trim();
+      return GestureDetector(
+        onTap: () => _openAttachmentLink(imageUrl),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: AspectRatio(
+            aspectRatio: 16 / 10,
+            child: Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, _, __) {
+                return Container(
+                  color: AppPalette.stone,
+                  alignment: Alignment.center,
+                  child: const Text('Unable to load image attachment'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (type == 'video') {
+      return _buildAttachmentActionChip(
+        icon: Icons.videocam_outlined,
+        label: label,
+        onPressed: () => _openAttachment(post),
+      );
+    }
+
+    if (type == 'library_doc') {
+      return _buildAttachmentActionChip(
+        icon: Icons.description_outlined,
+        label: title.isEmpty ? 'Open Library document' : title,
+        onPressed: () => _openAttachment(post),
+      );
+    }
+
+    if (type == 'link' || hasLink) {
+      return _buildAttachmentActionChip(
+        icon: Icons.link_rounded,
+        label: label,
+        onPressed: () => _openAttachment(post),
+      );
+    }
+
+    return null;
   }
 
   @override
@@ -355,7 +984,8 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                         colors: [AppPalette.primary, AppPalette.accent],
                       ),
                     ),
-                    child: const Icon(Icons.edit_note_rounded, color: Colors.white),
+                    child: const Icon(Icons.edit_note_rounded,
+                        color: Colors.white),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -381,12 +1011,15 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
 
           final post = _posts[index - 1];
           final isLiking = _likingPostIds.contains(post.id);
+          final attachment = _buildPostAttachment(post);
 
           return AppSectionCard(
             margin: const EdgeInsets.only(bottom: 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _buildPostHeader(post),
+                const SizedBox(height: 10),
                 Text(
                   post.title.isEmpty ? 'Untitled post' : post.title,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -398,13 +1031,10 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
                   post.content,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  '${post.uploaderName} • ${_formatDate(post.uploadDate)}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppPalette.inkSoft,
-                      ),
-                ),
+                if (attachment != null) ...[
+                  const SizedBox(height: 10),
+                  attachment,
+                ],
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 8,

@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
 
+import '../../features/personal/data/personal_models.dart';
 import '../../features/notifications/data/notifications_repository.dart';
 
 @pragma('vm:entry-point')
@@ -19,6 +22,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 class PushNotificationsService {
   PushNotificationsService({required NotificationsRepository repository})
       : _repository = repository;
+
+  static const String _defaultChannelId = 'mybuddy_default';
+  static const String _defaultChannelName = 'MyBuddy Notifications';
+  static const String _defaultChannelDescription =
+      'Chat and activity notifications';
+  static const String _taskChannelId = 'mybuddy_task_due';
+  static const String _taskChannelName = 'MyBuddy Task Reminders';
+  static const String _taskChannelDescription = 'Task due date reminders';
+  static const String _taskPayloadPrefix = 'task_due:';
 
   final NotificationsRepository _repository;
   FirebaseMessaging? _messaging;
@@ -103,6 +115,56 @@ class PushNotificationsService {
     await _foregroundMessageSubscription?.cancel();
   }
 
+  Future<void> syncTaskDueReminders(List<PersonalTask> tasks) async {
+    await _readyCompleter.future;
+    try {
+      final pending = await _localNotifications.pendingNotificationRequests();
+      for (final request in pending) {
+        final payload = (request.payload ?? '').trim();
+        if (payload.startsWith(_taskPayloadPrefix)) {
+          await _localNotifications.cancel(request.id);
+        }
+      }
+
+      final now = DateTime.now();
+      for (final task in tasks) {
+        final reminderAt = _resolveReminderTime(task);
+        if (reminderAt == null || !reminderAt.isAfter(now)) {
+          continue;
+        }
+
+        final dueAt = _parseDueDate(task.dueDate);
+        final leadHours = _leadTimeForPriority(task.priority).inHours;
+        final priorityLabel = _normalizePriority(task.priority).toUpperCase();
+        final dueLabel = dueAt == null
+            ? (task.dueDate ?? '').trim()
+            : _formatDateTime(dueAt);
+
+        await _localNotifications.zonedSchedule(
+          _taskReminderNotificationId(task.id),
+          'Task due soon',
+          '$priorityLabel priority | ${task.title} | Due $dueLabel (in $leadHours h)',
+          tz.TZDateTime.from(reminderAt.toUtc(), tz.UTC),
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              _taskChannelId,
+              _taskChannelName,
+              channelDescription: _taskChannelDescription,
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          payload: '$_taskPayloadPrefix${task.id}',
+        );
+      }
+    } catch (error) {
+      debugPrint('Task reminder sync failed: $error');
+    }
+  }
+
   Future<void> _requestPermission(FirebaseMessaging messaging) async {
     try {
       await messaging.requestPermission(
@@ -131,14 +193,21 @@ class PushNotificationsService {
   }
 
   Future<void> _configureLocalNotifications() async {
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidSettings);
     await _localNotifications.initialize(initSettings);
 
     const channel = AndroidNotificationChannel(
-      'mybuddy_default',
-      'MyBuddy Notifications',
-      description: 'Chat and activity notifications',
+      _defaultChannelId,
+      _defaultChannelName,
+      description: _defaultChannelDescription,
+      importance: Importance.high,
+    );
+    const taskChannel = AndroidNotificationChannel(
+      _taskChannelId,
+      _taskChannelName,
+      description: _taskChannelDescription,
       importance: Importance.high,
     );
 
@@ -146,6 +215,10 @@ class PushNotificationsService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(taskChannel);
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
@@ -157,9 +230,9 @@ class PushNotificationsService {
 
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
-        'mybuddy_default',
-        'MyBuddy Notifications',
-        channelDescription: 'Chat and activity notifications',
+        _defaultChannelId,
+        _defaultChannelName,
+        channelDescription: _defaultChannelDescription,
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -177,9 +250,8 @@ class PushNotificationsService {
     try {
       await _repository.registerPushToken(
         token: token,
-        platform: defaultTargetPlatform == TargetPlatform.iOS
-            ? 'ios'
-            : 'android',
+        platform:
+            defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
       );
     } catch (error) {
       debugPrint('Push token registration failed: $error');
@@ -192,5 +264,61 @@ class PushNotificationsService {
     } catch (error) {
       debugPrint('Push token removal failed: $error');
     }
+  }
+
+  DateTime? _resolveReminderTime(PersonalTask task) {
+    if (task.id.trim().isEmpty) return null;
+    final status = task.status.trim().toLowerCase();
+    if (status == 'complete') return null;
+
+    final dueAt = _parseDueDate(task.dueDate);
+    if (dueAt == null) return null;
+
+    return dueAt.subtract(_leadTimeForPriority(task.priority));
+  }
+
+  Duration _leadTimeForPriority(String priority) {
+    return switch (_normalizePriority(priority)) {
+      'high' => const Duration(hours: 48),
+      'urgent' => const Duration(hours: 48),
+      'low' => const Duration(hours: 24),
+      _ => const Duration(hours: 36),
+    };
+  }
+
+  String _normalizePriority(String priority) => priority.trim().toLowerCase();
+
+  DateTime? _parseDueDate(String? raw) {
+    final input = (raw ?? '').trim();
+    if (input.isEmpty) return null;
+
+    final parsed = DateTime.tryParse(input);
+    if (parsed == null) return null;
+
+    final local = parsed.isUtc ? parsed.toLocal() : parsed;
+    final looksDateOnly = RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(input);
+    if (looksDateOnly) {
+      return DateTime(local.year, local.month, local.day, 23, 59);
+    }
+    return local;
+  }
+
+  int _taskReminderNotificationId(String taskId) {
+    final bytes = utf8.encode(taskId.trim());
+    var hash = 0;
+    for (final value in bytes) {
+      hash = (hash * 31 + value) & 0x7fffffff;
+    }
+    return 900000000 + (hash % 50000000);
+  }
+
+  String _formatDateTime(DateTime value) {
+    final local = value.toLocal();
+    final year = local.year.toString().padLeft(4, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
   }
 }

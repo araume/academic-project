@@ -14,6 +14,7 @@ import 'features/home/data/home_repository.dart';
 import 'features/library/data/library_repository.dart';
 import 'features/notifications/data/notifications_repository.dart';
 import 'features/personal/data/personal_repository.dart';
+import 'features/preferences/data/preferences_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +56,7 @@ void main() {
           NotificationsRepository(apiClient: apiClient);
       final chatRepository = ChatRepository(apiClient: apiClient);
       final personalRepository = PersonalRepository(apiClient: apiClient);
+      final preferencesRepository = PreferencesRepository(apiClient: apiClient);
       final pushNotificationsService = PushNotificationsService(
         repository: notificationsRepository,
       );
@@ -67,6 +69,7 @@ void main() {
           notificationsRepository: notificationsRepository,
           chatRepository: chatRepository,
           personalRepository: personalRepository,
+          preferencesRepository: preferencesRepository,
           pushNotificationsService: pushNotificationsService,
         ),
       );

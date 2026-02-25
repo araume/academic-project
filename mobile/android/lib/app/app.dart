@@ -11,6 +11,7 @@ import '../features/home/presentation/home_shell.dart';
 import '../features/library/data/library_repository.dart';
 import '../features/notifications/data/notifications_repository.dart';
 import '../features/personal/data/personal_repository.dart';
+import '../features/preferences/data/preferences_repository.dart';
 
 class ThesisLiteApp extends StatefulWidget {
   const ThesisLiteApp({
@@ -21,6 +22,7 @@ class ThesisLiteApp extends StatefulWidget {
     required this.notificationsRepository,
     required this.chatRepository,
     required this.personalRepository,
+    required this.preferencesRepository,
     required this.pushNotificationsService,
   });
 
@@ -30,6 +32,7 @@ class ThesisLiteApp extends StatefulWidget {
   final NotificationsRepository notificationsRepository;
   final ChatRepository chatRepository;
   final PersonalRepository personalRepository;
+  final PreferencesRepository preferencesRepository;
   final PushNotificationsService pushNotificationsService;
 
   @override
@@ -86,6 +89,8 @@ class _ThesisLiteAppState extends State<ThesisLiteApp> {
                 notificationsRepository: widget.notificationsRepository,
                 chatRepository: widget.chatRepository,
                 personalRepository: widget.personalRepository,
+                preferencesRepository: widget.preferencesRepository,
+                pushNotificationsService: widget.pushNotificationsService,
               ),
           },
         );
