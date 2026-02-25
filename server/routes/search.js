@@ -262,6 +262,7 @@ async function searchUsers({ viewer, query, limit }) {
     values.push(`%${query.toLowerCase()}%`);
     where.push(`(
       lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) LIKE $${values.length}
+      OR lower(COALESCE(a.username, '')) LIKE $${values.length}
       OR lower(COALESCE(a.course, '')) LIKE $${values.length}
       OR lower(COALESCE(p.bio, '')) LIKE $${values.length}
     )`);
@@ -299,6 +300,7 @@ async function searchUsers({ viewer, query, limit }) {
     result.rows.map(async (row) => ({
       uid: row.uid,
       displayName: row.profile_display_name || row.account_display_name || row.username || row.email || 'Member',
+      username: row.username || '',
       bio: row.bio || null,
       course: row.course || null,
       photoLink: await signIfNeeded(row.photo_link),

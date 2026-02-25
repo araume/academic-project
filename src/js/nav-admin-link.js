@@ -407,7 +407,9 @@ async function initGlobalSearchModal() {
       const title = document.createElement('strong');
       title.textContent = item.displayName || 'Member';
       const subtitle = document.createElement('span');
-      subtitle.textContent = `${item.course || 'No course'}${item.relation && item.relation.isFollowing ? ' • Following' : ''}`;
+      const handle = item.username ? `@${item.username}` : '';
+      const courseLabel = item.course || 'No course';
+      subtitle.textContent = `${handle ? `${handle} • ` : ''}${courseLabel}${item.relation && item.relation.isFollowing ? ' • Following' : ''}`;
       const excerpt = document.createElement('small');
       excerpt.textContent = item.bio || '';
       body.appendChild(title);

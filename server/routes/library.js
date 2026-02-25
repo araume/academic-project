@@ -99,6 +99,10 @@ function getFileExtension(filenameOrPath) {
   return path.extname(normalized).toLowerCase();
 }
 
+function escapePostgresRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function classifyContextDocument(document = {}) {
   const extension = getFileExtension(document.filename || document.link || '');
   if (extension === '.pdf') return { type: 'pdf', mimeType: 'application/pdf' };
@@ -507,10 +511,24 @@ router.get('/api/library/documents', async (req, res) => {
   const countValues = [];
 
   if (q) {
-    countValues.push(`%${q}%`);
-    filters.push(
-      `(d.title ILIKE $${countValues.length} OR d.subject ILIKE $${countValues.length})`
-    );
+    const terms = q
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter(Boolean);
+
+    const termFilters = [];
+    terms.forEach((term) => {
+      const escaped = escapePostgresRegex(term);
+      if (!escaped) return;
+      countValues.push(`\\m${escaped}\\M`);
+      termFilters.push(
+        `(COALESCE(d.title, '') ~* $${countValues.length} OR COALESCE(d.subject, '') ~* $${countValues.length})`
+      );
+    });
+
+    if (termFilters.length) {
+      filters.push(`(${termFilters.join(' AND ')})`);
+    }
   }
 
   if (course && course !== 'all') {

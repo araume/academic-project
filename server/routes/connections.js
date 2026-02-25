@@ -919,6 +919,7 @@ router.get('/api/connections/search', async (req, res) => {
       values.push(`%${query.toLowerCase()}%`);
       where.push(`(
         lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) LIKE $${values.length}
+        OR lower(COALESCE(a.username, '')) LIKE $${values.length}
         OR lower(COALESCE(a.course, '')) LIKE $${values.length}
       )`);
     }
@@ -988,6 +989,7 @@ router.get('/api/connections/search', async (req, res) => {
       listResult.rows.map(async (row) => ({
         uid: row.uid,
         displayName: buildDisplayName(row),
+        username: row.username || '',
         course: row.course || null,
         bio: row.bio || null,
         photoLink: await signPhotoIfNeeded(row.photo_link),
@@ -1076,6 +1078,7 @@ router.get('/api/connections/follow-requests', async (req, res) => {
         user: {
           uid: row.uid,
           displayName: buildDisplayName(row),
+          username: row.username || '',
           course: row.course || null,
           bio: row.bio || null,
           photoLink: await signPhotoIfNeeded(row.photo_link),
@@ -1670,6 +1673,7 @@ router.get('/api/connections/list', async (req, res) => {
       listResult.rows.map(async (row) => ({
         uid: row.uid,
         displayName: buildDisplayName(row),
+        username: row.username || '',
         course: row.course || null,
         bio: row.bio || null,
         photoLink: await signPhotoIfNeeded(row.photo_link),
@@ -1758,6 +1762,7 @@ router.get('/api/connections/chat-requests', async (req, res) => {
         user: {
           uid: row.uid,
           displayName: buildDisplayName(row),
+          username: row.username || '',
           course: row.course || null,
           bio: row.bio || null,
           photoLink: await signPhotoIfNeeded(row.photo_link),

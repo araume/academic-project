@@ -318,7 +318,8 @@ function renderUserCards() {
 
     const meta = document.createElement('p');
     meta.className = 'person-meta';
-    meta.textContent = `${user.course || 'No course set'} • ${relationLabel(user.relation)}`;
+    const usernameHandle = user.username ? `@${user.username}` : '';
+    meta.textContent = `${usernameHandle ? `${usernameHandle} • ` : ''}${user.course || 'No course set'} • ${relationLabel(user.relation)}`;
 
     const presenceInfo = describePresence(user.presence);
     const presence = document.createElement('div');
@@ -427,7 +428,10 @@ function renderRequests() {
       )
     );
     const meta = document.createElement('p');
-    meta.textContent = request.user.course || 'No course';
+    const requestUsernameHandle = request.user && request.user.username
+      ? `@${request.user.username}`
+      : '';
+    meta.textContent = `${requestUsernameHandle ? `${requestUsernameHandle} • ` : ''}${request.user.course || 'No course'}`;
 
     metaWrap.appendChild(title);
     metaWrap.appendChild(meta);
