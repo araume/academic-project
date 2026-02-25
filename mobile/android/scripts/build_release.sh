@@ -49,6 +49,13 @@ if [[ ! -f "$KEY_PROPERTIES" ]]; then
   exit 1
 fi
 
+GOOGLE_SERVICES_JSON="$ANDROID_DIR/app/google-services.json"
+if [[ ! -f "$GOOGLE_SERVICES_JSON" ]]; then
+  echo "Error: $GOOGLE_SERVICES_JSON not found."
+  echo "Push notifications require Firebase Android config."
+  exit 1
+fi
+
 STORE_FILE_RAW="$(grep -E '^storeFile=' "$KEY_PROPERTIES" | head -n1 | cut -d'=' -f2- | xargs)"
 if [[ -z "$STORE_FILE_RAW" ]]; then
   echo "Error: storeFile is missing in key.properties"

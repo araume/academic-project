@@ -7,6 +7,15 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../../features/notifications/data/notifications_repository.dart';
 
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // Ignore: foreground service already handles missing Firebase configuration gracefully.
+  }
+}
+
 class PushNotificationsService {
   PushNotificationsService({required NotificationsRepository repository})
       : _repository = repository;
@@ -23,22 +32,25 @@ class PushNotificationsService {
   bool _pushEnabled = false;
   bool _isAuthenticated = false;
   String? _activeToken;
+  final Completer<void> _readyCompleter = Completer<void>();
 
   Future<void> initialize() async {
-    if (_initialized) return;
+    if (_initialized) {
+      await _readyCompleter.future;
+      return;
+    }
     _initialized = true;
 
     try {
-      await Firebase.initializeApp();
+      await _configureLocalNotifications();
     } catch (error) {
-      debugPrint('Push disabled: Firebase not configured. $error');
-      _pushEnabled = false;
-      return;
+      debugPrint('Local notification setup failed: $error');
     }
 
     try {
+      await Firebase.initializeApp();
       _messaging = FirebaseMessaging.instance;
-      await _configureLocalNotifications();
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
       _foregroundMessageSubscription = FirebaseMessaging.onMessage.listen(
         _onForegroundMessage,
       );
@@ -52,11 +64,21 @@ class PushNotificationsService {
     } catch (error) {
       debugPrint('Push disabled: setup failed. $error');
       _pushEnabled = false;
+    } finally {
+      if (!_readyCompleter.isCompleted) {
+        _readyCompleter.complete();
+      }
     }
   }
 
   Future<void> syncAuthState(bool isAuthenticated) async {
     _isAuthenticated = isAuthenticated;
+    await _readyCompleter.future;
+
+    if (isAuthenticated) {
+      await _requestSystemNotificationPermission();
+    }
+
     final messaging = _messaging;
     if (!_pushEnabled || messaging == null) return;
 
@@ -94,6 +116,17 @@ class PushNotificationsService {
       );
     } catch (error) {
       debugPrint('Push permission request failed: $error');
+    }
+  }
+
+  Future<void> _requestSystemNotificationPermission() async {
+    try {
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+    } catch (error) {
+      debugPrint('Android notification permission request failed: $error');
     }
   }
 

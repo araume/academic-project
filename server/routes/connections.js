@@ -578,6 +578,8 @@ async function createDirectThread(creatorUid, otherUid) {
 
     const existingId = await findExistingDirectThread(creatorUid, otherUid, client);
     if (existingId) {
+      await restoreConversationForUser(existingId, creatorUid, client);
+      await restoreConversationForUser(existingId, otherUid, client);
       await client.query('COMMIT');
       return existingId;
     }
@@ -599,14 +601,8 @@ async function createDirectThread(creatorUid, otherUid) {
        DO UPDATE SET status = 'active', left_at = NULL`,
       [threadId, creatorUid, otherUid]
     );
-    await client.query(
-      `INSERT INTO chat_thread_user_state (thread_id, user_uid)
-       VALUES
-         ($1, $2),
-         ($1, $3)
-       ON CONFLICT (thread_id, user_uid) DO NOTHING`,
-      [threadId, creatorUid, otherUid]
-    );
+    await restoreConversationForUser(threadId, creatorUid, client);
+    await restoreConversationForUser(threadId, otherUid, client);
 
     await client.query('COMMIT');
     return threadId;
@@ -678,6 +674,21 @@ async function ensureConversationUserState(threadId, userUid, client = pool) {
     `INSERT INTO chat_thread_user_state (thread_id, user_uid)
      VALUES ($1, $2)
      ON CONFLICT (thread_id, user_uid) DO NOTHING`,
+    [threadId, userUid]
+  );
+}
+
+async function restoreConversationForUser(threadId, userUid, client = pool) {
+  await ensureConversationUserState(threadId, userUid, client);
+  await client.query(
+    `UPDATE chat_thread_user_state
+     SET
+       deleted_at = NULL,
+       is_archived = false,
+       manual_unread = false,
+       updated_at = NOW()
+     WHERE thread_id = $1
+       AND user_uid = $2`,
     [threadId, userUid]
   );
 }
@@ -1787,6 +1798,7 @@ router.post('/api/connections/chat/start', async (req, res) => {
 
     const existingThreadId = await findExistingDirectThread(req.user.uid, targetUid);
     if (existingThreadId) {
+      await restoreConversationForUser(existingThreadId, req.user.uid);
       return res.json({ ok: true, state: 'existing', requiresApproval: false, threadId: existingThreadId });
     }
 
