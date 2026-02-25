@@ -4,10 +4,11 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { deleteSessionsForUid } = require('../auth/sessionStore');
 const { getMongoDb } = require('../db/mongo');
-const { deleteFromStorage } = require('../services/storage');
+const { deleteFromStorage, getSignedUrl, normalizeStorageKey } = require('../services/storage');
 const { ensureAuditReady } = require('../services/auditLog');
 
 const router = express.Router();
+const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
 
 function sanitizeText(value, maxLen = 300) {
   if (typeof value !== 'string') return '';
@@ -361,6 +362,32 @@ function normalizeSitePageResult(slug, row) {
   };
 }
 
+async function resolveMobileAppBodyAssets(page) {
+  if (!page || page.slug !== 'mobile-app') return page;
+  const body = page.body && typeof page.body === 'object' ? { ...page.body } : {};
+  const rawQr = typeof body.qrImageUrl === 'string' ? body.qrImageUrl.trim() : '';
+  if (!rawQr) {
+    return { ...page, body };
+  }
+
+  try {
+    const normalized = normalizeStorageKey(rawQr);
+    const isHttp = /^https?:\/\//i.test(rawQr);
+    const shouldSign = Boolean(normalized) && (!isHttp || normalized !== rawQr);
+    if (!shouldSign) {
+      return { ...page, body };
+    }
+    body.qrImageUrl = await getSignedUrl(normalized, SIGNED_TTL);
+    return { ...page, body };
+  } catch (error) {
+    console.warn(
+      'Mobile app QR signing failed; returning raw URL:',
+      error && error.message ? error.message : error
+    );
+    return { ...page, body };
+  }
+}
+
 router.get('/api/admin/me', requireAuthApi, async (req, res) => {
   try {
     await ensureAuditReady();
@@ -395,7 +422,7 @@ router.get('/api/site-pages/:slug', requireAuthApi, async (req, res) => {
        LIMIT 1`,
       [slug]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Site page fetch failed:', error);
@@ -1751,7 +1778,7 @@ router.get('/api/admin/site-pages/:slug', async (req, res) => {
        LIMIT 1`,
       [slug]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Admin site page fetch failed:', error);
@@ -1789,7 +1816,7 @@ router.patch('/api/admin/site-pages/:slug', async (req, res) => {
        RETURNING slug, title, subtitle, body, updated_by_uid, updated_at`,
       [slug, title, subtitle, JSON.stringify(body), req.adminViewer.uid]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Admin site page update failed:', error);

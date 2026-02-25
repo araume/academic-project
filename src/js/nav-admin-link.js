@@ -98,6 +98,16 @@ async function initMobileAppMenuEntry() {
     message.textContent = text || '';
   }
 
+  function canRenderImageUrl(value) {
+    if (!value) return false;
+    return (
+      value.startsWith('http://') ||
+      value.startsWith('https://') ||
+      value.startsWith('/') ||
+      value.startsWith('data:image/')
+    );
+  }
+
   function renderMobileAppPage(page) {
     const payload = page || {};
     const body = payload.body || {};
@@ -129,7 +139,7 @@ async function initMobileAppMenuEntry() {
     }
 
     if (qrImage && qrEmpty) {
-      if (qrImageUrl.startsWith('http://') || qrImageUrl.startsWith('https://') || qrImageUrl.startsWith('/')) {
+      if (canRenderImageUrl(qrImageUrl)) {
         qrImage.src = qrImageUrl;
         qrImage.alt = qrAltText;
         qrImage.classList.remove('is-hidden');
@@ -140,6 +150,15 @@ async function initMobileAppMenuEntry() {
         qrEmpty.classList.remove('is-hidden');
       }
     }
+  }
+
+  if (qrImage && qrEmpty) {
+    qrImage.addEventListener('error', () => {
+      qrImage.classList.add('is-hidden');
+      qrImage.removeAttribute('src');
+      qrEmpty.classList.remove('is-hidden');
+      qrEmpty.textContent = 'Unable to load QR code image. Check the configured URL.';
+    });
   }
 
   async function openModal() {
