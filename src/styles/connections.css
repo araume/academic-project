@@ -975,6 +975,43 @@ a.connection-name-link:hover {
   display: none;
 }
 
+@media (min-width: 1261px) {
+  .connections-shell {
+    min-height: calc(100vh - var(--app-nav-height, 86px) - 24px);
+    min-height: calc(100dvh - var(--app-nav-height, 86px) - 24px);
+    height: calc(100vh - var(--app-nav-height, 86px) - 24px);
+    height: calc(100dvh - var(--app-nav-height, 86px) - 24px);
+    overflow: hidden;
+    align-items: stretch;
+  }
+
+  .connections-left {
+    overflow-y: auto;
+    padding-right: 3px;
+  }
+
+  .connections-right {
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .chat-card {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .chat-shell {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .conversation-sidebar {
+    max-height: none;
+    height: 100%;
+    min-height: 0;
+  }
+}
+
 body.chat-focus-mode .connections-shell {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -1018,10 +1055,14 @@ body.chat-focus-mode .conversation-messages {
 @media (max-width: 1260px) {
   .connections-shell {
     grid-template-columns: 1fr;
+    min-height: 0;
+    height: auto;
+    overflow: visible;
   }
 
   .chat-card {
     min-height: min(76dvh, 760px);
+    height: auto;
   }
 
   .chat-shell {
