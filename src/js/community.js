@@ -82,8 +82,6 @@ const libraryPickerClose = document.getElementById('libraryPickerClose');
 const libraryPickerSearch = document.getElementById('libraryPickerSearch');
 const libraryPickerList = document.getElementById('libraryPickerList');
 
-const DEFAULT_AVATAR = '/assets/LOGO.png';
-
 const state = {
   viewer: null,
   profilePhotoLink: null,
@@ -110,12 +108,8 @@ let isSubmittingCommunityComment = false;
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -131,6 +125,19 @@ function setNavAvatar(photoLink, displayName) {
   }
 
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setAvatarContent(container, photoLink, displayName, altText) {
+  if (!container) return;
+  container.textContent = '';
+  if (photoLink) {
+    const image = document.createElement('img');
+    image.src = photoLink;
+    image.alt = altText || `${displayName || 'User'} profile photo`;
+    container.appendChild(image);
+    return;
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -676,10 +683,13 @@ function renderFeed() {
 
     const avatar = document.createElement('div');
     avatar.className = 'post-avatar';
-    const avatarImg = document.createElement('img');
-    avatarImg.src = post.author && post.author.photoLink ? post.author.photoLink : DEFAULT_AVATAR;
-    avatarImg.alt = `${post.author && post.author.displayName ? post.author.displayName : 'Member'} profile photo`;
-    avatar.appendChild(avatarImg);
+    const authorName = post.author && post.author.displayName ? post.author.displayName : 'Member';
+    setAvatarContent(
+      avatar,
+      post.author && post.author.photoLink ? post.author.photoLink : '',
+      authorName,
+      `${authorName} profile photo`
+    );
 
     const meta = document.createElement('div');
     const name = document.createElement('h4');
@@ -1177,9 +1187,14 @@ function renderMembersModalList(members, canModerate) {
     const identity = document.createElement('div');
     identity.className = 'member-directory-identity';
 
-    const avatar = document.createElement('img');
-    avatar.src = member.photoLink || DEFAULT_AVATAR;
-    avatar.alt = `${member.displayName || 'Member'} profile photo`;
+    const avatar = document.createElement('div');
+    avatar.className = 'member-directory-avatar';
+    setAvatarContent(
+      avatar,
+      member.photoLink || '',
+      member.displayName || 'Member',
+      `${member.displayName || 'Member'} profile photo`
+    );
 
     const info = document.createElement('div');
     const name = document.createElement('h4');

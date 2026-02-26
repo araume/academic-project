@@ -256,12 +256,8 @@ function extractPostIdFromTargetUrl(value) {
 
 function initialsFromName(name) {
   const safe = String(name || '').trim();
-  if (!safe) return 'ME';
-  return safe
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 async function initGlobalSearchModal() {
@@ -688,7 +684,7 @@ async function initNotificationsMenu() {
           ${
             actorPhoto
               ? `<img src="${escapeHtml(actorPhoto)}" alt="${escapeHtml(actorName)}" />`
-              : `<span>${escapeHtml(actorName.slice(0, 2).toUpperCase())}</span>`
+              : `<span>${escapeHtml(actorName.slice(0, 1).toUpperCase())}</span>`
           }
         </span>
         <span class="notification-body">

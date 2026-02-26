@@ -420,6 +420,12 @@ body {
   overflow: hidden;
   background: #d9ccc4;
   flex: 0 0 48px;
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .person-avatar img {

@@ -56,8 +56,6 @@ const groupTitle = document.getElementById('groupTitle');
 const groupMembers = document.getElementById('groupMembers');
 const groupMessage = document.getElementById('groupMessage');
 
-const DEFAULT_AVATAR = '/assets/LOGO.png';
-
 const state = {
   me: null,
   searchQuery: '',
@@ -82,9 +80,8 @@ const EMOJI_CHOICES = ['😀', '😁', '😂', '😊', '😍', '😎', '🤔', '
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -100,6 +97,19 @@ function setNavAvatar(photoLink, displayName) {
   }
 
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setAvatarContent(container, photoLink, displayName, altText) {
+  if (!container) return;
+  container.textContent = '';
+  if (photoLink) {
+    const img = document.createElement('img');
+    img.src = photoLink;
+    img.alt = altText || `${displayName || 'User'} profile photo`;
+    container.appendChild(img);
+    return;
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function showMessage(target, text, type = 'error') {
@@ -305,10 +315,7 @@ function renderUserCards() {
 
     const avatar = document.createElement('div');
     avatar.className = 'person-avatar';
-    const avatarImg = document.createElement('img');
-    avatarImg.src = user.photoLink || DEFAULT_AVATAR;
-    avatarImg.alt = `${user.displayName || 'User'} profile photo`;
-    avatar.appendChild(avatarImg);
+    setAvatarContent(avatar, user.photoLink, user.displayName || 'User', `${user.displayName || 'User'} profile photo`);
 
     const head = document.createElement('div');
     head.className = 'person-head';
@@ -414,10 +421,12 @@ function renderRequests() {
 
     const avatar = document.createElement('div');
     avatar.className = 'person-avatar';
-    const img = document.createElement('img');
-    img.src = request.user.photoLink || DEFAULT_AVATAR;
-    img.alt = `${request.user.displayName || 'User'} profile photo`;
-    avatar.appendChild(img);
+    setAvatarContent(
+      avatar,
+      request.user.photoLink,
+      request.user.displayName || 'User',
+      `${request.user.displayName || 'User'} profile photo`
+    );
 
     const metaWrap = document.createElement('div');
     const title = document.createElement('h4');

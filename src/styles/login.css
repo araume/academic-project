@@ -219,6 +219,40 @@ body {
   font-family: inherit;
 }
 
+:where(.primary-button, .ghost-button, .link-button, .modal-close, form button[type="submit"], form button[type="button"]) {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+:where(.primary-button, .ghost-button, .link-button, .modal-close, form button[type="submit"], form button[type="button"]):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(15, 38, 57, 0.16);
+}
+
+:where(.primary-button, .ghost-button, .link-button, .modal-close, form button[type="submit"], form button[type="button"]):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: 0 5px 10px rgba(15, 38, 57, 0.13);
+}
+
+:where(.primary-button, .ghost-button, .link-button, .modal-close, form button[type="submit"], form button[type="button"]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(28, 60, 90, 0.26), 0 5px 10px rgba(15, 38, 57, 0.13);
+}
+
+.link-button {
+  box-shadow: none !important;
+}
+
+.link-button:not(:disabled):hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .primary-button {
   padding: 12px 16px;
   border-radius: 12px;

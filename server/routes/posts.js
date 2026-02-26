@@ -19,6 +19,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
+const FEED_HIDE_WITHOUT_INTERACTION_DAYS = 5;
 
 router.use('/api/posts', requireAuthApi);
 router.use('/api/home', requireAuthApi);
@@ -411,6 +412,24 @@ function buildFeedRankingPipeline({
   ];
 }
 
+function buildFeedVisibilityWindowFilter(baseFilter, now = new Date()) {
+  const cutoff = new Date(
+    now.getTime() - FEED_HIDE_WITHOUT_INTERACTION_DAYS * 24 * 60 * 60 * 1000
+  );
+  return {
+    $and: [
+      baseFilter,
+      {
+        $or: [
+          { likesCount: { $gt: 0 } },
+          { commentsCount: { $gt: 0 } },
+          { uploadDate: { $gte: cutoff } },
+        ],
+      },
+    ],
+  };
+}
+
 function parseSidecardLimit(value, fallback = 5, max = 10) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
@@ -619,6 +638,7 @@ router.get('/api/posts', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 10), 1), 50);
   const course = (req.query.course || '').trim();
+  const now = new Date();
 
   try {
     const db = await getMongoDb();
@@ -634,16 +654,17 @@ router.get('/api/posts', async (req, res) => {
     if (course && course !== 'all') {
       filter.course = course;
     }
+    const feedFilter = buildFeedVisibilityWindowFilter(filter, now);
 
     const followedUids = await loadFollowingUids(req.user.uid);
-    const total = await postsCollection.countDocuments(filter);
+    const total = await postsCollection.countDocuments(feedFilter);
     const posts = await postsCollection
       .aggregate(
         buildFeedRankingPipeline({
-          filter,
+          filter: feedFilter,
           skip: (page - 1) * pageSize,
           pageSize,
-          now: new Date(),
+          now,
           userCourse: req.user?.course || '',
           followedUids,
         })

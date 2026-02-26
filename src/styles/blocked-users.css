@@ -220,6 +220,12 @@ body {
   overflow: hidden;
   background: #d9ccc4;
   flex: 0 0 46px;
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 0.94rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .blocked-avatar img {

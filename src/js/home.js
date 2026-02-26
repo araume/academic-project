@@ -79,7 +79,6 @@ const state = {
   page: 1,
   pageSize: 8,
 };
-const DEFAULT_AVATAR = '/assets/LOGO.png';
 
 function profileUrlForUid(uid) {
   const safeUid = typeof uid === 'string' ? uid.trim() : '';
@@ -186,7 +185,7 @@ function renderSpotlightPost(post) {
     </div>
   `;
   const postAvatar = header.querySelector('.post-avatar');
-  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`, uploaderName);
   const nameHeading = header.querySelector('.spotlight-header-meta h4');
   if (nameHeading) {
     nameHeading.textContent = '';
@@ -309,34 +308,43 @@ async function directJoinSuggestedRoom(room, button) {
   }
 }
 
-function buildAvatarThumb(photoLink, altText) {
+function buildAvatarThumb(photoLink, displayName, altText) {
   const avatar = document.createElement('span');
   avatar.className = 'sidecard-avatar';
-  const img = document.createElement('img');
-  img.src = photoLink || DEFAULT_AVATAR;
-  img.alt = altText || 'Profile photo';
-  avatar.appendChild(img);
+  if (photoLink) {
+    const img = document.createElement('img');
+    img.src = photoLink;
+    img.alt = altText || 'Profile photo';
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = initialsFromName(displayName || 'Member');
+  }
   return avatar;
 }
 
-function setAvatarImage(container, photoLink, altText) {
+function setAvatarImage(container, photoLink, altText, displayName = '') {
   if (!container) return;
-  const image = container.querySelector('img') || document.createElement('img');
-  image.src = photoLink || DEFAULT_AVATAR;
-  image.alt = altText || 'Profile photo';
-  if (!image.parentElement) {
-    container.appendChild(image);
+  const existingImage = container.querySelector('img');
+  if (photoLink) {
+    const image = existingImage || document.createElement('img');
+    image.src = photoLink;
+    image.alt = altText || 'Profile photo';
+    if (!image.parentElement) {
+      container.textContent = '';
+      container.appendChild(image);
+    }
+    return;
   }
+  if (existingImage) {
+    existingImage.remove();
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function initialsFromName(name) {
-  const words = (name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!words.length) return 'ME';
-  return words.map((word) => word[0].toUpperCase()).join('');
+  const safe = String(name || '').trim();
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -671,14 +679,20 @@ function renderTrendingSidecard(items) {
 
     const top = document.createElement('div');
     top.className = 'sidecard-top';
-    top.appendChild(buildAvatarThumb(item.uploader && item.uploader.photoLink, `${item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member'} profile photo`));
+    const uploader = item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member';
+    top.appendChild(
+      buildAvatarThumb(
+        item.uploader && item.uploader.photoLink,
+        uploader,
+        `${uploader} profile photo`
+      )
+    );
 
     const meta = document.createElement('div');
     meta.className = 'sidecard-meta';
     const title = document.createElement('h4');
     title.textContent = item.title || 'Untitled discussion';
     const info = document.createElement('p');
-    const uploader = item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member';
     info.textContent = `${uploader} • ${timeAgo(item.uploadDate)}`;
     meta.appendChild(title);
     meta.appendChild(info);
@@ -832,7 +846,7 @@ function renderPost(post, index) {
     </div>
   `;
   const postAvatar = header.querySelector('.post-avatar');
-  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`, uploaderName);
   const nameHeading = header.querySelector('.post-meta h4');
   if (nameHeading) {
     nameHeading.textContent = '';
@@ -1031,7 +1045,7 @@ async function fetchPosts() {
 }
 
 async function loadCurrentProfile() {
-  setAvatarImage(composerAvatar, null, 'Your profile photo');
+  setAvatarImage(composerAvatar, null, 'Your profile photo', 'Me');
   setNavAvatar(null, '');
   try {
     const response = await fetch('/api/profile');
@@ -1039,7 +1053,12 @@ async function loadCurrentProfile() {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Failed to load profile.');
     }
-    setAvatarImage(composerAvatar, data.profile?.photo_link || null, 'Your profile photo');
+    setAvatarImage(
+      composerAvatar,
+      data.profile?.photo_link || null,
+      'Your profile photo',
+      data.profile?.display_name || 'Me'
+    );
     setNavAvatar(data.profile?.photo_link || null, data.profile?.display_name || '');
   } catch (error) {
     // keep fallback avatar

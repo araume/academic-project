@@ -2,6 +2,9 @@ const { Storage } = require('@google-cloud/storage');
 const crypto = require('crypto');
 
 let storageClient;
+const signedUrlCache = new Map();
+const SIGNED_URL_CACHE_MAX_ENTRIES = 5000;
+const SIGNED_URL_REFRESH_BUFFER_MS = 90 * 1000;
 
 function getStorageClient() {
   if (storageClient) {
@@ -132,13 +135,28 @@ async function getSignedUrl(key, ttlMinutes = 60) {
   if (!normalized) {
     throw new Error('Missing storage object key for signed URL generation.');
   }
+  const ttl = Number(ttlMinutes) || 60;
+  const cacheKey = `${ttl}:${normalized}`;
+  const now = Date.now();
+  const cached = signedUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt - now > SIGNED_URL_REFRESH_BUFFER_MS) {
+    return cached.url;
+  }
+
   const bucket = getBucket();
-  const expires = Date.now() + ttlMinutes * 60 * 1000;
+  const expires = now + ttl * 60 * 1000;
   const [url] = await bucket.file(normalized).getSignedUrl({
     version: 'v4',
     action: 'read',
     expires,
   });
+
+  signedUrlCache.set(cacheKey, { url, expiresAt: expires });
+  if (signedUrlCache.size > SIGNED_URL_CACHE_MAX_ENTRIES) {
+    const oldestKey = signedUrlCache.keys().next().value;
+    if (oldestKey) signedUrlCache.delete(oldestKey);
+  }
+
   return url;
 }
 

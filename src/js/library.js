@@ -9,6 +9,7 @@ const activeUploaderFilter = document.getElementById('activeUploaderFilter');
 const activeUploaderFilterText = document.getElementById('activeUploaderFilterText');
 const clearUploaderFilterButton = document.getElementById('clearUploaderFilterButton');
 const uploadCourse = document.getElementById('uploadCourse');
+const uploadCourseList = document.getElementById('uploadCourseList');
 const uploadToggle = document.getElementById('uploadToggle');
 const uploadModal = document.getElementById('uploadModal');
 const uploadClose = document.getElementById('uploadClose');
@@ -85,13 +86,9 @@ const state = {
 };
 
 function initialsFromName(name) {
-  const words = (name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!words.length) return 'ME';
-  return words.map((word) => word[0].toUpperCase()).join('');
+  const safe = String(name || '').trim();
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -448,17 +445,24 @@ async function loadCourses() {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Failed to load courses.');
     }
+    const courseNames = Array.from(
+      new Set((data.courses || []).map((course) => String(course.course_name || '').trim()).filter(Boolean))
+    );
+
+    if (uploadCourseList) {
+      clearElement(uploadCourseList);
+      courseNames.forEach((name) => {
+        const uploadOption = document.createElement('option');
+        uploadOption.value = name;
+        uploadCourseList.appendChild(uploadOption);
+      });
+    }
+
     data.courses.forEach((course) => {
       const option = document.createElement('option');
       option.value = course.course_name;
       option.textContent = course.course_name;
       courseFilter.appendChild(option);
-      if (uploadCourse) {
-        const uploadOption = document.createElement('option');
-        uploadOption.value = course.course_name;
-        uploadOption.textContent = course.course_name;
-        uploadCourse.appendChild(uploadOption);
-      }
     });
   } catch (error) {
     // Silent failure; user can still type the course manually.

@@ -566,6 +566,12 @@ body {
   overflow: hidden;
   background: #d8e2ea;
   flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .post-avatar img {
@@ -954,12 +960,22 @@ a.community-name-link:hover {
   gap: 10px;
 }
 
+.member-directory-avatar,
 .member-directory-identity img {
   width: 38px;
   height: 38px;
   border-radius: 999px;
   object-fit: cover;
   background: #d8e2ea;
+}
+
+.member-directory-avatar {
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .member-directory-identity h4 {

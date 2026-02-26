@@ -220,9 +220,16 @@
         </label>
         <label>
           <span>Course</span>
-          <select name="course" id="uploadCourse" required>
-            <option value="">Select course</option>
-          </select>
+          <input
+            type="text"
+            name="course"
+            id="uploadCourse"
+            list="uploadCourseList"
+            placeholder="Type to search courses..."
+            autocomplete="off"
+            required
+          />
+          <datalist id="uploadCourseList"></datalist>
         </label>
         <label>
           <span>Subject/Lesson</span>

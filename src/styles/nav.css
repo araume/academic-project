@@ -4,6 +4,9 @@
   --app-nav-icon-size: 26px;
   --app-nav-link-size: 48px;
   --app-nav-link-track: min(620px, 58vw);
+  --app-button-hover-shadow: 0 10px 18px rgba(15, 38, 57, 0.14);
+  --app-button-active-shadow: 0 5px 10px rgba(15, 38, 57, 0.12);
+  --app-button-focus-ring: 0 0 0 3px rgba(47, 94, 123, 0.26);
 }
 
 body {
@@ -29,6 +32,138 @@ input,
 select,
 textarea {
   font-family: var(--app-font-family);
+}
+
+:where(
+  button.primary-button,
+  button.secondary-button,
+  button.ghost-button,
+  button.link-button,
+  button.icon-button,
+  button.avatar-button,
+  button.composer-button,
+  button.chip,
+  button.stat-button,
+  button.request-tab,
+  button.tab-button,
+  button.content-tab,
+  button.toolbar-button,
+  button.menu-button,
+  button.close-button,
+  button.modal-close,
+  button.floating-close,
+  button.ai-send,
+  button.link-like-button,
+  button.uploader-filter-button,
+  button.mini-ghost,
+  form button[type="submit"],
+  form button[type="button"]
+) {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+:where(
+  button.primary-button,
+  button.secondary-button,
+  button.ghost-button,
+  button.link-button,
+  button.icon-button,
+  button.avatar-button,
+  button.composer-button,
+  button.chip,
+  button.stat-button,
+  button.request-tab,
+  button.tab-button,
+  button.content-tab,
+  button.toolbar-button,
+  button.menu-button,
+  button.close-button,
+  button.modal-close,
+  button.floating-close,
+  button.ai-send,
+  button.link-like-button,
+  button.uploader-filter-button,
+  button.mini-ghost,
+  form button[type="submit"],
+  form button[type="button"]
+):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: var(--app-button-hover-shadow);
+}
+
+:where(
+  button.primary-button,
+  button.secondary-button,
+  button.ghost-button,
+  button.link-button,
+  button.icon-button,
+  button.avatar-button,
+  button.composer-button,
+  button.chip,
+  button.stat-button,
+  button.request-tab,
+  button.tab-button,
+  button.content-tab,
+  button.toolbar-button,
+  button.menu-button,
+  button.close-button,
+  button.modal-close,
+  button.floating-close,
+  button.ai-send,
+  button.link-like-button,
+  button.uploader-filter-button,
+  button.mini-ghost,
+  form button[type="submit"],
+  form button[type="button"]
+):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: var(--app-button-active-shadow);
+}
+
+:where(
+  button.primary-button,
+  button.secondary-button,
+  button.ghost-button,
+  button.link-button,
+  button.icon-button,
+  button.avatar-button,
+  button.composer-button,
+  button.chip,
+  button.stat-button,
+  button.request-tab,
+  button.tab-button,
+  button.content-tab,
+  button.toolbar-button,
+  button.menu-button,
+  button.close-button,
+  button.modal-close,
+  button.floating-close,
+  button.ai-send,
+  button.link-like-button,
+  button.uploader-filter-button,
+  button.mini-ghost,
+  form button[type="submit"],
+  form button[type="button"]
+):focus-visible {
+  outline: none;
+  box-shadow: var(--app-button-focus-ring), var(--app-button-active-shadow);
+}
+
+button.link-button,
+button.link-like-button {
+  box-shadow: none !important;
+}
+
+button.link-button:not(:disabled):hover,
+button.link-like-button:not(:disabled):hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 h1,
@@ -131,6 +266,57 @@ h6 {
   width: var(--app-nav-icon-size);
   height: var(--app-nav-icon-size);
   display: block;
+}
+
+.top-nav :is(.nav-links a, .icon-button, .avatar-button) {
+  position: relative;
+}
+
+.top-nav :is(.nav-links a, .icon-button, .avatar-button)::before {
+  content: attr(aria-label);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translate(-50%, 4px);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  background: rgba(15, 38, 57, 0.95);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  padding: 7px 9px;
+  border-radius: 9px;
+  box-shadow: 0 12px 24px rgba(15, 38, 57, 0.25);
+  z-index: 1150;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.top-nav :is(.nav-links a, .icon-button, .avatar-button)::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  width: 8px;
+  height: 8px;
+  background: rgba(15, 38, 57, 0.95);
+  transform: translateX(-50%) rotate(45deg);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1149;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.top-nav :is(.nav-links a, .icon-button, .avatar-button):is(:hover, :focus-visible)::before {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.top-nav :is(.nav-links a, .icon-button, .avatar-button):is(:hover, :focus-visible)::after {
+  opacity: 1;
+  transform: translateX(-50%) rotate(45deg);
 }
 
 .nav-label {
@@ -812,6 +998,11 @@ h6 {
   .search-modal {
     max-height: min(84vh, 760px);
     padding: 12px;
+  }
+
+  .top-nav :is(.nav-links a, .icon-button, .avatar-button)::before,
+  .top-nav :is(.nav-links a, .icon-button, .avatar-button)::after {
+    display: none;
   }
 }
 

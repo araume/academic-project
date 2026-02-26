@@ -55,13 +55,26 @@ function closeMenuOnOutsideClick(event) {
 }
 
 function initialsFromName(name) {
-  const words = (name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!words.length) return 'ME';
-  return words.map((word) => word[0].toUpperCase()).join('');
+  const safe = String(name || '').trim();
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
+}
+
+function buildInitialAvatarDataUrl(name) {
+  const initial = initialsFromName(name);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#d8cbc3"/>
+        <stop offset="100%" stop-color="#baa99f"/>
+      </linearGradient>
+    </defs>
+    <rect width="240" height="240" rx="120" fill="url(#bg)"/>
+    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle"
+      font-family="Plus Jakarta Sans, Segoe UI, sans-serif"
+      font-size="118" font-weight="700" fill="#17384d">${initial}</text>
+  </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -523,7 +536,7 @@ function setProfileFields(profile) {
   if (profile.photo_link) {
     profileImage.src = profile.photo_link;
   } else {
-    profileImage.src = '/assets/LOGO.png';
+    profileImage.src = buildInitialAvatarDataUrl(profile.display_name || profile.username || profile.email || 'Member');
   }
 }
 

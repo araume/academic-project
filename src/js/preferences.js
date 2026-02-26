@@ -15,9 +15,8 @@ const privacyMessage = document.getElementById('privacyMessage');
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
