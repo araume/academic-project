@@ -178,6 +178,11 @@ body {
   min-height: 0;
 }
 
+.connections-left {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
 .card {
   background: var(--card);
   border-radius: 20px;
