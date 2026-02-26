@@ -1,3 +1,11 @@
+const APP_THEME_STORAGE_KEY = 'thesis.theme';
+const APP_THEME_DARK = 'dark';
+const APP_THEME_LIGHT = 'light';
+const APP_THEME_CLASS = 'theme-dark';
+
+applyStoredThemePreference();
+initThemeToggle();
+
 (async function initNavEnhancements() {
   await Promise.all([
     injectAdminNavLink(),
@@ -6,6 +14,78 @@
     initGlobalSearchModal(),
   ]);
 })();
+
+function readStoredThemePreference() {
+  try {
+    const value = String(localStorage.getItem(APP_THEME_STORAGE_KEY) || '').trim().toLowerCase();
+    return value === APP_THEME_DARK ? APP_THEME_DARK : APP_THEME_LIGHT;
+  } catch (error) {
+    return APP_THEME_LIGHT;
+  }
+}
+
+function writeStoredThemePreference(theme) {
+  try {
+    localStorage.setItem(APP_THEME_STORAGE_KEY, theme === APP_THEME_DARK ? APP_THEME_DARK : APP_THEME_LIGHT);
+  } catch (error) {
+    // ignore persistence errors
+  }
+}
+
+function applyTheme(theme) {
+  const isDark = theme === APP_THEME_DARK;
+  if (document.body) {
+    document.body.classList.toggle(APP_THEME_CLASS, isDark);
+  }
+  if (document.documentElement) {
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+  }
+  syncThemeToggleButton(isDark);
+}
+
+function applyStoredThemePreference() {
+  applyTheme(readStoredThemePreference());
+}
+
+function syncThemeToggleButton(isDarkMode) {
+  const toggleButton = document.getElementById('themeToggleButton');
+  if (!toggleButton) return;
+  toggleButton.setAttribute('aria-pressed', isDarkMode ? 'true' : 'false');
+  toggleButton.setAttribute('aria-label', isDarkMode ? 'Switch to light mode' : 'Switch to dark mode');
+  toggleButton.title = isDarkMode ? 'Switch to light mode' : 'Switch to dark mode';
+  toggleButton.textContent = isDarkMode ? 'L' : 'D';
+}
+
+function initThemeToggle() {
+  const navActions = document.querySelector('.nav-actions');
+  const searchButton = navActions && navActions.querySelector('.icon-button[aria-label="Search"]');
+  if (!navActions || !searchButton) return;
+
+  let toggleButton = document.getElementById('themeToggleButton');
+  if (!toggleButton) {
+    toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.id = 'themeToggleButton';
+    toggleButton.className = 'icon-button theme-toggle-button';
+    toggleButton.setAttribute('aria-live', 'polite');
+    searchButton.insertAdjacentElement('afterend', toggleButton);
+  }
+
+  if (toggleButton.dataset.bound === '1') {
+    syncThemeToggleButton(document.body && document.body.classList.contains(APP_THEME_CLASS));
+    return;
+  }
+
+  toggleButton.dataset.bound = '1';
+  syncThemeToggleButton(document.body && document.body.classList.contains(APP_THEME_CLASS));
+
+  toggleButton.addEventListener('click', () => {
+    const isDark = Boolean(document.body && document.body.classList.contains(APP_THEME_CLASS));
+    const nextTheme = isDark ? APP_THEME_LIGHT : APP_THEME_DARK;
+    writeStoredThemePreference(nextTheme);
+    applyTheme(nextTheme);
+  });
+}
 
 async function injectAdminNavLink() {
   const profileMenu = document.getElementById('profileMenu');

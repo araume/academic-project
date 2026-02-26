@@ -73,16 +73,6 @@ body {
   margin-bottom: 8px;
 }
 
-.brand-ornament {
-  position: absolute;
-  inset: 18% 8% auto 12%;
-  height: 60%;
-  border-radius: 36px;
-  background: linear-gradient(135deg, rgba(213, 198, 190, 0.7), rgba(233, 230, 225, 0.2));
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 40px 80px rgba(12, 26, 38, 0.12);
-}
-
 .login-panel {
   display: flex;
   flex-direction: column;
@@ -367,6 +357,79 @@ body {
   display: none !important;
 }
 
+body.theme-dark {
+  background: radial-gradient(circle at top, #173a56, #102a40 55%, #0f2639 100%);
+  color: #da9b2b;
+}
+
+body.theme-dark .login-brand {
+  background: transparent;
+}
+
+body.theme-dark .brand-copy h1,
+body.theme-dark .brand-kicker {
+  color: #da9b2b;
+}
+
+body.theme-dark .brand-copy p {
+  color: #edc577;
+}
+
+body.theme-dark .panel-card,
+body.theme-dark .signup-modal-card {
+  background: linear-gradient(170deg, rgba(24, 56, 81, 0.96) 0%, rgba(17, 43, 64, 0.96) 100%);
+  border: 1px solid rgba(218, 155, 43, 0.34);
+  box-shadow: 0 24px 50px rgba(2, 10, 18, 0.46);
+}
+
+body.theme-dark .panel-header h2,
+body.theme-dark .panel-tag,
+body.theme-dark .form-stack label,
+body.theme-dark .form-message,
+body.theme-dark .panel-footnote {
+  color: #edc577;
+}
+
+body.theme-dark .form-stack input,
+body.theme-dark .form-stack select {
+  background: rgba(18, 46, 69, 0.92);
+  color: #edc577;
+  border-color: rgba(218, 155, 43, 0.34);
+}
+
+body.theme-dark .form-stack input::placeholder {
+  color: rgba(237, 197, 119, 0.66);
+}
+
+body.theme-dark .form-stack input:focus,
+body.theme-dark .form-stack select:focus {
+  border-color: rgba(218, 155, 43, 0.74);
+  box-shadow: 0 0 0 3px rgba(218, 155, 43, 0.2);
+}
+
+body.theme-dark .primary-button {
+  background: #da9b2b;
+  color: #0f2639;
+}
+
+body.theme-dark .ghost-button {
+  background: rgba(23, 58, 86, 0.88);
+  border-color: rgba(218, 155, 43, 0.34);
+  color: #da9b2b;
+}
+
+body.theme-dark .link-button {
+  color: #da9b2b;
+}
+
+body.theme-dark .modal-close {
+  color: #da9b2b;
+}
+
+body.theme-dark .signup-modal {
+  background: rgba(2, 10, 17, 0.72);
+}
+
 @media (max-width: 960px) {
   .login-shell {
     grid-template-columns: 1fr;
@@ -374,10 +437,6 @@ body {
 
   .login-brand {
     padding: 48px 24px 12px;
-  }
-
-  .brand-ornament {
-    inset: 12% 6% auto 6%;
   }
 
   .brand-card {

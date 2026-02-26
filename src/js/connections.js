@@ -382,6 +382,7 @@ function renderUserCards() {
     } else {
       const followButton = document.createElement('button');
       followButton.type = 'button';
+      followButton.className = 'follow-primary';
       followButton.dataset.action = 'follow';
       followButton.dataset.uid = user.uid;
       followButton.textContent = 'Follow';

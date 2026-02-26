@@ -482,6 +482,16 @@ a.connection-name-link:hover {
   border: 1px solid #f2cfb3;
 }
 
+.person-actions .follow-primary {
+  background: #da9b2b;
+  color: #0f2639;
+  border: 1px solid #c88a1b;
+}
+
+.person-actions .follow-primary:hover {
+  background: #e2aa3e;
+}
+
 .presence {
   display: inline-flex;
   align-items: center;
@@ -930,7 +940,7 @@ a.connection-name-link:hover {
   border-radius: 12px;
   padding: 14px;
   color: var(--muted);
-  background: #fbfcfd;
+  background: #0f2639;
 }
 
 .modal {
@@ -960,6 +970,44 @@ a.connection-name-link:hover {
   right: 16px;
   top: 12px;
   cursor: pointer;
+}
+
+.modal-card :is(button, .primary-button, .secondary-button, .mini-ghost, .toolbar-button) {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.modal-card :is(button, .primary-button, .secondary-button, .mini-ghost, .toolbar-button):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(15, 38, 57, 0.14);
+}
+
+.modal-card :is(button, .primary-button, .secondary-button, .mini-ghost, .toolbar-button):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: 0 5px 10px rgba(15, 38, 57, 0.12);
+}
+
+.modal-card .primary-button:not(:disabled):hover {
+  background: #153a55;
+}
+
+.modal-card .secondary-button:not(:disabled):hover,
+.modal-card .mini-ghost:not(:disabled):hover,
+.modal-card .toolbar-button:not(:disabled):hover {
+  background: #f2f7fb;
+  border-color: rgba(15, 38, 57, 0.26);
+  color: #153a55;
+}
+
+.modal-card .close-button:not(:disabled):hover {
+  background: #eef3f7;
+  border-radius: 10px;
+  color: #11334a;
 }
 
 .group-form {
