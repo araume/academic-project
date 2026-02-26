@@ -19,7 +19,7 @@ const searchRoutes = require('./server/routes/search');
 const requireAuth = require('./server/middleware/requireAuth');
 const requireOwnerOrAdmin = require('./server/middleware/requireOwnerOrAdmin');
 const auditLogger = require('./server/middleware/auditLogger');
-const { getSession } = require('./server/auth/sessionStore');
+const { getSession, getRequestSessionId } = require('./server/auth/sessionStore');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -45,13 +45,15 @@ app.use(adminRoutes);
 app.use(notificationsRoutes);
 app.use(searchRoutes);
 
-app.get('/', (req, res) => {
-  const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;
+app.get('/', async (req, res) => {
+  const sessionId = getRequestSessionId(req, { preferBearer: false });
+  const session = sessionId ? await getSession(sessionId) : null;
   return res.redirect(session ? '/home' : '/login');
 });
 
-app.get('/login', (req, res) => {
-  const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;
+app.get('/login', async (req, res) => {
+  const sessionId = getRequestSessionId(req, { preferBearer: false });
+  const session = sessionId ? await getSession(sessionId) : null;
   if (session) {
     return res.redirect('/home');
   }
@@ -60,6 +62,10 @@ app.get('/login', (req, res) => {
 
 app.get('/home', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'home.html'));
+});
+
+app.get('/posts/:id', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'post.html'));
 });
 
 app.get('/connections', requireAuth, (req, res) => {

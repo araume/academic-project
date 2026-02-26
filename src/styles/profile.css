@@ -180,7 +180,7 @@ body {
 
 .profile-meta h1 {
   margin: 16px 0 6px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(1.8rem, 3vw, 2.3rem);
 }
 
@@ -197,6 +197,13 @@ body {
 
 .profile-meta p {
   margin: 0;
+}
+
+.profile-username {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .presence-pill {
@@ -343,6 +350,99 @@ body {
   grid-column: 1 / -1;
 }
 
+.profile-posts-card {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+}
+
+.profile-posts-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.profile-posts-head h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--ink);
+}
+
+#profilePostsHint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.profile-posts-list {
+  display: grid;
+  gap: 14px;
+}
+
+.profile-posts-group {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-posts-group-title {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #304a5e;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.profile-post-item {
+  border: 1px solid #e7e2dc;
+  border-radius: 14px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.profile-post-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.profile-post-badge {
+  font-size: 0.73rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef5fb;
+  color: #204660;
+  border: 1px solid #d8e6f1;
+}
+
+.profile-post-meta {
+  margin: 0;
+  color: #607180;
+  font-size: 0.82rem;
+}
+
+.profile-post-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.profile-post-content {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.profile-post-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .profile-form {
   display: grid;
   gap: 15px;
@@ -461,7 +561,7 @@ body {
 
 .floating-modal-head h3 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 1.3rem;
 }
 

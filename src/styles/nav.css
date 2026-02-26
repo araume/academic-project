@@ -1,4 +1,5 @@
 :root {
+  --app-font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   --app-nav-height: 86px;
   --app-nav-icon-size: 26px;
   --app-nav-link-size: 48px;
@@ -6,13 +7,37 @@
 }
 
 body {
+  font-family: var(--app-font-family);
   margin: 0;
   padding-top: 0 !important;
   scroll-padding-top: calc(var(--app-nav-height) + 10px);
+  overflow-x: hidden;
 }
 
 body > .top-nav + * {
   margin-top: var(--app-nav-height) !important;
+}
+
+html,
+body {
+  max-width: 100%;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--app-font-family);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: inherit;
 }
 
 .top-nav {
@@ -596,6 +621,120 @@ body > .top-nav + * {
   color: #7d1d1d;
 }
 
+.mobile-app-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1700;
+  background: rgba(9, 20, 32, 0.56);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.mobile-app-modal {
+  width: min(560px, 94vw);
+  max-height: min(88vh, 760px);
+  overflow-y: auto;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f8fc 100%);
+  border: 1px solid rgba(36, 69, 93, 0.18);
+  border-radius: 18px;
+  box-shadow: 0 30px 60px rgba(15, 38, 57, 0.28);
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-app-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mobile-app-modal-head h3 {
+  margin: 0;
+  color: #163a55;
+  font-size: 1.1rem;
+}
+
+.mobile-app-modal-close {
+  border: none;
+  background: rgba(205, 223, 237, 0.5);
+  color: #173a56;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mobile-app-modal-subtitle {
+  margin: 0;
+  color: #3a5a70;
+  font-size: 0.95rem;
+}
+
+.mobile-app-modal-description {
+  margin: 0;
+  color: #22485f;
+  line-height: 1.5;
+}
+
+.mobile-app-modal-qr-wrap {
+  border: 1px dashed rgba(36, 69, 93, 0.28);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 14px;
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+}
+
+.mobile-app-modal-qr {
+  width: min(230px, 62vw);
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.mobile-app-modal-qr-empty {
+  margin: 0;
+  color: #6b8394;
+  font-size: 0.86rem;
+}
+
+.mobile-app-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mobile-app-download-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #1f4a66;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.mobile-app-download-link:hover {
+  background: #163d56;
+}
+
+.mobile-app-modal-message {
+  margin: 0;
+  min-height: 1rem;
+  font-size: 0.82rem;
+  color: #8f3d31;
+}
+
 .is-hidden {
   display: none !important;
 }
@@ -608,21 +747,38 @@ body > .top-nav + * {
     --app-nav-link-track: auto;
   }
 
+  body > .top-nav + * {
+    margin-top: 0 !important;
+  }
+
   .top-nav {
-    padding: 8px 14px !important;
+    position: sticky !important;
+    padding: 8px 12px !important;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    column-gap: 8px;
+    justify-content: space-between;
+  }
+
+  .nav-left {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .nav-logo {
-    width: 70px !important;
+    width: 52px !important;
+    margin-left: 8px;
   }
 
   .nav-links {
+    order: 2;
     position: static;
     transform: none;
-    width: auto;
+    width: 100%;
     justify-content: flex-start;
     gap: 6px !important;
     overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .nav-links a {
@@ -637,8 +793,11 @@ body > .top-nav + * {
   }
 
   .nav-actions {
+    order: 1;
+    flex: 0 0 auto;
     background: transparent;
     padding-left: 0;
+    margin-left: auto;
   }
 
   .avatar-circle {
@@ -653,5 +812,20 @@ body > .top-nav + * {
   .search-modal {
     max-height: min(84vh, 760px);
     padding: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  :root {
+    --app-nav-icon-size: 18px;
+    --app-nav-link-size: 34px;
+  }
+
+  .top-nav {
+    padding: 8px 10px !important;
+  }
+
+  .nav-actions {
+    gap: 6px !important;
   }
 }

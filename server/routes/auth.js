@@ -2,7 +2,12 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const { hashPassword, verifyPassword } = require('../auth/password');
-const { createSession, deleteSession, deleteSessionsForUid } = require('../auth/sessionStore');
+const {
+  createSession,
+  deleteSession,
+  deleteSessionsForUid,
+  getRequestSessionId,
+} = require('../auth/sessionStore');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { bootstrapCommunityForUser } = require('../services/communityService');
 const { sendVerificationEmail, sendPasswordResetCodeEmail } = require('../services/emailService');
@@ -303,6 +308,13 @@ async function sendPasswordResetCodeForRequest(email, code) {
 
 router.use('/api/account', requireAuthApi);
 
+router.get('/api/auth/session', requireAuthApi, (req, res) => {
+  return res.json({
+    ok: true,
+    user: req.user || null,
+  });
+});
+
 router.post('/api/signup', async (req, res) => {
   const {
     email,
@@ -529,7 +541,7 @@ router.post('/api/login', async (req, res) => {
       });
     }
 
-    const sessionId = createSession({
+    const sessionId = await createSession({
       id: user.id,
       uid: user.uid,
       email: user.email,
@@ -925,7 +937,7 @@ router.post('/api/password-reset/complete', async (req, res) => {
       client.release();
     }
 
-    deleteSessionsForUid(uid);
+    await deleteSessionsForUid(uid);
     return res.json({ ok: true, message: 'Password updated. You can now log in with your new password.' });
   } catch (error) {
     console.error('Password reset complete failed:', error);
@@ -1273,13 +1285,18 @@ router.get('/verify-email', async (req, res) => {
   }
 });
 
-router.post('/api/logout', (req, res) => {
-  const sessionId = req.cookies.session_id;
-  if (sessionId) {
-    deleteSession(sessionId);
+router.post('/api/logout', async (req, res) => {
+  try {
+    const sessionId = getRequestSessionId(req, { preferBearer: true });
+    if (sessionId) {
+      await deleteSession(sessionId);
+    }
+    res.clearCookie('session_id');
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Logout failed:', error);
+    return res.status(500).json({ ok: false, message: 'Logout failed.' });
   }
-  res.clearCookie('session_id');
-  return res.json({ ok: true });
 });
 
 module.exports = router;

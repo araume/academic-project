@@ -21,6 +21,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: radial-gradient(circle at top right, #f7f3ef, var(--bg) 36%);
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -166,8 +167,9 @@ body {
   display: grid;
   grid-template-columns: minmax(320px, 0.84fr) minmax(0, 1.44fr);
   gap: 24px;
-  padding: 18px 48px 48px;
+  padding: 18px clamp(16px, 4vw, 48px) 48px;
   min-height: 100vh;
+  min-width: 0;
 }
 
 .rooms-left,
@@ -176,6 +178,7 @@ body {
   gap: 18px;
   min-height: 0;
   align-content: start;
+  min-width: 0;
 }
 
 .rooms-main {
@@ -205,7 +208,7 @@ body {
 
 .hero-card h1 {
   margin: 8px 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(1.8rem, 2.7vw, 2.3rem);
 }
 
@@ -232,7 +235,7 @@ body {
 .context-head h2,
 .request-head h3 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
 
 .context-head span,
@@ -311,7 +314,7 @@ body {
   padding: 18px;
   display: grid;
   gap: 12px;
-  min-height: calc(100vh - 170px);
+  min-height: min(680px, calc(100dvh - var(--app-nav-height, 86px) - 34px));
   align-content: start;
 }
 
@@ -320,14 +323,24 @@ body {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
   gap: 10px;
-  min-height: calc(100vh - 170px);
+  min-height: clamp(360px, calc(100vh - var(--app-nav-height, 86px) - 34px), 920px);
+  min-height: clamp(360px, calc(100dvh - var(--app-nav-height, 86px) - 34px), 920px);
+  height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
   position: sticky;
   top: calc(var(--app-nav-height, 86px) + 16px);
 }
 
 .rooms-main.is-call-active .call-panel-card {
   display: grid !important;
-  min-height: calc(100vh - 170px);
+  min-height: clamp(360px, calc(100vh - var(--app-nav-height, 86px) - 34px), 920px);
+  min-height: clamp(360px, calc(100dvh - var(--app-nav-height, 86px) - 34px), 920px);
+  height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100vh - var(--app-nav-height, 86px) - 34px);
+  max-height: calc(100dvh - var(--app-nav-height, 86px) - 34px);
 }
 
 .rooms-main.is-call-active .workspace-card {
@@ -343,7 +356,7 @@ body {
 
 .call-panel-head h3 {
   margin: 4px 0 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 1.18rem;
 }
 
@@ -358,22 +371,26 @@ body {
   border-radius: 14px;
   overflow: hidden;
   background: #0f1e2d;
-  min-height: 420px;
+  min-height: 0;
+  height: 100%;
+  display: flex;
 }
 
 .call-frame-wrap iframe {
   width: 100%;
   height: 100%;
-  min-height: 420px;
+  min-height: 0;
   border: 0;
   display: block;
+  flex: 1 1 auto;
 }
 
 .call-placeholder {
   border: 1px dashed rgba(15, 38, 57, 0.2);
   border-radius: 14px;
   background: #fafbfd;
-  min-height: 420px;
+  min-height: 0;
+  height: 100%;
   display: grid;
   place-items: center;
   text-align: center;
@@ -401,7 +418,7 @@ body {
 
 .workspace-head h2 {
   margin: 4px 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 1.56rem;
 }
 
@@ -498,6 +515,8 @@ body {
   display: grid;
   gap: 12px;
   min-height: 320px;
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .room-item {
@@ -506,6 +525,9 @@ body {
   padding: 14px;
   display: grid;
   gap: 10px;
+  align-content: start;
+  align-self: start;
+  height: fit-content;
 }
 
 .room-top {
@@ -599,6 +621,7 @@ body {
 .room-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .room-actions button {
@@ -684,7 +707,7 @@ body {
 
 .modal-card h2 {
   margin: 0 0 18px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(1.5rem, 2.2vw, 1.9rem);
   letter-spacing: 0.01em;
 }
@@ -859,6 +882,16 @@ body {
     position: static;
   }
 
+  .call-panel-card,
+  .rooms-main.is-call-active .call-panel-card {
+    min-height: clamp(300px, 62vh, 700px);
+    min-height: clamp(300px, 62dvh, 700px);
+    height: min(72vh, 760px);
+    height: min(72dvh, 760px);
+    max-height: min(72vh, 760px);
+    max-height: min(72dvh, 760px);
+  }
+
   .context-list,
   .request-list {
     max-height: none;
@@ -896,9 +929,47 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .call-panel-card,
+  .rooms-main.is-call-active .call-panel-card {
+    min-height: clamp(250px, 56vh, 520px);
+    min-height: clamp(250px, 56dvh, 520px);
+    height: min(66vh, 560px);
+    height: min(66dvh, 560px);
+    max-height: min(66vh, 560px);
+    max-height: min(66dvh, 560px);
+  }
+
   .call-frame-wrap,
   .call-frame-wrap iframe,
   .call-placeholder {
-    min-height: 320px;
+    min-height: 0;
+    height: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .rooms-shell {
+    padding: 12px 14px 24px;
+  }
+
+  .context-card,
+  .request-card,
+  .workspace-card,
+  .call-panel-card {
+    padding: 14px;
+  }
+
+  .room-actions button {
+    flex: 1 1 auto;
+  }
+
+  .modal {
+    padding: 10px;
+  }
+
+  .modal-card {
+    max-height: calc(100dvh - 20px);
+    padding: 18px 16px;
+    border-radius: 18px;
   }
 }

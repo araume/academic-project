@@ -2,6 +2,20 @@ const pool = require('../db/pool');
 
 let ensureCommunityPromise = null;
 
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function parseSeedEmailList(value) {
+  if (typeof value !== 'string') return [];
+  const parts = value
+    .split(',')
+    .map((item) => normalizeEmail(item))
+    .filter(Boolean);
+  return Array.from(new Set(parts));
+}
+
 function sanitizeSlug(value) {
   if (!value) return 'community';
   return String(value)
@@ -227,28 +241,29 @@ async function syncCommunitiesFromCourses() {
 }
 
 async function seedPlatformRoles() {
-  await pool.query(
-    `UPDATE accounts
-     SET platform_role = 'owner'
-     WHERE lower(email) = lower($1)`,
-    ['markambida11@gmail.com']
-  );
+  // Optional bootstrap seeding via env only. Keep empty by default to avoid
+  // silently re-assigning privileged roles to newly recreated accounts.
+  const ownerEmails = parseSeedEmailList(process.env.PLATFORM_OWNER_SEED_EMAILS || '');
+  const adminEmails = parseSeedEmailList(process.env.PLATFORM_ADMIN_SEED_EMAILS || '');
 
-  await pool.query(
-    `UPDATE accounts
-     SET platform_role = 'admin'
-     WHERE lower(email) = lower($1)
-       AND platform_role <> 'owner'`,
-    ['markcastillo875@gmail.com']
-  );
+  if (ownerEmails.length) {
+    await pool.query(
+      `UPDATE accounts
+       SET platform_role = 'owner'
+       WHERE lower(email) = ANY($1::text[])`,
+      [ownerEmails]
+    );
+  }
 
-  await pool.query(
-    `UPDATE accounts
-     SET platform_role = 'admin'
-     WHERE lower(email) = lower($1)
-       AND platform_role <> 'owner'`,
-    ['thegreattuna018@gmail.com']
-  );
+  if (adminEmails.length) {
+    await pool.query(
+      `UPDATE accounts
+       SET platform_role = 'admin'
+       WHERE lower(email) = ANY($1::text[])
+         AND platform_role <> 'owner'`,
+      [adminEmails]
+    );
+  }
 }
 
 async function ensureUserMainCourseMembership(uid) {

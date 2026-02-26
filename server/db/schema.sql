@@ -109,6 +109,14 @@ CREATE TABLE IF NOT EXISTS password_reset_codes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  session_id TEXT PRIMARY KEY,
+  uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
 CREATE TABLE IF NOT EXISTS document_likes (
   id SERIAL PRIMARY KEY,
   document_uuid UUID NOT NULL REFERENCES documents(uuid) ON DELETE CASCADE,
@@ -126,6 +134,8 @@ CREATE INDEX IF NOT EXISTS email_verification_tokens_expires_idx ON email_verifi
 CREATE INDEX IF NOT EXISTS password_reset_codes_uid_idx ON password_reset_codes(uid);
 CREATE INDEX IF NOT EXISTS password_reset_codes_code_expires_idx ON password_reset_codes(code_expires_at);
 CREATE INDEX IF NOT EXISTS password_reset_codes_reset_token_expires_idx ON password_reset_codes(reset_token_expires_at);
+CREATE INDEX IF NOT EXISTS auth_sessions_uid_idx ON auth_sessions(uid);
+CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS profiles (
   id SERIAL PRIMARY KEY,
@@ -177,7 +187,8 @@ CREATE TABLE IF NOT EXISTS notifications (
       'post_liked',
       'post_commented',
       'document_liked',
-      'document_commented'
+      'document_commented',
+      'community_rules_required'
     )
   ),
   entity_type TEXT,
@@ -189,12 +200,45 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE notifications
+  DROP CONSTRAINT IF EXISTS notifications_type_check;
+
+ALTER TABLE notifications
+  ADD CONSTRAINT notifications_type_check CHECK (
+    type IN (
+      'following_new_post',
+      'post_liked',
+      'post_commented',
+      'document_liked',
+      'document_commented',
+      'community_rules_required'
+    )
+  );
+
 CREATE INDEX IF NOT EXISTS notifications_recipient_created_idx
   ON notifications(recipient_uid, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notifications_recipient_unread_idx
   ON notifications(recipient_uid, is_read, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notifications_actor_idx
   ON notifications(actor_uid);
+
+CREATE TABLE IF NOT EXISTS push_device_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  platform TEXT NOT NULL DEFAULT 'android'
+    CHECK (platform IN ('android', 'ios', 'web')),
+  device_id TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS push_device_tokens_user_active_idx
+  ON push_device_tokens(user_uid, is_active, updated_at DESC);
+CREATE INDEX IF NOT EXISTS push_device_tokens_last_seen_idx
+  ON push_device_tokens(last_seen_at DESC);
 
 CREATE TABLE IF NOT EXISTS user_presence (
   uid TEXT PRIMARY KEY REFERENCES accounts(uid) ON DELETE CASCADE,
@@ -259,8 +303,88 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
   sender_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
   body TEXT NOT NULL,
+  parent_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL,
+  attachment_type TEXT CHECK (attachment_type IN ('image', 'video')),
+  attachment_key TEXT,
+  attachment_link TEXT,
+  attachment_filename TEXT,
+  attachment_mime_type TEXT,
+  attachment_size_bytes INTEGER CHECK (attachment_size_bytes IS NULL OR attachment_size_bytes >= 0),
+  deleted_at TIMESTAMPTZ,
+  deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS parent_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_key TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_link TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_filename TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_mime_type TEXT;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS attachment_size_bytes INTEGER;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE chat_messages
+  ADD COLUMN IF NOT EXISTS deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+
+ALTER TABLE chat_messages
+  DROP CONSTRAINT IF EXISTS chat_messages_attachment_type_check;
+ALTER TABLE chat_messages
+  ADD CONSTRAINT chat_messages_attachment_type_check
+  CHECK (attachment_type IS NULL OR attachment_type IN ('image', 'video'));
+
+CREATE TABLE IF NOT EXISTS chat_message_reports (
+  id BIGSERIAL PRIMARY KEY,
+  message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  reporter_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  message_sender_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'dismissed')),
+  resolution_note TEXT,
+  resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (message_id, reporter_uid)
+);
+
+CREATE TABLE IF NOT EXISTS chat_typing (
+  thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (thread_id, user_uid)
+);
+
+CREATE TABLE IF NOT EXISTS chat_thread_user_state (
+  thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  last_read_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL,
+  manual_unread BOOLEAN NOT NULL DEFAULT false,
+  is_archived BOOLEAN NOT NULL DEFAULT false,
+  is_muted BOOLEAN NOT NULL DEFAULT false,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (thread_id, user_uid)
+);
+
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS last_read_message_id BIGINT REFERENCES chat_messages(id) ON DELETE SET NULL;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS manual_unread BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS is_muted BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chat_thread_user_state
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS blocked_users (
   id BIGSERIAL PRIMARY KEY,
@@ -454,6 +578,14 @@ CREATE INDEX IF NOT EXISTS chat_requests_requester_status_idx ON chat_requests(r
 CREATE INDEX IF NOT EXISTS chat_participants_user_status_idx ON chat_participants(user_uid, status);
 CREATE INDEX IF NOT EXISTS chat_participants_thread_status_idx ON chat_participants(thread_id, status);
 CREATE INDEX IF NOT EXISTS chat_messages_thread_created_idx ON chat_messages(thread_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS chat_messages_parent_idx ON chat_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS chat_messages_deleted_idx ON chat_messages(thread_id, deleted_at);
+CREATE INDEX IF NOT EXISTS chat_message_reports_status_created_idx ON chat_message_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS chat_message_reports_thread_idx ON chat_message_reports(thread_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS chat_message_reports_reporter_idx ON chat_message_reports(reporter_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS chat_typing_thread_updated_idx ON chat_typing(thread_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS chat_thread_user_state_user_idx ON chat_thread_user_state(user_uid, is_archived, updated_at DESC);
+CREATE INDEX IF NOT EXISTS chat_thread_user_state_thread_idx ON chat_thread_user_state(thread_id, user_uid);
 CREATE INDEX IF NOT EXISTS blocked_users_blocker_idx ON blocked_users(blocker_uid);
 CREATE INDEX IF NOT EXISTS blocked_users_blocked_idx ON blocked_users(blocked_uid);
 CREATE INDEX IF NOT EXISTS hidden_post_authors_user_idx ON hidden_post_authors(user_uid);
@@ -587,7 +719,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 );
 
 CREATE TABLE IF NOT EXISTS site_page_content (
-  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq')),
+  slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app')),
   title TEXT NOT NULL,
   subtitle TEXT NOT NULL DEFAULT '',
   body JSONB NOT NULL DEFAULT '{}'::jsonb,

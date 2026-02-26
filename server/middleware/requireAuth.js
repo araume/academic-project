@@ -1,13 +1,18 @@
-const { getSession } = require('../auth/sessionStore');
+const { getSession, getRequestSessionId } = require('../auth/sessionStore');
 
-function requireAuth(req, res, next) {
-  const sessionId = req.cookies.session_id;
-  const session = sessionId ? getSession(sessionId) : null;
-  if (!session) {
+async function requireAuth(req, res, next) {
+  try {
+    const sessionId = getRequestSessionId(req, { preferBearer: false });
+    const session = sessionId ? await getSession(sessionId) : null;
+    if (!session) {
+      return res.redirect('/login');
+    }
+    req.user = session.user;
+    return next();
+  } catch (error) {
+    console.error('Web auth middleware failed:', error);
     return res.redirect('/login');
   }
-  req.user = session.user;
-  return next();
 }
 
 module.exports = requireAuth;

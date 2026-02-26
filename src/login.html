@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login</title>
+  <title>MyBuddy - Login</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/login.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
 </head>
 <body>
   <main class="login-shell">
@@ -15,7 +16,7 @@
       <div class="brand-card">
         <img src="/assets/LOGO.png" alt="Thesis logo" class="brand-logo" />
         <div class="brand-copy">
-          <p class="brand-kicker">Welcome back</p>
+          <p class="brand-kicker">Welcome!</p>
           <h1>Keep your research flow moving.</h1>
           <p>Access your community, saved materials, and course spaces in one place.</p>
         </div>
@@ -72,6 +73,10 @@
           <span>Password</span>
           <input type="password" name="password" placeholder="Password" autocomplete="new-password" required />
         </label>
+        <label class="checkbox">
+          <input type="checkbox" data-toggle="password" data-target="signup" />
+          <span>Show password</span>
+        </label>
         <label>
           <span>Username</span>
           <input type="text" name="username" placeholder="Username" autocomplete="username" />
@@ -91,10 +96,6 @@
           <input type="email" name="recoveryEmail" placeholder="Recovery email" autocomplete="email" />
         </label>
         <div class="form-row">
-          <label class="checkbox">
-            <input type="checkbox" data-toggle="password" data-target="signup" />
-            <span>Show password</span>
-          </label>
           <button type="button" class="link-button" id="backToLogin">Back to login</button>
         </div>
         <button type="submit" class="primary-button">Create account</button>

@@ -4,10 +4,11 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { deleteSessionsForUid } = require('../auth/sessionStore');
 const { getMongoDb } = require('../db/mongo');
-const { deleteFromStorage } = require('../services/storage');
+const { deleteFromStorage, getSignedUrl, normalizeStorageKey } = require('../services/storage');
 const { ensureAuditReady } = require('../services/auditLog');
 
 const router = express.Router();
+const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
 
 function sanitizeText(value, maxLen = 300) {
   if (typeof value !== 'string') return '';
@@ -172,7 +173,7 @@ async function cleanupMongoDataForAccount(uid) {
   await Promise.all(cleanupOps);
 }
 
-const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq']);
+const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq', 'rooms', 'mobile-app']);
 
 const DEFAULT_SITE_PAGES = {
   about: {
@@ -217,6 +218,25 @@ const DEFAULT_SITE_PAGES = {
       ],
     },
   },
+  rooms: {
+    title: 'Rooms settings',
+    subtitle: 'Configurable labels for Rooms UI',
+    body: {
+      courseContextLabel: 'Course context',
+    },
+  },
+  'mobile-app': {
+    title: 'Open Library Lite',
+    subtitle: 'Scan the QR code to download the Android lite app.',
+    body: {
+      description:
+        'Use the lite mobile app to stay connected with your communities, view feed updates, and access core features on the go.',
+      qrImageUrl: '',
+      qrAltText: 'Open Library Lite QR code',
+      downloadUrl: '',
+      downloadLabel: 'Download APK',
+    },
+  },
 };
 
 let ensureSitePagesReadyPromise = null;
@@ -226,13 +246,22 @@ async function ensureSitePagesReady() {
   ensureSitePagesReadyPromise = (async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS site_page_content (
-        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq')),
+        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app')),
         title TEXT NOT NULL,
         subtitle TEXT NOT NULL DEFAULT '',
         body JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `);
+    await pool.query(`
+      ALTER TABLE site_page_content
+      DROP CONSTRAINT IF EXISTS site_page_content_slug_check;
+    `);
+    await pool.query(`
+      ALTER TABLE site_page_content
+      ADD CONSTRAINT site_page_content_slug_check
+      CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app'));
     `);
   })().catch((error) => {
     ensureSitePagesReadyPromise = null;
@@ -275,11 +304,33 @@ function normalizeFaqBody(body = {}) {
   return { items };
 }
 
+function normalizeRoomsBody(body = {}) {
+  return {
+    courseContextLabel: sanitizeText(body.courseContextLabel, 80) || 'Course context',
+  };
+}
+
+function normalizeMobileAppBody(body = {}) {
+  return {
+    description: sanitizeText(body.description, 7000),
+    qrImageUrl: sanitizeText(body.qrImageUrl, 2000),
+    qrAltText: sanitizeText(body.qrAltText, 180) || 'Open Library Lite QR code',
+    downloadUrl: sanitizeText(body.downloadUrl, 2000),
+    downloadLabel: sanitizeText(body.downloadLabel, 80) || 'Download APK',
+  };
+}
+
 function normalizeSitePageBody(slug, body = {}) {
   if (slug === 'about') {
     return normalizeAboutBody(body);
   }
-  return normalizeFaqBody(body);
+  if (slug === 'faq') {
+    return normalizeFaqBody(body);
+  }
+  if (slug === 'mobile-app') {
+    return normalizeMobileAppBody(body);
+  }
+  return normalizeRoomsBody(body);
 }
 
 function getDefaultSitePage(slug) {
@@ -309,6 +360,32 @@ function normalizeSitePageResult(slug, row) {
     updatedByUid: row.updated_by_uid || null,
     isDefault: false,
   };
+}
+
+async function resolveMobileAppBodyAssets(page) {
+  if (!page || page.slug !== 'mobile-app') return page;
+  const body = page.body && typeof page.body === 'object' ? { ...page.body } : {};
+  const rawQr = typeof body.qrImageUrl === 'string' ? body.qrImageUrl.trim() : '';
+  if (!rawQr) {
+    return { ...page, body };
+  }
+
+  try {
+    const normalized = normalizeStorageKey(rawQr);
+    const isHttp = /^https?:\/\//i.test(rawQr);
+    const shouldSign = Boolean(normalized) && (!isHttp || normalized !== rawQr);
+    if (!shouldSign) {
+      return { ...page, body };
+    }
+    body.qrImageUrl = await getSignedUrl(normalized, SIGNED_TTL);
+    return { ...page, body };
+  } catch (error) {
+    console.warn(
+      'Mobile app QR signing failed; returning raw URL:',
+      error && error.message ? error.message : error
+    );
+    return { ...page, body };
+  }
 }
 
 router.get('/api/admin/me', requireAuthApi, async (req, res) => {
@@ -345,7 +422,7 @@ router.get('/api/site-pages/:slug', requireAuthApi, async (req, res) => {
        LIMIT 1`,
       [slug]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Site page fetch failed:', error);
@@ -443,6 +520,14 @@ router.get('/api/admin/logs', async (req, res) => {
       pageSize,
       total,
       logs: rowsResult.rows.map((row) => ({
+        ...(row.metadata && typeof row.metadata === 'object'
+          ? {
+              targetUrl:
+                typeof row.metadata.targetUrl === 'string' && row.metadata.targetUrl.trim()
+                  ? row.metadata.targetUrl.trim().slice(0, 512)
+                  : null,
+            }
+          : { targetUrl: null }),
         id: Number(row.id),
         actionKey: row.action_key,
         actionType: row.action_type,
@@ -609,6 +694,61 @@ router.get('/api/admin/reports', async (req, res) => {
             createdAt: report.createdAt || new Date(),
           });
         });
+      }
+    }
+
+    if (!source || source === 'chat_message') {
+      try {
+        const params = [];
+        params.push(maxSourceRows);
+
+        const chatMessageResult = await pool.query(
+          `SELECT
+            r.id,
+            r.message_id,
+            r.thread_id,
+            r.reason,
+            r.status,
+            r.created_at,
+            r.reporter_uid,
+            COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS reporter_name,
+            COALESCE(sp.display_name, sa.display_name, sa.username, sa.email) AS sender_name
+           FROM chat_message_reports r
+           JOIN accounts ra ON ra.uid = r.reporter_uid
+           LEFT JOIN profiles rp ON rp.uid = r.reporter_uid
+           LEFT JOIN accounts sa ON sa.uid = r.message_sender_uid
+           LEFT JOIN profiles sp ON sp.uid = r.message_sender_uid
+           ORDER BY r.created_at DESC
+           LIMIT $${params.length}`,
+          params
+        );
+
+        chatMessageResult.rows.forEach((row) => {
+          const normalizedStatus =
+            row.status === 'pending'
+              ? 'open'
+              : row.status === 'reviewed'
+                ? 'under_review'
+                : 'resolved_no_action';
+          reports.push({
+            id: `chat_message:${row.id}`,
+            source: 'chat_message',
+            status: normalizedStatus,
+            targetType: 'chat_message',
+            targetId: row.message_id ? String(row.message_id) : null,
+            targetName: row.sender_name || 'Conversation message',
+            reporterUid: row.reporter_uid || null,
+            reporterName: row.reporter_name || 'Member',
+            reason: row.reason || null,
+            course: null,
+            createdAt: row.created_at,
+            threadId: row.thread_id ? String(row.thread_id) : null,
+          });
+        });
+      } catch (chatReportError) {
+        if (chatReportError && chatReportError.code !== '42P01') {
+          throw chatReportError;
+        }
       }
     }
 
@@ -804,6 +944,86 @@ router.patch('/api/admin/accounts/:uid/role', async (req, res) => {
   }
 });
 
+router.post('/api/admin/accounts/:uid/transfer-ownership', async (req, res) => {
+  const targetUid = sanitizeText(req.params.uid, 120);
+  const transferToken = sanitizeText(req.body && req.body.transferToken, 40).toUpperCase();
+
+  if (!targetUid) {
+    return res.status(400).json({ ok: false, message: 'Invalid target user.' });
+  }
+  if (req.adminViewer.platform_role !== 'owner') {
+    return res.status(403).json({ ok: false, message: 'Only owner can transfer ownership.' });
+  }
+  if (targetUid === req.adminViewer.uid) {
+    return res.status(400).json({ ok: false, message: 'You already own this account.' });
+  }
+  if (transferToken !== 'TRANSFER') {
+    return res.status(400).json({ ok: false, message: 'Transfer confirmation token is invalid.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const currentOwnerResult = await client.query(
+      `SELECT uid, COALESCE(platform_role, 'member') AS platform_role
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1`,
+      [req.adminViewer.uid]
+    );
+    if (!currentOwnerResult.rows.length || currentOwnerResult.rows[0].platform_role !== 'owner') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Current account is no longer owner.' });
+    }
+
+    const targetResult = await client.query(
+      `SELECT uid, COALESCE(platform_role, 'member') AS platform_role, COALESCE(is_banned, false) AS is_banned
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1`,
+      [targetUid]
+    );
+    if (!targetResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Target user not found.' });
+    }
+    const target = targetResult.rows[0];
+    if (target.is_banned === true) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Cannot transfer ownership to a banned account.' });
+    }
+    if (target.platform_role === 'owner') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Target account is already owner.' });
+    }
+
+    await client.query(
+      `UPDATE accounts
+       SET platform_role = CASE
+         WHEN uid = $1 THEN 'owner'
+         WHEN uid = $2 THEN 'admin'
+         ELSE platform_role
+       END
+       WHERE uid IN ($1, $2)`,
+      [targetUid, req.adminViewer.uid]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ ok: true, message: 'Ownership transferred successfully.' });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // ignore rollback errors
+    }
+    console.error('Admin ownership transfer failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to transfer ownership.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
   const targetUid = sanitizeText(req.params.uid, 120);
   const reason = sanitizeText(req.body && req.body.reason, 600);
@@ -846,7 +1066,7 @@ router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
          WHERE uid = $3`,
         [reason || null, req.adminViewer.uid, targetUid]
       );
-      deleteSessionsForUid(targetUid);
+      await deleteSessionsForUid(targetUid);
       return res.json({ ok: true, message: 'Account banned.' });
     }
 
@@ -898,7 +1118,7 @@ router.delete('/api/admin/accounts/:uid', async (req, res) => {
 
     await cleanupMongoDataForAccount(targetUid);
     await pool.query('DELETE FROM accounts WHERE uid = $1', [targetUid]);
-    deleteSessionsForUid(targetUid);
+    await deleteSessionsForUid(targetUid);
 
     return res.json({ ok: true, message: 'Account deleted.' });
   } catch (error) {
@@ -910,7 +1130,7 @@ router.delete('/api/admin/accounts/:uid', async (req, res) => {
 router.get('/api/admin/communities', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, course_name
+      `SELECT id, course_name, description
        FROM communities
        ORDER BY lower(course_name) ASC`
     );
@@ -919,11 +1139,47 @@ router.get('/api/admin/communities', async (req, res) => {
       communities: result.rows.map((row) => ({
         id: Number(row.id),
         courseName: row.course_name,
+        description: row.description || '',
       })),
     });
   } catch (error) {
     console.error('Admin communities fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load communities.' });
+  }
+});
+
+router.patch('/api/admin/communities/:id/details', async (req, res) => {
+  const communityId = parsePositiveInt(req.params.id);
+  if (!communityId) {
+    return res.status(400).json({ ok: false, message: 'Invalid community id.' });
+  }
+
+  const description = sanitizeText(req.body && req.body.description, 4000);
+
+  try {
+    const result = await pool.query(
+      `UPDATE communities
+       SET description = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, course_name, description`,
+      [communityId, description || null]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Community not found.' });
+    }
+    const community = result.rows[0];
+    return res.json({
+      ok: true,
+      community: {
+        id: Number(community.id),
+        courseName: community.course_name,
+        description: community.description || '',
+      },
+    });
+  } catch (error) {
+    console.error('Admin community details update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update community details.' });
   }
 });
 
@@ -1522,7 +1778,7 @@ router.get('/api/admin/site-pages/:slug', async (req, res) => {
        LIMIT 1`,
       [slug]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Admin site page fetch failed:', error);
@@ -1560,7 +1816,7 @@ router.patch('/api/admin/site-pages/:slug', async (req, res) => {
        RETURNING slug, title, subtitle, body, updated_by_uid, updated_at`,
       [slug, title, subtitle, JSON.stringify(body), req.adminViewer.uid]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Admin site page update failed:', error);

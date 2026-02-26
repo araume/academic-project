@@ -44,7 +44,7 @@ body {
 
 .account-head h1 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(2rem, 3vw, 2.5rem);
 }
 

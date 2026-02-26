@@ -8,6 +8,7 @@ const profileMessage = document.getElementById('profileMessage');
 const resetProfile = document.getElementById('resetProfile');
 const profileImage = document.getElementById('profileImage');
 const profileName = document.getElementById('profileName');
+const profileUsername = document.getElementById('profileUsername');
 const profileCourse = document.getElementById('profileCourse');
 const profileBio = document.getElementById('profileBio');
 const profileViewActions = document.getElementById('profileViewActions');
@@ -27,6 +28,8 @@ const profileLinkedin = document.getElementById('profileLinkedin');
 const profileInstagram = document.getElementById('profileInstagram');
 const profileGithub = document.getElementById('profileGithub');
 const profilePortfolio = document.getElementById('profilePortfolio');
+const profilePostsHint = document.getElementById('profilePostsHint');
+const profilePostsList = document.getElementById('profilePostsList');
 const profileEditCard = document.getElementById('profileEditCard');
 const toggleEditMode = document.getElementById('toggleEditMode');
 const photoUploadLabel = document.getElementById('photoUploadLabel');
@@ -259,7 +262,7 @@ function renderBookmarkedPosts(posts) {
     openButton.addEventListener('click', () => {
       const postId = post && post.id ? String(post.id) : '';
       if (!postId) return;
-      window.location.href = `/home?post=${encodeURIComponent(postId)}`;
+      window.location.href = `/posts/${encodeURIComponent(postId)}`;
     });
 
     footer.appendChild(stats);
@@ -349,6 +352,142 @@ function setPresenceBadge(presence) {
   profilePresenceLabel.textContent = 'Inactive';
 }
 
+function formatShortTimestamp(value) {
+  if (!value) return 'Unknown date';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function buildProfilePostCard(post, source) {
+  const item = document.createElement('article');
+  item.className = 'profile-post-item';
+
+  const row = document.createElement('div');
+  row.className = 'profile-post-row';
+
+  const badge = document.createElement('span');
+  badge.className = 'profile-post-badge';
+  if (source === 'community') {
+    badge.textContent = post.communityName
+      ? `Community post • ${post.communityName}`
+      : 'Community post';
+  } else {
+    badge.textContent = 'Main feed post';
+  }
+
+  const meta = document.createElement('p');
+  meta.className = 'profile-post-meta';
+  meta.textContent = `${formatShortTimestamp(post.createdAt)} • ${Number(post.likesCount || 0)} likes • ${Number(post.commentsCount || 0)} comments`;
+
+  row.appendChild(badge);
+  row.appendChild(meta);
+
+  const title = document.createElement('h4');
+  title.className = 'profile-post-title';
+  title.textContent = post.title || 'Untitled post';
+
+  const content = document.createElement('p');
+  content.className = 'profile-post-content';
+  content.textContent = post.content || 'No content preview.';
+
+  const actions = document.createElement('div');
+  actions.className = 'profile-post-actions';
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.className = 'ghost-button';
+  openButton.textContent = source === 'community' ? 'Open community' : 'Open post';
+  openButton.addEventListener('click', () => {
+    if (source === 'community') {
+      if (!post.communityId) return;
+      window.location.href = `/community?community=${encodeURIComponent(post.communityId)}`;
+      return;
+    }
+    if (!post.id) return;
+    window.location.href = `/posts/${encodeURIComponent(post.id)}`;
+  });
+  actions.appendChild(openButton);
+
+  item.appendChild(row);
+  item.appendChild(title);
+  item.appendChild(content);
+
+  if (source === 'main' && post.attachment && post.attachment.type) {
+    const attachment = document.createElement('p');
+    attachment.className = 'profile-post-meta';
+    attachment.textContent = `Attachment: ${post.attachment.type}`;
+    item.appendChild(attachment);
+  }
+
+  item.appendChild(actions);
+  return item;
+}
+
+function renderProfilePosts(data) {
+  if (!profilePostsList || !profilePostsHint) return;
+  clearElement(profilePostsList);
+
+  const mainFeedPosts = Array.isArray(data.mainFeedPosts) ? data.mainFeedPosts : [];
+  const communityPosts = Array.isArray(data.communityPosts) ? data.communityPosts : [];
+
+  if (!mainFeedPosts.length && !communityPosts.length) {
+    profilePostsHint.textContent = 'No posts to show yet.';
+    if (!data.canViewCommunityPosts && !isOwnProfile) {
+      profilePostsHint.textContent = 'Community posts are visible only to viewers from the same course.';
+    }
+    const empty = document.createElement('p');
+    empty.className = 'bookmarks-empty';
+    empty.textContent = 'No posts available for this profile.';
+    profilePostsList.appendChild(empty);
+    return;
+  }
+
+  profilePostsHint.textContent = '';
+  if (!data.canViewCommunityPosts && !isOwnProfile) {
+    profilePostsHint.textContent = 'Community posts are visible only to viewers from the same course.';
+  }
+
+  if (mainFeedPosts.length) {
+    const mainGroup = document.createElement('section');
+    mainGroup.className = 'profile-posts-group';
+    const heading = document.createElement('h3');
+    heading.className = 'profile-posts-group-title';
+    heading.textContent = 'Main Feed Posts';
+    mainGroup.appendChild(heading);
+    mainFeedPosts.forEach((post) => mainGroup.appendChild(buildProfilePostCard(post, 'main')));
+    profilePostsList.appendChild(mainGroup);
+  }
+
+  if (communityPosts.length) {
+    const communityGroup = document.createElement('section');
+    communityGroup.className = 'profile-posts-group';
+    const heading = document.createElement('h3');
+    heading.className = 'profile-posts-group-title';
+    heading.textContent = 'Community Posts';
+    communityGroup.appendChild(heading);
+    communityPosts.forEach((post) => communityGroup.appendChild(buildProfilePostCard(post, 'community')));
+    profilePostsList.appendChild(communityGroup);
+  }
+}
+
+async function loadProfilePosts() {
+  if (!profilePostsList || !profilePostsHint) return;
+  profilePostsHint.textContent = 'Loading posts...';
+  clearElement(profilePostsList);
+
+  const endpoint = viewedUid
+    ? `/api/profile/${encodeURIComponent(viewedUid)}/posts/feed`
+    : '/api/profile/posts/feed';
+  const data = await apiRequest(endpoint);
+  renderProfilePosts(data);
+}
+
 function setProfileFields(profile) {
   profileForm.elements.display_name.value = profile.display_name || '';
   profileForm.elements.bio.value = profile.bio || '';
@@ -365,6 +504,10 @@ function setProfileFields(profile) {
   });
 
   profileName.textContent = profile.display_name || 'Profile';
+  if (profileUsername) {
+    const handle = typeof profile.username === 'string' ? profile.username.trim() : '';
+    profileUsername.textContent = handle ? `@${handle}` : '@user';
+  }
   profileCourse.textContent = profile.main_course || 'Main course';
   if (profileBio) {
     profileBio.textContent = profile.bio || 'No bio yet.';
@@ -688,6 +831,11 @@ async function init() {
     await loadNavAvatar().catch(() => {});
     await loadCourses().catch(() => {});
     await loadProfile();
+    await loadProfilePosts().catch((error) => {
+      if (profilePostsHint) {
+        profilePostsHint.textContent = error && error.message ? error.message : 'Failed to load posts.';
+      }
+    });
   } catch (error) {
     profileMessage.textContent = error.message;
   }

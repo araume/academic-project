@@ -6,6 +6,7 @@ const navAvatarLabel = document.getElementById('navAvatarLabel');
 const communityCount = document.getElementById('communityCount');
 const communitySearch = document.getElementById('communitySearch');
 const communityList = document.getElementById('communityList');
+const communityShell = document.getElementById('communityShell');
 
 const selectedPlaceholder = document.getElementById('selectedPlaceholder');
 const selectedContent = document.getElementById('selectedContent');
@@ -16,9 +17,11 @@ const selectedStats = document.getElementById('selectedStats');
 const communityMessage = document.getElementById('communityMessage');
 const openRulesButton = document.getElementById('openRulesButton');
 const membershipButton = document.getElementById('membershipButton');
+const closeFeedFocusButton = document.getElementById('closeFeedFocusButton');
 
 const composeEligibility = document.getElementById('composeEligibility');
 const openCreatePostButton = document.getElementById('openCreatePostButton');
+const openModerationButton = document.getElementById('openModerationButton');
 const communityPostForm = document.getElementById('communityPostForm');
 const postCourseName = document.getElementById('postCourseName');
 const postTitle = document.getElementById('postTitle');
@@ -35,10 +38,22 @@ const postMessage = document.getElementById('postMessage');
 const refreshFeedButton = document.getElementById('refreshFeedButton');
 const feedList = document.getElementById('feedList');
 
-const moderationCard = document.getElementById('moderationCard');
 const joinRequestsList = document.getElementById('joinRequestsList');
 const membersList = document.getElementById('membersList');
 const reportsList = document.getElementById('reportsList');
+const moderationModal = document.getElementById('moderationModal');
+const moderationModalClose = document.getElementById('moderationModalClose');
+const moderationRulesInput = document.getElementById('moderationRulesInput');
+const rulesEditorVersion = document.getElementById('rulesEditorVersion');
+const reloadRulesEditorButton = document.getElementById('reloadRulesEditorButton');
+const saveRulesEditorButton = document.getElementById('saveRulesEditorButton');
+const rulesEditorMessage = document.getElementById('rulesEditorMessage');
+
+const membersModal = document.getElementById('membersModal');
+const membersModalClose = document.getElementById('membersModalClose');
+const membersSearchInput = document.getElementById('membersSearchInput');
+const membersModalMessage = document.getElementById('membersModalMessage');
+const membersModalList = document.getElementById('membersModalList');
 
 const rulesModal = document.getElementById('rulesModal');
 const rulesModalClose = document.getElementById('rulesModalClose');
@@ -56,6 +71,9 @@ const commentsList = document.getElementById('commentsList');
 const commentForm = document.getElementById('commentForm');
 const commentInput = document.getElementById('commentInput');
 const commentMessage = document.getElementById('commentMessage');
+const commentSubmitButton = commentForm
+  ? commentForm.querySelector('button[type="submit"]')
+  : null;
 
 const createPostModal = document.getElementById('createPostModal');
 const createPostModalClose = document.getElementById('createPostModalClose');
@@ -82,9 +100,13 @@ const state = {
   currentPostForComments: null,
   pendingRuleAction: null,
   selectedLibraryDocument: null,
+  feedFocusMode: false,
 };
 
 let libraryPickerSearchTimer = null;
+let membersSearchTimer = null;
+let isSubmittingCommunityPost = false;
+let isSubmittingCommunityComment = false;
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
@@ -142,6 +164,21 @@ function showMessage(target, text, type = 'error') {
   target.classList.toggle('success', type === 'success');
 }
 
+function setPostingState(button, isPosting) {
+  if (!button) return;
+  if (isPosting) {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText = button.textContent || 'Post';
+    }
+    button.disabled = true;
+    button.textContent = 'Posting...';
+    return;
+  }
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || button.textContent || 'Post';
+  delete button.dataset.originalText;
+}
+
 function formatAgo(dateString) {
   const date = new Date(dateString);
   const diff = Date.now() - date.getTime();
@@ -152,6 +189,28 @@ function formatAgo(dateString) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function profileUrlForUid(uid) {
+  const safeUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!safeUid) return '';
+  return `/profile?uid=${encodeURIComponent(safeUid)}`;
+}
+
+function buildProfileNameNode(uid, displayName, className = 'community-name-link') {
+  const label = displayName || 'Member';
+  const url = profileUrlForUid(uid);
+  if (!url) {
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = label;
+    return span;
+  }
+  const link = document.createElement('a');
+  link.className = className;
+  link.href = url;
+  link.textContent = label;
+  return link;
 }
 
 function openModal(modal) {
@@ -166,6 +225,19 @@ function closeModal(modal) {
   }
 }
 
+function setFeedFocusMode(enabled) {
+  state.feedFocusMode = Boolean(enabled);
+  if (communityShell) {
+    communityShell.classList.toggle('is-feed-focus', state.feedFocusMode);
+  }
+  if (closeFeedFocusButton) {
+    closeFeedFocusButton.classList.toggle(
+      'is-hidden',
+      !state.feedFocusMode || !state.selectedCommunityId
+    );
+  }
+}
+
 function renderEmpty(target, text) {
   if (!target) return;
   target.innerHTML = '';
@@ -173,6 +245,11 @@ function renderEmpty(target, text) {
   node.className = 'empty-state';
   node.textContent = text;
   target.appendChild(node);
+}
+
+function closeMembersModalWindow() {
+  showMessage(membersModalMessage, '');
+  closeModal(membersModal);
 }
 
 function closeRulesModalWindow() {
@@ -386,7 +463,7 @@ function renderCommunityList() {
     button.appendChild(badges);
 
     button.addEventListener('click', () => {
-      loadCommunity(community.id);
+      loadCommunity(community.id, { focus: true });
     });
 
     communityList.appendChild(button);
@@ -432,6 +509,12 @@ function renderSelectedCommunity() {
   if (!state.selectedCommunity || !state.selectedDetail) {
     selectedPlaceholder.classList.remove('is-hidden');
     selectedContent.classList.add('is-hidden');
+    if (openModerationButton) {
+      openModerationButton.classList.add('is-hidden');
+    }
+    if (closeFeedFocusButton) {
+      closeFeedFocusButton.classList.add('is-hidden');
+    }
     return;
   }
 
@@ -449,15 +532,33 @@ function renderSelectedCommunity() {
   }
 
   selectedStats.innerHTML = '';
+  const canOpenMembers = Boolean(state.selectedDetail);
   const stats = [
-    { label: 'Members', value: state.selectedDetail.community.stats.membersCount || 0 },
-    { label: 'Pending', value: state.selectedDetail.community.stats.pendingCount || 0 },
+    {
+      key: 'members',
+      label: 'Members',
+      value: state.selectedDetail.community.stats.membersCount || 0,
+      clickable: canOpenMembers,
+    },
     { label: 'Posts', value: state.selectedDetail.community.stats.postsCount || 0 },
   ];
+  if (state.canModerate) {
+    stats.splice(1, 0, {
+      key: 'pending',
+      label: 'Pending',
+      value: state.selectedDetail.community.stats.pendingCount || 0,
+    });
+  }
 
   stats.forEach((item) => {
-    const stat = document.createElement('div');
-    stat.className = 'stat';
+    const makeMembersButton = item.key === 'members' && item.clickable;
+    const stat = document.createElement(makeMembersButton ? 'button' : 'div');
+    stat.className = `stat${makeMembersButton ? ' stat-button' : ''}`;
+    if (makeMembersButton) {
+      stat.type = 'button';
+      stat.addEventListener('click', () => openMembersModalWindow());
+      stat.title = 'Open member directory';
+    }
 
     const label = document.createElement('span');
     label.textContent = item.label;
@@ -470,6 +571,12 @@ function renderSelectedCommunity() {
     selectedStats.appendChild(stat);
   });
 
+  if (openModerationButton) {
+    openModerationButton.classList.toggle('is-hidden', !state.canModerate);
+  }
+  if (closeFeedFocusButton) {
+    closeFeedFocusButton.classList.toggle('is-hidden', !state.feedFocusMode);
+  }
   updateMembershipButton();
 }
 
@@ -482,7 +589,7 @@ function setPostFormEnabled(enabled) {
   postTitle.disabled = !enabled;
   postContent.disabled = !enabled;
   postVisibility.disabled = !enabled;
-  postSubmitButton.disabled = !enabled;
+  postSubmitButton.disabled = !enabled || isSubmittingCommunityPost;
   if (postCourseName) {
     postCourseName.disabled = true;
   }
@@ -576,7 +683,12 @@ function renderFeed() {
 
     const meta = document.createElement('div');
     const name = document.createElement('h4');
-    name.textContent = post.author && post.author.displayName ? post.author.displayName : 'Member';
+    name.appendChild(
+      buildProfileNameNode(
+        post.author && post.author.uid ? post.author.uid : '',
+        post.author && post.author.displayName ? post.author.displayName : 'Member'
+      )
+    );
     const time = document.createElement('p');
     time.textContent = formatAgo(post.createdAt);
     meta.appendChild(name);
@@ -584,70 +696,77 @@ function renderFeed() {
 
     author.appendChild(avatar);
     author.appendChild(meta);
+    header.appendChild(author);
 
-    const actions = document.createElement('div');
-    actions.className = 'post-actions';
+    const metaCluster = document.createElement('div');
+    metaCluster.className = 'post-meta-cluster';
+
+    const timeChip = document.createElement('span');
+    timeChip.className = 'post-meta-chip';
+    timeChip.textContent = formatAgo(post.createdAt);
+    metaCluster.appendChild(timeChip);
+
+    const visibilityTag = document.createElement('span');
+    visibilityTag.className = `post-tag ${post.visibility === 'main_course_only' ? 'main-course' : 'community'}`;
+    visibilityTag.textContent = post.visibility === 'main_course_only' ? 'Main-course only' : 'Community';
+    metaCluster.appendChild(visibilityTag);
+
+    header.appendChild(metaCluster);
 
     const likeButton = document.createElement('button');
     likeButton.type = 'button';
-    likeButton.className = `ghost-button${post.liked ? ' is-active' : ''}`;
+    likeButton.className = `ghost-button post-action-btn${post.liked ? ' is-active' : ''}`;
     likeButton.textContent = `${post.likesCount || 0} Like`;
     likeButton.addEventListener('click', () => togglePostLike(post));
-    actions.appendChild(likeButton);
 
     const commentButton = document.createElement('button');
     commentButton.type = 'button';
-    commentButton.className = 'ghost-button';
+    commentButton.className = 'ghost-button post-action-btn';
     commentButton.textContent = `Comments (${post.commentsCount || 0})`;
     commentButton.addEventListener('click', () => openCommentsModal(post));
-    actions.appendChild(commentButton);
 
     const reportButton = document.createElement('button');
     reportButton.type = 'button';
-    reportButton.className = 'ghost-button';
+    reportButton.className = 'ghost-button post-action-btn';
     reportButton.textContent = 'Report';
     reportButton.addEventListener('click', () => reportPost(post));
-    actions.appendChild(reportButton);
 
     const isOwner = state.viewer && post.author && post.author.uid === state.viewer.uid;
+    const manageActions = document.createElement('div');
+    manageActions.className = 'post-actions-manage';
+
     if (isOwner) {
       const editButton = document.createElement('button');
       editButton.type = 'button';
-      editButton.className = 'ghost-button';
+      editButton.className = 'ghost-button post-action-btn';
       editButton.textContent = 'Edit';
       editButton.addEventListener('click', () => editPost(post));
-      actions.appendChild(editButton);
+      manageActions.appendChild(editButton);
 
       const deleteButton = document.createElement('button');
       deleteButton.type = 'button';
-      deleteButton.className = 'ghost-button danger-button';
+      deleteButton.className = 'ghost-button danger-button post-action-btn';
       deleteButton.textContent = 'Delete';
       deleteButton.addEventListener('click', () => deletePost(post));
-      actions.appendChild(deleteButton);
+      manageActions.appendChild(deleteButton);
     }
 
     if (state.canModerate && post.status === 'active') {
       const takedownButton = document.createElement('button');
       takedownButton.type = 'button';
-      takedownButton.className = 'warn-button';
+      takedownButton.className = 'warn-button post-action-btn';
       takedownButton.textContent = 'Take down';
       takedownButton.addEventListener('click', () => takeDownPost(post));
-      actions.appendChild(takedownButton);
+      manageActions.appendChild(takedownButton);
     }
 
-    header.appendChild(author);
-    header.appendChild(actions);
-
     const title = document.createElement('h4');
+    title.className = 'post-title';
     title.textContent = post.title;
 
     const content = document.createElement('p');
     content.className = 'post-body';
     content.textContent = post.content;
-
-    const tag = document.createElement('span');
-    tag.className = 'post-tag';
-    tag.textContent = post.visibility === 'main_course_only' ? 'Main-course only' : 'Community visible';
 
     card.appendChild(header);
     card.appendChild(title);
@@ -657,7 +776,22 @@ function renderFeed() {
     if (attachmentNode) {
       card.appendChild(attachmentNode);
     }
-    card.appendChild(tag);
+
+    const footer = document.createElement('div');
+    footer.className = 'post-footer';
+
+    const mainActions = document.createElement('div');
+    mainActions.className = 'post-actions-main';
+    mainActions.appendChild(likeButton);
+    mainActions.appendChild(commentButton);
+    mainActions.appendChild(reportButton);
+    footer.appendChild(mainActions);
+
+    if (manageActions.childElementCount) {
+      footer.appendChild(manageActions);
+    }
+
+    card.appendChild(footer);
 
     if (post.status !== 'active') {
       const statusLine = document.createElement('p');
@@ -687,7 +821,7 @@ function renderJoinRequests() {
 
     const name = document.createElement('p');
     const strong = document.createElement('strong');
-    strong.textContent = request.displayName || 'Member';
+    strong.appendChild(buildProfileNameNode(request.uid || '', request.displayName || 'Member'));
     name.appendChild(strong);
 
     const meta = document.createElement('p');
@@ -734,7 +868,7 @@ function renderMembers() {
 
     const name = document.createElement('p');
     const strong = document.createElement('strong');
-    strong.textContent = member.displayName || 'Member';
+    strong.appendChild(buildProfileNameNode(member.uid || '', member.displayName || 'Member'));
     name.appendChild(strong);
 
     const meta = document.createElement('p');
@@ -876,6 +1010,7 @@ async function loadBootstrap() {
   renderCommunityList();
 
   if (!state.communities.length) {
+    setFeedFocusMode(false);
     state.selectedCommunityId = null;
     state.selectedCommunity = null;
     state.selectedDetail = null;
@@ -893,7 +1028,7 @@ async function loadBootstrap() {
     ? existingSelection
     : (state.communities.find((item) => item.isMainCourseCommunity) || state.communities[0]).id;
 
-  await loadCommunity(selected);
+  await loadCommunity(selected, { focus: false });
 }
 
 async function loadProfilePhoto() {
@@ -906,7 +1041,13 @@ async function loadProfilePhoto() {
   }
 }
 
-async function loadCommunity(communityId) {
+async function loadCommunity(communityId, options = {}) {
+  const shouldFocus = Boolean(options && options.focus);
+  if (shouldFocus) {
+    setFeedFocusMode(true);
+  }
+  closeModal(moderationModal);
+  closeModal(membersModal);
   state.selectedCommunityId = communityId;
   state.selectedCommunity = communityById(communityId);
   renderCommunityList();
@@ -952,10 +1093,9 @@ async function loadCommunity(communityId) {
     }
 
     if (state.canModerate) {
-      moderationCard.classList.remove('is-hidden');
       await Promise.all([loadJoinRequests(), loadMembers(), loadReports()]);
     } else {
-      moderationCard.classList.add('is-hidden');
+      closeModal(moderationModal);
       state.joinRequests = [];
       state.members = [];
       state.reports = [];
@@ -983,7 +1123,7 @@ async function loadCommunity(communityId) {
     renderJoinRequests();
     renderMembers();
     renderReports();
-    moderationCard.classList.add('is-hidden');
+    closeModal(moderationModal);
     setPostFormEnabled(false);
     showMessage(communityMessage, error.message);
   }
@@ -1021,6 +1161,73 @@ async function loadMembers() {
   }
 }
 
+function renderMembersModalList(members, canModerate) {
+  if (!membersModalList) return;
+  membersModalList.innerHTML = '';
+
+  if (!members || !members.length) {
+    renderEmpty(membersModalList, 'No members found.');
+    return;
+  }
+
+  members.forEach((member) => {
+    const item = document.createElement('article');
+    item.className = 'member-directory-item';
+
+    const identity = document.createElement('div');
+    identity.className = 'member-directory-identity';
+
+    const avatar = document.createElement('img');
+    avatar.src = member.photoLink || DEFAULT_AVATAR;
+    avatar.alt = `${member.displayName || 'Member'} profile photo`;
+
+    const info = document.createElement('div');
+    const name = document.createElement('h4');
+    name.appendChild(buildProfileNameNode(member.uid || '', member.displayName || 'Member'));
+    const meta = document.createElement('p');
+    const roleText = member.isModerator ? 'moderator' : member.platformRole || 'member';
+    const stateText = canModerate ? ` • ${member.state}` : '';
+    meta.textContent = `${roleText}${stateText}`;
+    info.appendChild(name);
+    info.appendChild(meta);
+
+    identity.appendChild(avatar);
+    identity.appendChild(info);
+    item.appendChild(identity);
+    membersModalList.appendChild(item);
+  });
+}
+
+async function loadMembersDirectory(query = '') {
+  if (!state.selectedCommunityId) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '200',
+  });
+  const q = String(query || '').trim();
+  if (q) {
+    params.set('q', q);
+  }
+
+  try {
+    const data = await apiRequest(`/api/community/${state.selectedCommunityId}/members?${params.toString()}`);
+    renderMembersModalList(data.members || [], data.canModerate === true);
+  } catch (error) {
+    showMessage(membersModalMessage, error.message);
+    renderEmpty(membersModalList, error.message);
+  }
+}
+
+async function openMembersModalWindow() {
+  if (!state.selectedCommunityId) return;
+  if (membersSearchInput) {
+    membersSearchInput.value = '';
+  }
+  showMessage(membersModalMessage, '');
+  await loadMembersDirectory('');
+  openModal(membersModal);
+}
+
 async function loadReports() {
   if (!state.selectedCommunityId || !state.canModerate) {
     state.reports = [];
@@ -1034,6 +1241,52 @@ async function loadReports() {
   } catch (error) {
     state.reports = [];
     renderReports();
+  }
+}
+
+async function loadRulesEditor() {
+  if (!state.selectedCommunityId || !state.canModerate) return;
+  showMessage(rulesEditorMessage, '');
+  if (rulesEditorVersion) {
+    rulesEditorVersion.textContent = 'Loading...';
+  }
+
+  try {
+    const data = await apiRequest(`/api/community/${state.selectedCommunityId}/rules`);
+    const latest = data.latestRule || null;
+    if (rulesEditorVersion) {
+      rulesEditorVersion.textContent = latest ? `Latest: v${latest.version}` : 'No rules yet';
+    }
+    if (moderationRulesInput) {
+      moderationRulesInput.value = latest ? latest.content || '' : '';
+    }
+  } catch (error) {
+    showMessage(rulesEditorMessage, error.message);
+    if (rulesEditorVersion) {
+      rulesEditorVersion.textContent = 'Unable to load rules';
+    }
+  }
+}
+
+async function saveRulesEditor() {
+  if (!state.selectedCommunityId || !state.canModerate || !moderationRulesInput) return;
+  const content = (moderationRulesInput.value || '').trim();
+  if (!content) {
+    showMessage(rulesEditorMessage, 'Rules content is required.');
+    return;
+  }
+
+  try {
+    await apiRequest(`/api/community/${state.selectedCommunityId}/rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    showMessage(rulesEditorMessage, 'Rules published as a new version.', 'success');
+    await Promise.all([loadRulesEditor(), loadJoinRequests()]);
+    await loadBootstrap();
+  } catch (error) {
+    showMessage(rulesEditorMessage, error.message);
   }
 }
 
@@ -1174,14 +1427,6 @@ async function handleMembershipAction() {
     return;
   }
 
-  const requiresRules = state.selectedCommunity.latestRuleVersion && !state.selectedCommunity.acceptedLatestRule;
-  if (requiresRules && !state.selectedCommunity.isMainCourseCommunity) {
-    await openRulesModal(async () => {
-      await joinSelectedCommunity();
-    });
-    return;
-  }
-
   await joinSelectedCommunity();
 }
 
@@ -1210,12 +1455,19 @@ async function togglePostLike(post) {
     post.likesCount = Number(data.likesCount || 0);
     renderFeed();
   } catch (error) {
+    if (error.code === 'RULES_NOT_ACCEPTED' || (error.payload && error.payload.requiresRuleAcceptance)) {
+      await openRulesModal(async () => {
+        await togglePostLike(post);
+      });
+      return;
+    }
     showMessage(communityMessage, error.message);
   }
 }
 
 async function submitPost(event) {
   event.preventDefault();
+  if (isSubmittingCommunityPost) return;
   showMessage(postMessage, '');
 
   if (!state.selectedCommunityId) {
@@ -1262,6 +1514,8 @@ async function submitPost(event) {
     formData.set('attachmentType', 'none');
   }
 
+  isSubmittingCommunityPost = true;
+  setPostingState(postSubmitButton, true);
   try {
     await createCommunityPost(formData);
 
@@ -1277,7 +1531,7 @@ async function submitPost(event) {
     await loadCommunity(state.selectedCommunityId);
     closeCreatePostModalWindow();
   } catch (error) {
-    if (error.payload && error.payload.requiresRuleAcceptance) {
+    if (error.code === 'RULES_NOT_ACCEPTED' || (error.payload && error.payload.requiresRuleAcceptance)) {
       closeCreatePostModalWindow();
       await openRulesModal(async () => {
         await createCommunityPost(formData);
@@ -1287,6 +1541,9 @@ async function submitPost(event) {
       return;
     }
     showMessage(postMessage, error.message);
+  } finally {
+    isSubmittingCommunityPost = false;
+    setPostingState(postSubmitButton, false);
   }
 }
 
@@ -1400,7 +1657,10 @@ function renderComments(comments) {
 
     const meta = document.createElement('p');
     meta.className = 'meta-line';
-    meta.textContent = `${comment.authorName || 'Member'} • ${formatAgo(comment.createdAt)}`;
+    meta.appendChild(
+      buildProfileNameNode(comment.authorUid || '', comment.authorName || 'Member')
+    );
+    meta.appendChild(document.createTextNode(` • ${formatAgo(comment.createdAt)}`));
 
     const actions = document.createElement('div');
     actions.className = 'comment-actions';
@@ -1448,6 +1708,7 @@ function renderComments(comments) {
 
 async function submitComment(event) {
   event.preventDefault();
+  if (isSubmittingCommunityComment) return;
   showMessage(commentMessage, '');
 
   if (!state.selectedCommunityId || !state.currentPostForComments) {
@@ -1461,6 +1722,8 @@ async function submitComment(event) {
     return;
   }
 
+  isSubmittingCommunityComment = true;
+  setPostingState(commentSubmitButton, true);
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/posts/${state.currentPostForComments.id}/comments`, {
       method: 'POST',
@@ -1471,7 +1734,23 @@ async function submitComment(event) {
     await loadComments();
     await loadCommunity(state.selectedCommunityId);
   } catch (error) {
+    if (error.code === 'RULES_NOT_ACCEPTED' || (error.payload && error.payload.requiresRuleAcceptance)) {
+      await openRulesModal(async () => {
+        await apiRequest(`/api/community/${state.selectedCommunityId}/posts/${state.currentPostForComments.id}/comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+        });
+        commentInput.value = '';
+        await loadComments();
+        await loadCommunity(state.selectedCommunityId);
+      });
+      return;
+    }
     showMessage(commentMessage, error.message);
+  } finally {
+    isSubmittingCommunityComment = false;
+    setPostingState(commentSubmitButton, false);
   }
 }
 
@@ -1616,12 +1895,26 @@ if (membershipButton) {
   membershipButton.addEventListener('click', handleMembershipAction);
 }
 
+if (closeFeedFocusButton) {
+  closeFeedFocusButton.addEventListener('click', () => {
+    setFeedFocusMode(false);
+  });
+}
+
 if (openRulesButton) {
   openRulesButton.addEventListener('click', () => openRulesModal());
 }
 
 if (openCreatePostButton) {
   openCreatePostButton.addEventListener('click', openCreatePostModalWindow);
+}
+
+if (openModerationButton) {
+  openModerationButton.addEventListener('click', async () => {
+    if (!state.canModerate || !state.selectedCommunityId) return;
+    await Promise.all([loadJoinRequests(), loadMembers(), loadReports(), loadRulesEditor()]);
+    openModal(moderationModal);
+  });
 }
 
 if (openLibraryPicker) {
@@ -1686,6 +1979,35 @@ if (createPostModalClose) {
   createPostModalClose.addEventListener('click', closeCreatePostModalWindow);
 }
 
+if (moderationModalClose) {
+  moderationModalClose.addEventListener('click', () => closeModal(moderationModal));
+}
+
+if (reloadRulesEditorButton) {
+  reloadRulesEditorButton.addEventListener('click', () => {
+    loadRulesEditor();
+  });
+}
+
+if (saveRulesEditorButton) {
+  saveRulesEditorButton.addEventListener('click', () => {
+    saveRulesEditor();
+  });
+}
+
+if (membersModalClose) {
+  membersModalClose.addEventListener('click', closeMembersModalWindow);
+}
+
+if (membersSearchInput) {
+  membersSearchInput.addEventListener('input', () => {
+    clearTimeout(membersSearchTimer);
+    membersSearchTimer = setTimeout(() => {
+      loadMembersDirectory(membersSearchInput.value);
+    }, 220);
+  });
+}
+
 if (commentForm) {
   commentForm.addEventListener('submit', submitComment);
 }
@@ -1696,12 +2018,15 @@ window.addEventListener('keydown', (event) => {
     closeModal(commentsModal);
     closeCreatePostModalWindow();
     closeModal(libraryPickerModal);
+    closeModal(moderationModal);
+    closeMembersModalWindow();
   }
 });
 
 async function init() {
   showMessage(communityMessage, '');
   showMessage(postMessage, '');
+  setFeedFocusMode(false);
   updateSelectedLibraryDocUI();
   setPostFormEnabled(false);
 

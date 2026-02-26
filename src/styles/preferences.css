@@ -168,7 +168,7 @@ body {
 
 .preferences-card h1 {
   margin: 8px 0 6px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: clamp(1.8rem, 2.7vw, 2.3rem);
 }
 

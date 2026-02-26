@@ -92,6 +92,10 @@ function isOwnerOrAdmin(viewer) {
   return viewer && (viewer.platform_role === 'owner' || viewer.platform_role === 'admin');
 }
 
+function normalizeCourseName(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
 function randomBase64Url(bytes) {
   return crypto
     .randomBytes(bytes)
@@ -203,6 +207,35 @@ async function getViewer(uid, client = pool) {
   return result.rows[0] || null;
 }
 
+async function loadAllowedHostCourseNames(uid, client = pool) {
+  const result = await client.query(
+    `SELECT
+      a.course AS account_course,
+      p.main_course,
+      p.sub_courses
+     FROM accounts a
+     LEFT JOIN profiles p ON p.uid = a.uid
+     WHERE a.uid = $1
+     LIMIT 1`,
+    [uid]
+  );
+  if (!result.rows.length) return [];
+
+  const row = result.rows[0];
+  const names = new Set();
+  const pushName = (value) => {
+    const normalized = normalizeCourseName(value);
+    if (normalized) names.add(normalized);
+  };
+
+  pushName(row.account_course);
+  pushName(row.main_course);
+  if (Array.isArray(row.sub_courses)) {
+    row.sub_courses.forEach((entry) => pushName(entry));
+  }
+
+  return Array.from(names);
+}
 async function getCommunityById(communityId, client = pool) {
   if (!communityId) return null;
   const result = await client.query(
@@ -421,6 +454,8 @@ router.get('/api/rooms/bootstrap', async (req, res) => {
     const isPrivileged = canCreatePublicRooms;
     const hasModeratorRole = await hasAnyModeratorRole(viewer.uid);
     const canReviewRequests = isPrivileged || hasModeratorRole;
+    const allowedHostCourseNames = await loadAllowedHostCourseNames(viewer.uid);
+    const allowedHostCourseSet = new Set(allowedHostCourseNames);
 
     const communitiesResult = await pool.query(
       `SELECT
@@ -450,8 +485,9 @@ router.get('/api/rooms/bootstrap', async (req, res) => {
             AND cr2.role = 'moderator'
         )
         OR (COALESCE($3, '') <> '' AND lower(c.course_name) = lower($3))
+        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND lower(c.course_name) = ANY($4::text[]))
       ORDER BY lower(c.course_name) ASC`,
-      [viewer.uid, isPrivileged, viewer.course || null]
+      [viewer.uid, isPrivileged, viewer.course || null, allowedHostCourseNames]
     );
 
     const communities = communitiesResult.rows.map((row) => ({
@@ -463,6 +499,10 @@ router.get('/api/rooms/bootstrap', async (req, res) => {
       canCreateHere: canCreatePublicRooms || row.is_moderator === true,
     }));
 
+    const requestHostCommunities = communities.filter((community) => {
+      const normalized = normalizeCourseName(community.courseName);
+      return normalized && allowedHostCourseSet.has(normalized);
+    });
     let pendingRequestsToReview = 0;
     if (canReviewRequests) {
       const pendingCountResult = await pool.query(
@@ -500,6 +540,7 @@ router.get('/api/rooms/bootstrap', async (req, res) => {
         canReviewRequests,
       },
       communities,
+      requestHostCommunities,
       pendingRequestsToReview,
     });
   } catch (error) {
@@ -795,6 +836,17 @@ router.post('/api/rooms/requests', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Selected course community was not found.' });
     }
 
+    if (input.visibility === 'course_exclusive') {
+      const allowedHostCourseNames = await loadAllowedHostCourseNames(viewer.uid);
+      const allowedHostCourseSet = new Set(allowedHostCourseNames);
+      const selectedCourseName = normalizeCourseName(community && community.course_name);
+      if (!selectedCourseName || !allowedHostCourseSet.has(selectedCourseName)) {
+        return res.status(403).json({
+          ok: false,
+          message: 'You can only request course rooms for your main course or listed sub-courses.',
+        });
+      }
+    }
     const canCreateDirect = await canCreateRoomDirect(viewer, input.visibility, input.communityId);
     if (canCreateDirect) {
       return res.status(400).json({
@@ -804,6 +856,16 @@ router.post('/api/rooms/requests', async (req, res) => {
     }
 
     if (input.visibility === 'course_exclusive') {
+      const allowedHostCourseNames = await loadAllowedHostCourseNames(viewer.uid);
+      const allowedHostCourseSet = new Set(allowedHostCourseNames);
+      const selectedCourseName = normalizeCourseName(community && community.course_name);
+      if (!selectedCourseName || !allowedHostCourseSet.has(selectedCourseName)) {
+        return res.status(403).json({
+          ok: false,
+          message: 'You can only request course rooms for your main course or listed sub-courses.',
+        });
+      }
+
       const hasMembership = await hasCommunityMembership(input.communityId, viewer.uid);
       if (!hasMembership) {
         return res.status(403).json({
@@ -812,7 +874,6 @@ router.post('/api/rooms/requests', async (req, res) => {
         });
       }
     }
-
     const pendingCountResult = await pool.query(
       `SELECT COUNT(*)::int AS total
        FROM room_requests

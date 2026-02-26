@@ -323,7 +323,7 @@ function buildFeedRankingPipeline({
       $addFields: {
         _hoursSincePost: {
           $max: [
-            1,
+            0.05,
             {
               $divide: [
                 { $subtract: [now, { $ifNull: ['$uploadDate', now] }] },
@@ -340,7 +340,21 @@ function buildFeedRankingPipeline({
         },
         _followBoost: { $cond: [{ $in: ['$uploaderUid', followed] }, 1.4, 0] },
         _courseBoost: courseBoostExpr,
-        _freshBoost: { $cond: [{ $lte: ['$_hoursSincePost', 6] }, 0.45, 0] },
+        _freshBoost: {
+          $cond: [
+            { $lte: ['$_hoursSincePost', 1] },
+            2.6,
+            {
+              $cond: [
+                { $lte: ['$_hoursSincePost', 6] },
+                1.6,
+                {
+                  $cond: [{ $lte: ['$_hoursSincePost', 24] }, 0.75, 0],
+                },
+              ],
+            },
+          ],
+        },
       },
     },
     {
@@ -349,17 +363,31 @@ function buildFeedRankingPipeline({
         _recencyScore: {
           $divide: [1, { $pow: [{ $add: ['$_hoursSincePost', 2] }, 0.75] }],
         },
+        _recencyExposureBoost: {
+          $divide: [
+            3.2,
+            {
+              $add: [
+                1,
+                {
+                  $pow: [{ $divide: ['$_hoursSincePost', 6] }, 1.35],
+                },
+              ],
+            },
+          ],
+        },
       },
     },
     {
       $addFields: {
         _feedScore: {
           $add: [
-            { $multiply: ['$_engagementScore', 3.6] },
-            { $multiply: ['$_recencyScore', 8.8] },
+            { $multiply: ['$_engagementScore', 2.1] },
+            { $multiply: ['$_recencyScore', 13.5] },
             '$_followBoost',
             '$_courseBoost',
             '$_freshBoost',
+            '$_recencyExposureBoost',
           ],
         },
       },
@@ -376,6 +404,7 @@ function buildFeedRankingPipeline({
         _freshBoost: 0,
         _engagementScore: 0,
         _recencyScore: 0,
+        _recencyExposureBoost: 0,
         _feedScore: 0,
       },
     },
@@ -1039,8 +1068,6 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
   const {
     title,
     content,
-    course,
-    visibility,
     attachmentType,
     attachmentLink,
     attachmentTitle,
@@ -1052,10 +1079,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Title and content are required.' });
   }
 
-  const visibilityValue = visibility === 'public' ? 'public' : 'private';
-  if (visibilityValue === 'private' && !course) {
-    return res.status(400).json({ ok: false, message: 'Course is required for private posts.' });
-  }
+  const visibilityValue = 'public';
 
   try {
     const db = await getMongoDb();
@@ -1124,7 +1148,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const postDoc = {
       title: title.trim(),
       content: content.trim(),
-      course: course ? course.trim() : null,
+      course: null,
       visibility: visibilityValue,
       attachment,
       uploadDate: now,
@@ -1162,7 +1186,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
           type: 'following_new_post',
           entityType: 'post',
           entityId: postId,
-          targetUrl: `/home?post=${encodeURIComponent(postId)}`,
+          targetUrl: `/posts/${encodeURIComponent(postId)}`,
           meta: {
             postTitle: postDoc.title,
           },
@@ -1184,7 +1208,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
 
 router.patch('/api/posts/:id', async (req, res) => {
   const { id } = req.params;
-  const { title, content, course, visibility } = req.body || {};
+  const { title, content } = req.body || {};
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid post id.' });
@@ -1193,12 +1217,8 @@ router.patch('/api/posts/:id', async (req, res) => {
   const updates = {};
   if (title) updates.title = title.trim();
   if (content) updates.content = content.trim();
-  if (course) updates.course = course.trim();
-  if (visibility) updates.visibility = visibility === 'public' ? 'public' : 'private';
-
-  if (!Object.keys(updates).length) {
-    return res.status(400).json({ ok: false, message: 'No fields to update.' });
-  }
+  updates.visibility = 'public';
+  updates.course = null;
 
   try {
     const db = await getMongoDb();
@@ -1305,7 +1325,7 @@ router.post('/api/posts/:id/like', async (req, res) => {
             type: 'post_liked',
             entityType: 'post',
             entityId: id,
-            targetUrl: `/home?post=${encodeURIComponent(id)}`,
+            targetUrl: `/posts/${encodeURIComponent(id)}`,
             meta: {
               postTitle: postForRecipient.title || 'Untitled post',
             },
@@ -1384,7 +1404,7 @@ router.post('/api/posts/:id/comments', async (req, res) => {
             type: 'post_commented',
             entityType: 'post',
             entityId: id,
-            targetUrl: `/home?post=${encodeURIComponent(id)}`,
+            targetUrl: `/posts/${encodeURIComponent(id)}`,
             meta: {
               postTitle: post.title || 'Untitled post',
             },

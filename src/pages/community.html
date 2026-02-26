@@ -6,9 +6,10 @@
   <title>Community</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles/community.css" />
   <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
 </head>
 <body>
   <header class="top-nav">
@@ -46,8 +47,8 @@
     </div>
   </header>
 
-  <main class="community-shell">
-    <aside class="community-left">
+  <main class="community-shell" id="communityShell">
+    <aside class="community-left" id="communityLeft">
       <section class="card hero-card">
         <p class="eyebrow">Course network</p>
         <h1>Communities</h1>
@@ -81,7 +82,9 @@
               <p class="subcopy" id="selectedCommunityDescription">No description yet.</p>
             </div>
             <div class="selected-actions">
+              <button type="button" class="ghost-button is-hidden" id="closeFeedFocusButton">Back to communities</button>
               <button type="button" class="ghost-button" id="openRulesButton">Rules</button>
+              <button type="button" class="ghost-button is-hidden" id="openModerationButton">Moderator tools</button>
               <button type="button" class="ghost-button" id="openCreatePostButton">Create post</button>
               <button type="button" class="primary-button" id="membershipButton">Join</button>
             </div>
@@ -100,27 +103,6 @@
             </div>
             <div class="feed-list" id="feedList"></div>
           </section>
-        </div>
-      </section>
-
-      <section class="card moderation-card is-hidden" id="moderationCard">
-        <div class="moderation-head">
-          <h3>Moderator tools</h3>
-          <p>Approve community join requests and resolve issues quickly.</p>
-        </div>
-        <div class="moderation-grid">
-          <div>
-            <h4>Join requests</h4>
-            <div class="moderation-list" id="joinRequestsList"></div>
-          </div>
-          <div>
-            <h4>Members</h4>
-            <div class="moderation-list" id="membersList"></div>
-          </div>
-          <div>
-            <h4>Reports</h4>
-            <div class="moderation-list" id="reportsList"></div>
-          </div>
         </div>
       </section>
     </section>
@@ -211,6 +193,54 @@
         <input type="text" id="libraryPickerSearch" placeholder="Search by title, course, or subject..." />
       </label>
       <div class="library-picker-list" id="libraryPickerList"></div>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="moderationModal">
+    <div class="modal-card moderation-modal-card">
+      <button type="button" class="close-button" id="moderationModalClose">×</button>
+      <div class="moderation-head">
+        <h3>Moderator tools</h3>
+        <p>Approve join requests, review members, and resolve reports.</p>
+      </div>
+      <section class="rules-editor-block">
+        <div class="rules-editor-head">
+          <h4>Community rules editor</h4>
+          <span id="rulesEditorVersion">No rules yet</span>
+        </div>
+        <textarea id="moderationRulesInput" rows="5" maxlength="20000" placeholder="Write or update rules for this community..."></textarea>
+        <div class="rules-editor-actions">
+          <button type="button" class="ghost-button" id="reloadRulesEditorButton">Reload</button>
+          <button type="button" class="primary-button" id="saveRulesEditorButton">Publish new version</button>
+        </div>
+        <p class="inline-message" id="rulesEditorMessage"></p>
+      </section>
+      <div class="moderation-grid">
+        <div>
+          <h4>Join requests</h4>
+          <div class="moderation-list" id="joinRequestsList"></div>
+        </div>
+        <div>
+          <h4>Members</h4>
+          <div class="moderation-list" id="membersList"></div>
+        </div>
+        <div>
+          <h4>Reports</h4>
+          <div class="moderation-list" id="reportsList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="membersModal">
+    <div class="modal-card members-modal-card">
+      <button type="button" class="close-button" id="membersModalClose">×</button>
+      <div class="members-modal-head">
+        <h3>Community members</h3>
+        <input type="text" id="membersSearchInput" placeholder="Search members by name, username, or email" />
+      </div>
+      <p class="inline-message" id="membersModalMessage"></p>
+      <div class="members-modal-list" id="membersModalList"></div>
     </div>
   </div>
 

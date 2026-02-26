@@ -29,6 +29,7 @@ const roomForm = document.getElementById('roomForm');
 const meetNameInput = document.getElementById('meetNameInput');
 const meetIdPreview = document.getElementById('meetIdPreview');
 const visibilityInput = document.getElementById('visibilityInput');
+const courseContextLabel = document.getElementById('courseContextLabel');
 const communityInput = document.getElementById('communityInput');
 const passwordField = document.getElementById('passwordField');
 const meetPasswordInput = document.getElementById('meetPasswordInput');
@@ -56,6 +57,8 @@ const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
 
 const state = {
   viewer: null,
+  availableCommunities: [],
+  requestHostCommunities: [],
   contexts: [],
   selectedContextKey: 'public',
   rooms: [],
@@ -320,6 +323,18 @@ async function apiRequest(url, options = {}) {
   return data;
 }
 
+async function loadRoomsContentSettings() {
+  if (!courseContextLabel) return;
+  try {
+    const data = await apiRequest('/api/site-pages/rooms');
+    const body = data && data.page && data.page.body ? data.page.body : {};
+    const label = typeof body.courseContextLabel === 'string' ? body.courseContextLabel.trim() : '';
+    courseContextLabel.textContent = label || 'Course context';
+  } catch (error) {
+    courseContextLabel.textContent = 'Course context';
+  }
+}
+
 function contextForRoomDefaults() {
   const context = selectedContext();
   if (!context) return;
@@ -399,6 +414,8 @@ function applyContextToWorkspace() {
 async function loadBootstrap() {
   const data = await apiRequest('/api/rooms/bootstrap');
   state.viewer = data.viewer;
+  state.availableCommunities = data.communities || [];
+  state.requestHostCommunities = data.requestHostCommunities || [];
   setNavAvatar(data.viewer.photoLink, data.viewer.displayName);
 
   const contexts = [
@@ -437,7 +454,7 @@ async function loadBootstrap() {
 
   renderContexts();
   applyContextToWorkspace();
-  populateCommunitySelect(data.communities || []);
+  populateCommunitySelect(state.availableCommunities, { emptyLabel: 'No specific course' });
   syncVisibilityOptions(false);
 
   if (state.viewer.canReviewRequests) {
@@ -450,10 +467,20 @@ async function loadBootstrap() {
   }
 }
 
-function populateCommunitySelect(communities) {
+function populateCommunitySelect(communities, options = {}) {
   if (!communityInput) return;
-  communityInput.innerHTML = '<option value="">No specific course</option>';
-  communities.forEach((community) => {
+  const emptyLabel = typeof options.emptyLabel === 'string' ? options.emptyLabel : 'No specific course';
+  communityInput.innerHTML = `<option value="">${emptyLabel}</option>`;
+  const safeCommunities = Array.isArray(communities) ? communities : [];
+  if (!safeCommunities.length) {
+    const none = document.createElement('option');
+    none.value = '';
+    none.disabled = true;
+    none.textContent = 'No eligible courses available';
+    communityInput.appendChild(none);
+    return;
+  }
+  safeCommunities.forEach((community) => {
     const option = document.createElement('option');
     option.value = String(community.id);
     const code = community.courseCode ? `${community.courseCode} - ` : '';
@@ -745,9 +772,16 @@ function openCreateOrRequestModal() {
   const context = selectedContext();
   if (!context) return;
 
-  resetRoomForm();
-  contextForRoomDefaults();
   const directMode = context.canCreate;
+  const hostCommunities = directMode ? state.availableCommunities : state.requestHostCommunities;
+  resetRoomForm();
+  populateCommunitySelect(hostCommunities, {
+    emptyLabel: directMode ? 'No specific course' : 'Select course',
+  });
+  contextForRoomDefaults();
+  if (!directMode && communityInput && !communityInput.value && hostCommunities.length === 1) {
+    communityInput.value = String(hostCommunities[0].id);
+  }
   syncVisibilityOptions(directMode);
   submitRoomButton.classList.remove('is-hidden');
 
@@ -868,6 +902,7 @@ if (leaveCallButton) {
 async function init() {
   const prejoinedRoom = consumePrejoinedRoom();
   try {
+    await loadRoomsContentSettings();
     await loadBootstrap();
     await loadRooms();
     if (prejoinedRoom && prejoinedRoom.joinUrl) {

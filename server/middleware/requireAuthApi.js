@@ -1,13 +1,18 @@
-const { getSession } = require('../auth/sessionStore');
+const { getSession, getRequestSessionId } = require('../auth/sessionStore');
 
-function requireAuthApi(req, res, next) {
-  const sessionId = req.cookies.session_id;
-  const session = sessionId ? getSession(sessionId) : null;
-  if (!session) {
-    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+async function requireAuthApi(req, res, next) {
+  try {
+    const sessionId = getRequestSessionId(req, { preferBearer: true });
+    const session = sessionId ? await getSession(sessionId) : null;
+    if (!session) {
+      return res.status(401).json({ ok: false, message: 'Unauthorized' });
+    }
+    req.user = session.user;
+    return next();
+  } catch (error) {
+    console.error('API auth middleware failed:', error);
+    return res.status(500).json({ ok: false, message: 'Auth service unavailable.' });
   }
-  req.user = session.user;
-  return next();
 }
 
 module.exports = requireAuthApi;

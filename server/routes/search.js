@@ -3,6 +3,7 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const { getSignedUrl } = require('../services/storage');
+const { hasAdminPrivileges } = require('../services/roleAccess');
 
 const router = express.Router();
 
@@ -240,7 +241,7 @@ async function searchPosts({ viewer, query, limit }) {
         displayName: profile?.displayName || post.uploader?.displayName || 'Member',
         photoLink: profile?.photoLink || post.uploader?.photoLink || null,
       },
-      targetUrl: `/home?post=${encodeURIComponent(post._id.toString())}`,
+      targetUrl: `/posts/${encodeURIComponent(post._id.toString())}`,
     };
   });
 }
@@ -261,6 +262,7 @@ async function searchUsers({ viewer, query, limit }) {
     values.push(`%${query.toLowerCase()}%`);
     where.push(`(
       lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) LIKE $${values.length}
+      OR lower(COALESCE(a.username, '')) LIKE $${values.length}
       OR lower(COALESCE(a.course, '')) LIKE $${values.length}
       OR lower(COALESCE(p.bio, '')) LIKE $${values.length}
     )`);
@@ -298,6 +300,7 @@ async function searchUsers({ viewer, query, limit }) {
     result.rows.map(async (row) => ({
       uid: row.uid,
       displayName: row.profile_display_name || row.account_display_name || row.username || row.email || 'Member',
+      username: row.username || '',
       bio: row.bio || null,
       course: row.course || null,
       photoLink: await signIfNeeded(row.photo_link),
@@ -315,20 +318,23 @@ async function searchDocuments({ viewer, query, limit }) {
   const where = [];
   const userCourse = viewer && viewer.course ? String(viewer.course).trim() : '';
   const userUid = viewer && viewer.uid ? viewer.uid : '';
+  const isPrivilegedViewer = hasAdminPrivileges(viewer);
 
-  if (userCourse && userUid) {
-    values.push(userCourse);
-    const courseParam = values.length;
-    values.push(userUid);
-    const uidParam = values.length;
-    where.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    values.push(userUid);
-    where.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-  } else {
-    where.push(`d.visibility = 'public'`);
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      where.push(
+        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      where.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      where.push(`d.visibility = 'public'`);
+    }
   }
 
   if (userUid) {

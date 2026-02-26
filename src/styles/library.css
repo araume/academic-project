@@ -19,6 +19,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: #efeeec;
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -149,9 +150,10 @@ body {
 }
 
 .library {
-  padding: 12px 48px 60px;
+  padding: 12px clamp(16px, 4vw, 48px) 60px;
   display: grid;
   gap: 24px;
+  min-width: 0;
 }
 
 .library-header {
@@ -167,7 +169,7 @@ body {
 
 .library-header h1 {
   margin: 8px 0 6px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 2rem;
 }
 
@@ -192,11 +194,34 @@ body {
   flex-wrap: wrap;
 }
 
+.active-uploader-filter {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7fbff;
+  border: 1px solid #d6e4ef;
+  color: #23455e;
+  font-size: 0.9rem;
+}
+
+.link-like-button {
+  border: none;
+  background: transparent;
+  color: #174f73;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+
 .search-bar {
   display: flex;
   gap: 10px;
   flex: 1;
-  min-width: 260px;
+  min-width: 0;
 }
 
 .search-bar input {
@@ -224,6 +249,13 @@ body {
   color: #fff;
 }
 
+.search-bar button:disabled,
+.primary-button:disabled,
+.ghost-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
 .ghost-button {
   background: #fff;
   border: 1px solid var(--accent);
@@ -241,6 +273,10 @@ body {
   border: 1px solid #d8d8d8;
   background: #fff;
   font-family: inherit;
+}
+
+.uploader-filter-button {
+  padding: 10px 14px;
 }
 
 .document-grid {
@@ -267,13 +303,16 @@ body {
   place-items: center;
   font-weight: 600;
   color: var(--ink-soft);
+  overflow: hidden;
 }
 
 .doc-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   border-radius: 12px;
+  display: block;
 }
 
 .doc-meta {
@@ -322,7 +361,7 @@ body {
   display: grid;
   place-items: center;
   padding: 24px;
-  z-index: 50;
+  z-index: 1800;
 }
 
 .modal-card {
@@ -358,13 +397,16 @@ body {
   background: #e7e2dd;
   display: grid;
   place-items: center;
+  overflow: hidden;
 }
 
 .detail-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   border-radius: 16px;
+  display: block;
 }
 
 .detail-description {
@@ -395,6 +437,10 @@ body {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.detail-open-message {
+  margin-top: 10px;
 }
 
 .menu-button {
@@ -592,7 +638,7 @@ body {
 
 .upload-modal-card h2 {
   margin: 0;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   font-size: 1.7rem;
   color: #14364f;
 }
@@ -684,6 +730,88 @@ body {
   justify-self: end;
 }
 
+.uploader-filter-modal-card {
+  max-width: 640px;
+  display: grid;
+  gap: 12px;
+}
+
+.uploader-filter-search {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.uploader-filter-search input {
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid #ccd8e0;
+  font-family: inherit;
+}
+
+.uploader-filter-results {
+  max-height: 52vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.uploader-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d7e2ea;
+  background: #f9fcff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: #1c425d;
+}
+
+.uploader-row:hover {
+  border-color: #9db8ca;
+  background: #f1f7fc;
+}
+
+.uploader-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #d8e5ef;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #1c425d;
+}
+
+.uploader-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.uploader-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.uploader-main strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.uploader-main span {
+  display: block;
+  margin-top: 3px;
+  color: #567186;
+  font-size: 0.82rem;
+}
+
 .form-message {
   min-height: 18px;
   margin: 0;
@@ -724,5 +852,20 @@ body {
 
   .filters {
     width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .uploader-filter-button {
+    width: 100%;
+  }
+
+  .search-bar {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .uploader-filter-search {
+    grid-template-columns: 1fr;
   }
 }
