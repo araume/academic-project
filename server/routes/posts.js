@@ -1186,7 +1186,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
           type: 'following_new_post',
           entityType: 'post',
           entityId: postId,
-          targetUrl: `/home?post=${encodeURIComponent(postId)}`,
+          targetUrl: `/posts/${encodeURIComponent(postId)}`,
           meta: {
             postTitle: postDoc.title,
           },
@@ -1325,7 +1325,7 @@ router.post('/api/posts/:id/like', async (req, res) => {
             type: 'post_liked',
             entityType: 'post',
             entityId: id,
-            targetUrl: `/home?post=${encodeURIComponent(id)}`,
+            targetUrl: `/posts/${encodeURIComponent(id)}`,
             meta: {
               postTitle: postForRecipient.title || 'Untitled post',
             },
@@ -1404,7 +1404,7 @@ router.post('/api/posts/:id/comments', async (req, res) => {
             type: 'post_commented',
             entityType: 'post',
             entityId: id,
-            targetUrl: `/home?post=${encodeURIComponent(id)}`,
+            targetUrl: `/posts/${encodeURIComponent(id)}`,
             meta: {
               postTitle: post.title || 'Untitled post',
             },

@@ -64,6 +64,10 @@ app.get('/home', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'home.html'));
 });
 
+app.get('/posts/:id', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'post.html'));
+});
+
 app.get('/connections', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'pages', 'connections.html'));
 });

@@ -262,7 +262,7 @@ function renderBookmarkedPosts(posts) {
     openButton.addEventListener('click', () => {
       const postId = post && post.id ? String(post.id) : '';
       if (!postId) return;
-      window.location.href = `/home?post=${encodeURIComponent(postId)}`;
+      window.location.href = `/posts/${encodeURIComponent(postId)}`;
     });
 
     footer.appendChild(stats);
@@ -410,7 +410,7 @@ function buildProfilePostCard(post, source) {
       return;
     }
     if (!post.id) return;
-    window.location.href = `/home?post=${encodeURIComponent(post.id)}&openPostModal=1`;
+    window.location.href = `/posts/${encodeURIComponent(post.id)}`;
   });
   actions.appendChild(openButton);
 

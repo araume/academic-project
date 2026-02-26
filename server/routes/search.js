@@ -241,7 +241,7 @@ async function searchPosts({ viewer, query, limit }) {
         displayName: profile?.displayName || post.uploader?.displayName || 'Member',
         photoLink: profile?.photoLink || post.uploader?.photoLink || null,
       },
-      targetUrl: `/home?post=${encodeURIComponent(post._id.toString())}`,
+      targetUrl: `/posts/${encodeURIComponent(post._id.toString())}`,
     };
   });
 }

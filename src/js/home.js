@@ -72,6 +72,8 @@ let isSendingPostAi = false;
 let isCreatingPost = false;
 let isSubmittingPostComment = false;
 const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
+let postImageLightbox = null;
+let postImageLightboxImg = null;
 
 const state = {
   page: 1,
@@ -83,6 +85,12 @@ function profileUrlForUid(uid) {
   const safeUid = typeof uid === 'string' ? uid.trim() : '';
   if (!safeUid) return '';
   return `/profile?uid=${encodeURIComponent(safeUid)}`;
+}
+
+function postUrlForId(postId) {
+  const safePostId = sanitizePostId(postId);
+  if (!safePostId) return '/home';
+  return `/posts/${encodeURIComponent(safePostId)}`;
 }
 
 function buildProfileNameNode(uid, displayName, className = 'post-author-link') {
@@ -248,7 +256,7 @@ async function openPostSpotlight(postId, options = {}) {
 async function maybeOpenRequestedPost() {
   const postId = extractRequestedPostId();
   if (!postId) return;
-  await openPostSpotlight(postId, { clearUrl: true });
+  window.location.replace(postUrlForId(postId));
 }
 
 function setJoinButtonLoadingState(button, loading) {
@@ -396,6 +404,51 @@ function closeModal(modal) {
   if (modal) {
     modal.classList.add('is-hidden');
   }
+}
+
+function ensurePostImageLightbox() {
+  if (postImageLightbox && postImageLightboxImg) return;
+
+  postImageLightbox = document.createElement('div');
+  postImageLightbox.className = 'image-lightbox is-hidden';
+  postImageLightbox.innerHTML = `
+    <div class="lightbox-card">
+      <button type="button" class="lightbox-close" aria-label="Close image">×</button>
+      <img alt="Expanded post image" />
+    </div>
+  `;
+  document.body.appendChild(postImageLightbox);
+  postImageLightboxImg = postImageLightbox.querySelector('img');
+
+  const closeButton = postImageLightbox.querySelector('.lightbox-close');
+  if (closeButton) {
+    closeButton.addEventListener('click', closePostImageLightbox);
+  }
+  postImageLightbox.addEventListener('click', (event) => {
+    if (event.target === postImageLightbox) {
+      closePostImageLightbox();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closePostImageLightbox();
+    }
+  });
+}
+
+function openPostImageLightbox(src, altText) {
+  if (!src) return;
+  ensurePostImageLightbox();
+  if (!postImageLightbox || !postImageLightboxImg) return;
+  postImageLightboxImg.src = src;
+  postImageLightboxImg.alt = altText || 'Expanded post image';
+  postImageLightbox.classList.remove('is-hidden');
+}
+
+function closePostImageLightbox() {
+  if (!postImageLightbox || !postImageLightboxImg) return;
+  postImageLightbox.classList.add('is-hidden');
+  postImageLightboxImg.removeAttribute('src');
 }
 
 function appendPostAiBubble(role, text, { pending = false } = {}) {
@@ -645,7 +698,7 @@ function renderTrendingSidecard(items) {
     open.textContent = 'Open discussion';
     open.addEventListener('click', async (event) => {
       event.stopPropagation();
-      await openPostSpotlight(item.id);
+      window.location.href = postUrlForId(item.id);
     });
 
     row.appendChild(top);
@@ -655,7 +708,7 @@ function renderTrendingSidecard(items) {
     row.appendChild(stat);
     row.appendChild(open);
     row.addEventListener('click', async () => {
-      await openPostSpotlight(item.id);
+      window.location.href = postUrlForId(item.id);
     });
     trendingDiscussionsList.appendChild(row);
   });
@@ -857,7 +910,13 @@ function renderAttachment(post) {
   if (type === 'image') {
     const media = document.createElement('div');
     media.className = 'post-media';
-    media.innerHTML = `<img src="${link}" alt="Attachment" />`;
+    const image = document.createElement('img');
+    image.src = link;
+    image.alt = title || 'Image attachment';
+    image.addEventListener('click', () => {
+      openPostImageLightbox(link, title || 'Image attachment');
+    });
+    media.appendChild(image);
     return media;
   }
   if (type === 'video') {
@@ -893,7 +952,7 @@ async function handleMenuAction(action, post) {
       replacePostCard(post);
     }
   } else if (action === 'share') {
-    const shareUrl = `${window.location.origin}/home?post=${encodeURIComponent(post.id)}`;
+    const shareUrl = `${window.location.origin}${postUrlForId(post.id)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
       alert('Post link copied.');
@@ -1309,7 +1368,7 @@ if (postAiModal) {
 window.addEventListener('open-post-modal', async (event) => {
   const postId = event && event.detail ? sanitizePostId(event.detail.postId || '') : '';
   if (!postId) return;
-  await openPostSpotlight(postId);
+  window.location.href = postUrlForId(postId);
 });
 
 async function initHome() {
