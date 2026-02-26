@@ -303,13 +303,16 @@ body {
   place-items: center;
   font-weight: 600;
   color: var(--ink-soft);
+  overflow: hidden;
 }
 
 .doc-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   border-radius: 12px;
+  display: block;
 }
 
 .doc-meta {
@@ -394,13 +397,16 @@ body {
   background: #e7e2dd;
   display: grid;
   place-items: center;
+  overflow: hidden;
 }
 
 .detail-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   border-radius: 16px;
+  display: block;
 }
 
 .detail-description {

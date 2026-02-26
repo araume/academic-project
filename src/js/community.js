@@ -71,6 +71,9 @@ const commentsList = document.getElementById('commentsList');
 const commentForm = document.getElementById('commentForm');
 const commentInput = document.getElementById('commentInput');
 const commentMessage = document.getElementById('commentMessage');
+const commentSubmitButton = commentForm
+  ? commentForm.querySelector('button[type="submit"]')
+  : null;
 
 const createPostModal = document.getElementById('createPostModal');
 const createPostModalClose = document.getElementById('createPostModalClose');
@@ -102,6 +105,8 @@ const state = {
 
 let libraryPickerSearchTimer = null;
 let membersSearchTimer = null;
+let isSubmittingCommunityPost = false;
+let isSubmittingCommunityComment = false;
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
@@ -157,6 +162,21 @@ function showMessage(target, text, type = 'error') {
   if (!target) return;
   target.textContent = text || '';
   target.classList.toggle('success', type === 'success');
+}
+
+function setPostingState(button, isPosting) {
+  if (!button) return;
+  if (isPosting) {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText = button.textContent || 'Post';
+    }
+    button.disabled = true;
+    button.textContent = 'Posting...';
+    return;
+  }
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || button.textContent || 'Post';
+  delete button.dataset.originalText;
 }
 
 function formatAgo(dateString) {
@@ -569,7 +589,7 @@ function setPostFormEnabled(enabled) {
   postTitle.disabled = !enabled;
   postContent.disabled = !enabled;
   postVisibility.disabled = !enabled;
-  postSubmitButton.disabled = !enabled;
+  postSubmitButton.disabled = !enabled || isSubmittingCommunityPost;
   if (postCourseName) {
     postCourseName.disabled = true;
   }
@@ -1447,6 +1467,7 @@ async function togglePostLike(post) {
 
 async function submitPost(event) {
   event.preventDefault();
+  if (isSubmittingCommunityPost) return;
   showMessage(postMessage, '');
 
   if (!state.selectedCommunityId) {
@@ -1493,6 +1514,8 @@ async function submitPost(event) {
     formData.set('attachmentType', 'none');
   }
 
+  isSubmittingCommunityPost = true;
+  setPostingState(postSubmitButton, true);
   try {
     await createCommunityPost(formData);
 
@@ -1518,6 +1541,9 @@ async function submitPost(event) {
       return;
     }
     showMessage(postMessage, error.message);
+  } finally {
+    isSubmittingCommunityPost = false;
+    setPostingState(postSubmitButton, false);
   }
 }
 
@@ -1682,6 +1708,7 @@ function renderComments(comments) {
 
 async function submitComment(event) {
   event.preventDefault();
+  if (isSubmittingCommunityComment) return;
   showMessage(commentMessage, '');
 
   if (!state.selectedCommunityId || !state.currentPostForComments) {
@@ -1695,6 +1722,8 @@ async function submitComment(event) {
     return;
   }
 
+  isSubmittingCommunityComment = true;
+  setPostingState(commentSubmitButton, true);
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/posts/${state.currentPostForComments.id}/comments`, {
       method: 'POST',
@@ -1719,6 +1748,9 @@ async function submitComment(event) {
       return;
     }
     showMessage(commentMessage, error.message);
+  } finally {
+    isSubmittingCommunityComment = false;
+    setPostingState(commentSubmitButton, false);
   }
 }
 

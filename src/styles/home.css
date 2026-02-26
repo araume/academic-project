@@ -361,14 +361,18 @@ a.comment-author-link:hover {
 
 .post-media {
   margin-top: 12px;
-  width: 100%;
+  width: min(100%, 700px);
   border-radius: 14px;
   overflow: hidden;
+  background: #d8d8d8;
 }
 
 .post-media img,
 .post-media video {
   width: 100%;
+  max-height: 460px;
+  object-fit: cover;
+  object-position: center;
   display: block;
   border-radius: 14px;
 }

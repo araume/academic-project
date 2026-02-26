@@ -10,6 +10,9 @@ const createPostModal = document.getElementById('createPostModal');
 const createPostClose = document.getElementById('createPostClose');
 const createPostForm = document.getElementById('createPostForm');
 const createPostMessage = document.getElementById('createPostMessage');
+const createPostSubmitButton = createPostForm
+  ? createPostForm.querySelector('button[type="submit"]')
+  : null;
 const attachmentFile = document.getElementById('attachmentFile');
 const openLibraryPicker = document.getElementById('openLibraryPicker');
 const libraryPickerModal = document.getElementById('libraryPickerModal');
@@ -30,6 +33,9 @@ const commentsClose = document.getElementById('commentsClose');
 const postCommentList = document.getElementById('postCommentList');
 const postCommentForm = document.getElementById('postCommentForm');
 const postCommentInput = document.getElementById('postCommentInput');
+const postCommentSubmitButton = postCommentForm
+  ? postCommentForm.querySelector('button[type="submit"]')
+  : null;
 const postAiModal = document.getElementById('postAiModal');
 const postAiClose = document.getElementById('postAiClose');
 const postAiTitle = document.getElementById('postAiTitle');
@@ -63,6 +69,8 @@ let libraryPickerSearchTimer = null;
 let postCache = new Map();
 let activePostAiPostId = null;
 let isSendingPostAi = false;
+let isCreatingPost = false;
+let isSubmittingPostComment = false;
 const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
 
 const state = {
@@ -334,6 +342,21 @@ function setNavAvatar(photoLink, displayName) {
     return;
   }
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setPostingState(button, isPosting) {
+  if (!button) return;
+  if (isPosting) {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText = button.textContent || 'Post';
+    }
+    button.disabled = true;
+    button.textContent = 'Posting...';
+    return;
+  }
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || button.textContent || 'Post';
+  delete button.dataset.originalText;
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -966,6 +989,7 @@ async function loadCurrentProfile() {
 
 async function createPost(event) {
   event.preventDefault();
+  if (isCreatingPost) return;
   createPostMessage.textContent = '';
 
   const formData = new FormData(createPostForm);
@@ -998,6 +1022,8 @@ async function createPost(event) {
   }
   formData.delete('attachmentLink');
 
+  isCreatingPost = true;
+  setPostingState(createPostSubmitButton, true);
   try {
     const response = await fetch('/api/posts', {
       method: 'POST',
@@ -1015,6 +1041,9 @@ async function createPost(event) {
     fetchHomeSidecards();
   } catch (error) {
     createPostMessage.textContent = error.message;
+  } finally {
+    isCreatingPost = false;
+    setPostingState(createPostSubmitButton, false);
   }
 }
 
@@ -1089,23 +1118,32 @@ async function loadPostComments(postId) {
 
 async function submitPostComment(event) {
   event.preventDefault();
+  if (isSubmittingPostComment) return;
   if (!currentPostId || !postCommentInput.value.trim()) {
     return;
   }
+
+  isSubmittingPostComment = true;
+  setPostingState(postCommentSubmitButton, true);
   const content = postCommentInput.value.trim();
-  const response = await fetch(`/api/posts/${currentPostId}/comments`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  const data = await response.json();
-  if (response.ok && data.ok) {
-    postCommentInput.value = '';
-    await loadPostComments(currentPostId);
-    const post = postCache.get(currentPostId);
-    if (post) {
-      post.commentsCount = Number(post.commentsCount || 0) + 1;
+  try {
+    const response = await fetch(`/api/posts/${currentPostId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (response.ok && data.ok) {
+      postCommentInput.value = '';
+      await loadPostComments(currentPostId);
+      const post = postCache.get(currentPostId);
+      if (post) {
+        post.commentsCount = Number(post.commentsCount || 0) + 1;
+      }
     }
+  } finally {
+    isSubmittingPostComment = false;
+    setPostingState(postCommentSubmitButton, false);
   }
 }
 

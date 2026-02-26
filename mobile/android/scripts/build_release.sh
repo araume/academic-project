@@ -5,6 +5,27 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android"
 FLUTTER_BIN="${FLUTTER_BIN:-flutter}"
 RUN_CHECKS="${RUN_CHECKS:-1}"
+OBJECTIVE_C_HOOKS_DIR="$ROOT_DIR/.dart_tool/hooks_runner/objective_c"
+
+clean_invalid_native_asset_cache() {
+  if [[ ! -d "$OBJECTIVE_C_HOOKS_DIR" ]]; then
+    return
+  fi
+
+  local cleaned=0
+  while IFS= read -r -d '' output_file; do
+    local compact
+    compact="$(tr -d '[:space:]' < "$output_file" || true)"
+    if [[ -z "$compact" ]] || [[ "$compact" != \{* ]] || [[ "$compact" != *\"status\"* ]]; then
+      rm -rf "$(dirname "$output_file")"
+      cleaned=1
+    fi
+  done < <(find "$OBJECTIVE_C_HOOKS_DIR" -mindepth 2 -maxdepth 2 -type f -name output.json -print0)
+
+  if [[ "$cleaned" == "1" ]]; then
+    echo "Detected stale native-asset hook cache; cleaned invalid objective_c cache entries."
+  fi
+}
 
 usage() {
   cat <<USAGE
@@ -74,7 +95,7 @@ if [[ ! -f "$STORE_FILE" ]]; then
 fi
 
 cd "$ROOT_DIR"
-
+clean_invalid_native_asset_cache
 "$FLUTTER_BIN" pub get
 
 if [[ "$RUN_CHECKS" == "1" ]]; then
