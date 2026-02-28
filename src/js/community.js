@@ -1615,7 +1615,24 @@ async function takeDownPost(post) {
 async function reportPost(post) {
   if (!state.selectedCommunityId) return;
 
-  const reason = window.prompt('Why are you reporting this post?', '') || '';
+  const reportPayload =
+    typeof window.showReportDialog === 'function'
+      ? await window.showReportDialog({
+          title: 'Report community post',
+          subtitle: 'Select a reason and include optional details.',
+        })
+      : (() => {
+          const reason = window.prompt('Report reason:', '');
+          if (reason === null) return null;
+          const text = reason.trim();
+          return {
+            category: 'other',
+            customReason: text || 'Other',
+            details: null,
+            reason: text || 'Other',
+          };
+        })();
+  if (!reportPayload) return;
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/reports`, {
       method: 'POST',
@@ -1623,7 +1640,7 @@ async function reportPost(post) {
       body: JSON.stringify({
         targetType: 'post',
         targetPostId: post.id,
-        reason: reason.trim(),
+        ...reportPayload,
       }),
     });
     showMessage(communityMessage, 'Report submitted.', 'success');
@@ -1820,7 +1837,24 @@ async function takeDownComment(comment) {
 async function reportComment(comment) {
   if (!state.selectedCommunityId) return;
 
-  const reason = window.prompt('Why are you reporting this comment?', '') || '';
+  const reportPayload =
+    typeof window.showReportDialog === 'function'
+      ? await window.showReportDialog({
+          title: 'Report community comment',
+          subtitle: 'Select a reason and include optional details.',
+        })
+      : (() => {
+          const reason = window.prompt('Report reason:', '');
+          if (reason === null) return null;
+          const text = reason.trim();
+          return {
+            category: 'other',
+            customReason: text || 'Other',
+            details: null,
+            reason: text || 'Other',
+          };
+        })();
+  if (!reportPayload) return;
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/reports`, {
       method: 'POST',
@@ -1828,7 +1862,7 @@ async function reportComment(comment) {
       body: JSON.stringify({
         targetType: 'comment',
         targetCommentId: comment.id,
-        reason: reason.trim(),
+        ...reportPayload,
       }),
     });
     showMessage(commentMessage, 'Report submitted.', 'success');

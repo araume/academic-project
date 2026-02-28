@@ -743,9 +743,45 @@ if (detailShare) {
 }
 
 if (detailReport) {
-  detailReport.addEventListener('click', () => {
-    alert('Report submitted. Thank you.');
-    toggleMenu(false);
+  detailReport.addEventListener('click', async () => {
+    if (!currentDoc) return;
+    try {
+      const reportPayload =
+        typeof window.showReportDialog === 'function'
+          ? await window.showReportDialog({
+              title: 'Report document',
+              subtitle: 'Select a reason and include optional details.',
+            })
+          : (() => {
+              const reason = window.prompt('Report reason:', '');
+              if (reason === null) return null;
+              const text = reason.trim();
+              return {
+                category: 'other',
+                customReason: text || 'Other',
+                details: null,
+                reason: text || 'Other',
+              };
+            })();
+      if (!reportPayload) return;
+
+      const response = await fetch(`/api/library/documents/${currentDoc.uuid}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reportPayload),
+      });
+      const data = await response.json().catch(() => ({ ok: false }));
+      if (!response.ok || !data.ok) {
+        alert(data.message || 'Unable to submit report.');
+        return;
+      }
+
+      alert('Report submitted. Thank you.');
+    } catch (error) {
+      alert(error.message || 'Unable to submit report.');
+    } finally {
+      toggleMenu(false);
+    }
   });
 }
 

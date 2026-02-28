@@ -196,3 +196,35 @@ Primary files:
 - Data access safety:
   - SQL queries for context documents/search/notifications/admin are parameterized.
   - profile photo and other storage-backed assets are served through signed URLs where configured.
+
+
+Main algorithm explanation:
+The “Task-intent detection pipeline” is a hybrid of regex heuristics + LLM classification, with a strict confirm-before-write step.
+
+Fast regex extraction first: it tries to directly parse task lines from the user message (extractProposedTasks) for patterns like “tasks: ...”.
+personal.js (line 32)
+
+Intent heuristic gate: if direct parsing fails, it checks whether the message looks like a task request (hasTaskIntent), including negation checks (“don’t create tasks”).
+personal.js (line 58)
+
+LLM intent classifier: it sends recent conversation + optional context doc/excerpt to analyzeTaskOrderIntent, which must return JSON: { isTaskOrder, tasks }.
+personal.js (line 147)
+
+LLM task inference fallback: if classification says not clearly a task order (or no tasks), it tries inferTasksFromConversation to extract actionable tasks anyway.
+personal.js (line 196)
+
+Task normalization/safety: extracted tasks are sanitized/validated (normalizeGeneratedTasks) to enforce title, allowed priority, due date format, tags, and max count.
+personal.js (line 111)
+
+Proposal creation (not immediate DB task write): tasks are stored as a pending proposal (ai_task_proposals) and the assistant replies with a confirmation prompt.
+personal.js (line 253)
+personal.js (line 268)
+personal.js (line 1211)
+
+Explicit user decision:
+
+Confirm creates real tasks in personal_tasks, then marks proposal accepted.
+personal.js (line 1471)
+Reject marks proposal rejected.
+personal.js (line 1499)
+So the core idea is: detect -> extract -> normalize -> propose -> require explicit confirmation before task creation.

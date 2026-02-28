@@ -18,6 +18,7 @@ const {
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const { hasAdminPrivileges } = require('../services/roleAccess');
 const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
+const { parseReportPayload } = require('../services/reporting');
 
 const router = express.Router();
 const upload = multer({
@@ -883,10 +884,72 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
       }
     }
 
+    const db = await getMongoDb();
+    await db.collection('document_reports').deleteMany({ documentUuid: uuid });
+
     return res.json({ ok: true });
   } catch (error) {
     console.error('Document delete failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to delete document.' });
+  }
+});
+
+router.post('/api/library/documents/:uuid/report', async (req, res) => {
+  const { uuid } = req.params;
+  if (!uuid) {
+    return res.status(400).json({ ok: false, message: 'Missing document id.' });
+  }
+  const userUid = req.user && req.user.uid;
+  if (!userUid) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const docResult = await pool.query(
+      `SELECT uuid, title, uploader_uid
+       FROM documents
+       WHERE uuid = $1
+       LIMIT 1`,
+      [uuid]
+    );
+    const doc = docResult.rows[0];
+    if (!doc) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+    if (doc.uploader_uid && doc.uploader_uid === userUid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own document.' });
+    }
+
+    const payload = parseReportPayload(req.body || {});
+    const db = await getMongoDb();
+    await db.collection('document_reports').updateOne(
+      { documentUuid: uuid, userUid },
+      {
+        $set: {
+          documentUuid: uuid,
+          documentTitle: doc.title || '',
+          userUid,
+          targetUid: doc.uploader_uid || null,
+          category: payload.category,
+          customReason: payload.customReason || null,
+          details: payload.details || null,
+          reason: payload.reason,
+          status: 'open',
+          moderationAction: null,
+          resolutionNote: null,
+          resolvedAt: null,
+          resolvedByUid: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Document report failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to submit report.' });
   }
 });
 

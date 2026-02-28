@@ -974,7 +974,34 @@ async function handleMenuAction(action, post) {
       prompt('Copy post link:', shareUrl);
     }
   } else if (action === 'report') {
-    await fetch(`/api/posts/${post.id}/report`, { method: 'POST' });
+    const reportPayload =
+      typeof window.showReportDialog === 'function'
+        ? await window.showReportDialog({
+            title: 'Report post',
+            subtitle: 'Select the reason and add optional details.',
+          })
+        : (() => {
+            const reason = window.prompt('Report reason:', '');
+            if (reason === null) return null;
+            const text = reason.trim();
+            return {
+              category: 'other',
+              customReason: text || 'Other',
+              details: null,
+              reason: text || 'Other',
+            };
+          })();
+    if (!reportPayload) return;
+    const response = await fetch(`/api/posts/${post.id}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reportPayload),
+    });
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (!response.ok || !data.ok) {
+      alert(data.message || 'Unable to submit report.');
+      return;
+    }
     alert('Report submitted. Thank you.');
   } else if (action === 'edit') {
     currentEditPost = post;

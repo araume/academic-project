@@ -728,11 +728,28 @@ async function handleProfileOption(action) {
     }
 
     if (action === 'report-user') {
-      const reason = prompt('Optional report reason (leave blank to skip):', '') || '';
+      const reportPayload =
+        typeof window.showReportDialog === 'function'
+          ? await window.showReportDialog({
+              title: 'Report user',
+              subtitle: 'Select a reason and include optional details.',
+            })
+          : (() => {
+              const reason = window.prompt('Report reason:', '');
+              if (reason === null) return null;
+              const text = reason.trim();
+              return {
+                category: 'other',
+                customReason: text || 'Other',
+                details: null,
+                reason: text || 'Other',
+              };
+            })();
+      if (!reportPayload) return;
       await apiRequest('/api/connections/report-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUid, reason }),
+        body: JSON.stringify({ targetUid, ...reportPayload }),
       });
       setActionMessage('User reported. Thank you.', 'success');
       return;

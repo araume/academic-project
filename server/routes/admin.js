@@ -55,6 +55,52 @@ function normalizeReportStatus(row) {
   return 'open';
 }
 
+const ADMIN_REPORT_STATUSES = new Set([
+  'open',
+  'under_review',
+  'resolved_action_taken',
+  'resolved_no_action',
+  'rejected',
+]);
+
+const ADMIN_REPORT_ACTIONS = new Set([
+  'none',
+  'delete_main_post',
+  'delete_library_document',
+  'delete_chat_message',
+  'take_down_community_post',
+  'take_down_community_comment',
+  'ban_target_user',
+]);
+
+function parseReportKey(value) {
+  const text = sanitizeText(value, 220);
+  if (!text || !text.includes(':')) return null;
+  const separator = text.indexOf(':');
+  const source = text.slice(0, separator);
+  const rawId = text.slice(separator + 1);
+  if (!source || !rawId) return null;
+  return { source, rawId, key: `${source}:${rawId}` };
+}
+
+function normalizeAdminReportStatus(value, fallback = 'open') {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  if (ADMIN_REPORT_STATUSES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizeAdminReportAction(value, fallback = 'none') {
+  const normalized = sanitizeText(value, 80).toLowerCase();
+  if (ADMIN_REPORT_ACTIONS.has(normalized)) return normalized;
+  return fallback;
+}
+
+function mapAdminStatusToChatStatus(status) {
+  if (status === 'open') return 'pending';
+  if (status === 'under_review') return 'reviewed';
+  return 'dismissed';
+}
+
 async function loadDisplayNamesByUid(uids) {
   const deduped = Array.from(new Set((uids || []).filter(Boolean)));
   if (!deduped.length) return new Map();
@@ -68,6 +114,174 @@ async function loadDisplayNamesByUid(uids) {
     [deduped]
   );
   return new Map(result.rows.map((row) => [row.uid, row.display_name || 'Member']));
+}
+
+async function loadAdminReportActionsMap(reportKeys) {
+  const deduped = Array.from(new Set((reportKeys || []).filter(Boolean)));
+  if (!deduped.length) return new Map();
+  const db = await getMongoDb();
+  const rows = await db
+    .collection('admin_report_actions')
+    .find({ reportKey: { $in: deduped } })
+    .toArray();
+  return new Map(rows.map((item) => [item.reportKey, item]));
+}
+
+async function deleteMainPostById(postIdValue) {
+  if (!postIdValue) return false;
+  const postId = ObjectId.isValid(postIdValue) ? new ObjectId(postIdValue) : null;
+  if (!postId) return false;
+
+  const db = await getMongoDb();
+  const postsCollection = db.collection('posts');
+  const post = await postsCollection.findOne({ _id: postId });
+  if (!post) return false;
+
+  const attachmentKey =
+    post.attachment &&
+    (post.attachment.type === 'image' || post.attachment.type === 'video')
+      ? post.attachment.key
+      : null;
+  if (attachmentKey && !String(attachmentKey).startsWith('http')) {
+    try {
+      await deleteFromStorage(attachmentKey);
+    } catch (storageError) {
+      console.error('Admin report action post attachment delete failed:', storageError);
+    }
+  }
+
+  await postsCollection.deleteOne({ _id: postId });
+  await db.collection('post_likes').deleteMany({ postId });
+  await db.collection('post_comments').deleteMany({ postId });
+  await db.collection('post_bookmarks').deleteMany({ postId });
+  await db.collection('post_reports').deleteMany({ postId });
+  return true;
+}
+
+async function deleteLibraryDocumentByUuid(uuid) {
+  const docUuid = sanitizeText(uuid, 120);
+  if (!docUuid) return false;
+
+  const docResult = await pool.query(
+    `SELECT uuid, link, thumbnail_link
+     FROM documents
+     WHERE uuid = $1
+     LIMIT 1`,
+    [docUuid]
+  );
+  if (!docResult.rows.length) return false;
+  const doc = docResult.rows[0];
+
+  await pool.query('DELETE FROM documents WHERE uuid = $1', [docUuid]);
+
+  const keys = [doc.link, doc.thumbnail_link].filter(Boolean);
+  for (const key of keys) {
+    if (!String(key).startsWith('http')) {
+      try {
+        await deleteFromStorage(key);
+      } catch (storageError) {
+        console.error('Admin report action document storage delete failed:', storageError);
+      }
+    }
+  }
+
+  const db = await getMongoDb();
+  await db.collection('document_reports').deleteMany({ documentUuid: docUuid });
+  return true;
+}
+
+async function deleteChatMessageById(messageId, adminUid) {
+  const numericMessageId = Number(messageId);
+  if (!Number.isInteger(numericMessageId) || numericMessageId <= 0) return false;
+
+  const result = await pool.query(
+    `UPDATE chat_messages
+     SET body = '',
+         attachment_type = NULL,
+         attachment_key = NULL,
+         attachment_link = NULL,
+         attachment_filename = NULL,
+         attachment_mime_type = NULL,
+         attachment_size_bytes = NULL,
+         deleted_at = NOW(),
+         deleted_by_uid = $2
+     WHERE id = $1
+     RETURNING id`,
+    [numericMessageId, adminUid]
+  );
+  return Boolean(result.rows.length);
+}
+
+async function takeDownCommunityPostById(postId, adminUid, reason) {
+  const numericPostId = Number(postId);
+  if (!Number.isInteger(numericPostId) || numericPostId <= 0) return false;
+  const result = await pool.query(
+    `UPDATE community_posts
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [numericPostId, adminUid, reason || 'Taken down from report review']
+  );
+  return Boolean(result.rows.length);
+}
+
+async function takeDownCommunityCommentById(commentId, adminUid, reason) {
+  const numericCommentId = Number(commentId);
+  if (!Number.isInteger(numericCommentId) || numericCommentId <= 0) return false;
+  const result = await pool.query(
+    `UPDATE community_comments
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [numericCommentId, adminUid, reason || 'Taken down from report review']
+  );
+  return Boolean(result.rows.length);
+}
+
+async function banTargetUserFromReport(targetUid, adminViewer, note) {
+  const normalizedTargetUid = sanitizeText(targetUid, 120);
+  if (!normalizedTargetUid) {
+    return { ok: false, message: 'Target account unavailable for ban action.' };
+  }
+  if (normalizedTargetUid === adminViewer.uid) {
+    return { ok: false, message: 'You cannot ban your own account.' };
+  }
+
+  const targetResult = await pool.query(
+    `SELECT uid, COALESCE(platform_role, 'member') AS platform_role, COALESCE(is_banned, false) AS is_banned
+     FROM accounts
+     WHERE uid = $1
+     LIMIT 1`,
+    [normalizedTargetUid]
+  );
+  const target = targetResult.rows[0];
+  if (!target) {
+    return { ok: false, message: 'Target account not found.' };
+  }
+  if (target.platform_role === 'owner') {
+    return { ok: false, message: 'Owner account cannot be banned.' };
+  }
+  if (adminViewer.platform_role !== 'owner' && (target.platform_role === 'owner' || target.platform_role === 'admin')) {
+    return { ok: false, message: 'Admins cannot ban owner/admin accounts.' };
+  }
+
+  await pool.query(
+    `UPDATE accounts
+     SET is_banned = true,
+         banned_at = NOW(),
+         banned_reason = $1,
+         banned_by_uid = $2
+     WHERE uid = $3`,
+    [note || 'Banned from report resolution', adminViewer.uid, normalizedTargetUid]
+  );
+  await deleteSessionsForUid(normalizedTargetUid);
+  return { ok: true };
 }
 
 async function cleanupMongoDataForAccount(uid) {
@@ -127,6 +341,8 @@ async function cleanupMongoDataForAccount(uid) {
     db.collection('post_comments').deleteMany({ userUid: uid }),
     db.collection('post_bookmarks').deleteMany({ userUid: uid }),
     db.collection('post_reports').deleteMany({ userUid: uid }),
+    db.collection('document_reports').deleteMany({ userUid: uid }),
+    db.collection('admin_report_actions').deleteMany({ $or: [{ resolvedByUid: uid }, { targetUid: uid }] }),
     db.collection('doccomment').deleteMany({ userUid: uid }),
     db.collection('personal_journal_folders').deleteMany({ userUid: uid }),
     db.collection('personal_journals').deleteMany({ userUid: uid }),
@@ -148,6 +364,7 @@ async function cleanupMongoDataForAccount(uid) {
     cleanupOps.push(db.collection('post_reports').deleteMany({ postId: { $in: userPostIds } }));
     cleanupOps.push(db.collection('post_ai_conversations').deleteMany({ postId: { $in: userPostIds } }));
   }
+  cleanupOps.push(db.collection('document_reports').deleteMany({ targetUid: uid }));
   const postMessageConversationIds = Array.from(
     new Set([...postAiConversationIds, ...postLinkedAiConversationIds].map((value) => String(value)))
   ).map((value) => new ObjectId(value));
@@ -586,9 +803,13 @@ router.get('/api/admin/reports', async (req, res) => {
           status: 'open',
           targetType: 'user_profile',
           targetId: row.target_uid,
+          targetUid: row.target_uid,
           targetName: row.target_name || 'User',
           reporterUid: row.reporter_uid,
           reporterName: row.reporter_name || 'Member',
+          category: null,
+          customReason: null,
+          details: null,
           reason: row.reason || null,
           course: row.target_course || null,
           createdAt: row.created_at,
@@ -641,9 +862,13 @@ router.get('/api/admin/reports', async (req, res) => {
           status: normalizeReportStatus(row),
           targetType: row.target_type || 'community',
           targetId: row.target_uid || row.target_post_id || row.target_comment_id || null,
+          targetUid: row.target_uid || null,
           targetName: row.target_name || null,
           reporterUid: row.reporter_uid,
           reporterName: row.reporter_name || 'Member',
+          category: null,
+          customReason: null,
+          details: null,
           reason: row.reason || null,
           course: row.course_name || null,
           createdAt: row.created_at,
@@ -684,14 +909,83 @@ router.get('/api/admin/reports', async (req, res) => {
           reports.push({
             id: `main_post:${report._id}`,
             source: 'main_post',
-            status: 'open',
+            status: normalizeAdminReportStatus(report.status, 'open'),
             targetType: 'main_post',
             targetId: post ? String(post._id) : String(report.postId || ''),
+            targetUid: post ? post.uploaderUid || null : report.targetUid || null,
             targetName: post ? post.title : 'Post',
             reporterUid: report.userUid || null,
             reporterName: namesMap.get(report.userUid) || report.userUid || 'Member',
+            category: report.category || null,
+            customReason: report.customReason || null,
+            details: report.details || null,
             reason: report.reason || null,
             course: post ? post.course || null : null,
+            moderationAction: report.moderationAction || 'none',
+            resolutionNote: report.resolutionNote || null,
+            resolvedAt: report.resolvedAt || null,
+            resolvedByUid: report.resolvedByUid || null,
+            createdAt: report.createdAt || new Date(),
+          });
+        });
+      }
+    }
+
+    if (!source || source === 'library_document') {
+      const db = await getMongoDb();
+      const mongoReports = await db
+        .collection('document_reports')
+        .find({})
+        .sort({ createdAt: -1 })
+        .limit(maxSourceRows)
+        .toArray();
+
+      if (mongoReports.length) {
+        const documentUuids = Array.from(
+          new Set(mongoReports.map((item) => sanitizeText(item.documentUuid, 120)).filter(Boolean))
+        );
+        let docsMap = new Map();
+        if (documentUuids.length) {
+          const docsResult = await pool.query(
+            `SELECT uuid::text AS uuid, title, course, uploader_uid
+             FROM documents
+             WHERE uuid::text = ANY($1::text[])`,
+            [documentUuids]
+          );
+          docsMap = new Map(docsResult.rows.map((row) => [row.uuid, row]));
+        }
+
+        const reporterUids = mongoReports.map((item) => item.userUid).filter(Boolean);
+        const uploaderUids = mongoReports
+          .map((item) => {
+            const doc = docsMap.get(sanitizeText(item.documentUuid, 120));
+            return doc ? doc.uploader_uid : item.targetUid;
+          })
+          .filter(Boolean);
+        const namesMap = await loadDisplayNamesByUid([...reporterUids, ...uploaderUids]);
+
+        mongoReports.forEach((report) => {
+          const documentUuid = sanitizeText(report.documentUuid, 120);
+          const doc = docsMap.get(documentUuid);
+          reports.push({
+            id: `library_document:${report._id}`,
+            source: 'library_document',
+            status: normalizeAdminReportStatus(report.status, 'open'),
+            targetType: 'library_document',
+            targetId: documentUuid || null,
+            targetUid: (doc && doc.uploader_uid) || report.targetUid || null,
+            targetName: (doc && doc.title) || report.documentTitle || 'Document',
+            reporterUid: report.userUid || null,
+            reporterName: namesMap.get(report.userUid) || report.userUid || 'Member',
+            category: report.category || null,
+            customReason: report.customReason || null,
+            details: report.details || null,
+            reason: report.reason || null,
+            course: (doc && doc.course) || null,
+            moderationAction: report.moderationAction || 'none',
+            resolutionNote: report.resolutionNote || null,
+            resolvedAt: report.resolvedAt || null,
+            resolvedByUid: report.resolvedByUid || null,
             createdAt: report.createdAt || new Date(),
           });
         });
@@ -708,6 +1002,7 @@ router.get('/api/admin/reports', async (req, res) => {
             r.id,
             r.message_id,
             r.thread_id,
+            r.message_sender_uid,
             r.reason,
             r.status,
             r.created_at,
@@ -737,9 +1032,13 @@ router.get('/api/admin/reports', async (req, res) => {
             status: normalizedStatus,
             targetType: 'chat_message',
             targetId: row.message_id ? String(row.message_id) : null,
+            targetUid: row.message_sender_uid || null,
             targetName: row.sender_name || 'Conversation message',
             reporterUid: row.reporter_uid || null,
             reporterName: row.reporter_name || 'Member',
+            category: null,
+            customReason: null,
+            details: null,
             reason: row.reason || null,
             course: null,
             createdAt: row.created_at,
@@ -751,6 +1050,22 @@ router.get('/api/admin/reports', async (req, res) => {
           throw chatReportError;
         }
       }
+    }
+
+    if (reports.length) {
+      const actionsMap = await loadAdminReportActionsMap(reports.map((item) => item.id));
+      reports.forEach((item) => {
+        const action = actionsMap.get(item.id);
+        if (!action) {
+          if (!item.moderationAction) item.moderationAction = 'none';
+          return;
+        }
+        item.status = normalizeAdminReportStatus(action.status, item.status || 'open');
+        item.moderationAction = normalizeAdminReportAction(action.moderationAction, item.moderationAction || 'none');
+        item.resolutionNote = action.resolutionNote || item.resolutionNote || null;
+        item.resolvedByUid = action.resolvedByUid || item.resolvedByUid || null;
+        item.resolvedAt = action.resolvedAt || action.updatedAt || item.resolvedAt || null;
+      });
     }
 
     let filtered = reports;
@@ -767,7 +1082,12 @@ router.get('/api/admin/reports', async (req, res) => {
           item.targetType,
           item.targetName,
           item.reporterName,
+          item.category,
+          item.customReason,
+          item.details,
           item.reason,
+          item.moderationAction,
+          item.resolutionNote,
           item.course,
           item.targetId,
         ]
@@ -793,6 +1113,325 @@ router.get('/api/admin/reports', async (req, res) => {
   } catch (error) {
     console.error('Admin reports fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load reports.' });
+  }
+});
+
+router.post('/api/admin/reports/action', async (req, res) => {
+  const parsed = parseReportKey(req.body && req.body.reportId);
+  if (!parsed) {
+    return res.status(400).json({ ok: false, message: 'Invalid report id.' });
+  }
+
+  let status = normalizeAdminReportStatus(req.body && req.body.status, 'open');
+  const moderationAction = normalizeAdminReportAction(req.body && req.body.moderationAction, 'none');
+  const resolutionNote = sanitizeText(req.body && req.body.note, 1000) || null;
+  if (moderationAction !== 'none' && (status === 'open' || status === 'under_review')) {
+    status = 'resolved_action_taken';
+  }
+
+  const allowedActionsBySource = {
+    profile: new Set(['none', 'ban_target_user']),
+    community: new Set(['none', 'take_down_community_post', 'take_down_community_comment', 'ban_target_user']),
+    main_post: new Set(['none', 'delete_main_post', 'ban_target_user']),
+    library_document: new Set(['none', 'delete_library_document', 'ban_target_user']),
+    chat_message: new Set(['none', 'delete_chat_message', 'ban_target_user']),
+  };
+  const sourceActions = allowedActionsBySource[parsed.source];
+  if (!sourceActions) {
+    return res.status(400).json({ ok: false, message: 'Unsupported report source.' });
+  }
+  if (!sourceActions.has(moderationAction)) {
+    return res.status(400).json({ ok: false, message: 'Invalid moderation action for this report source.' });
+  }
+
+  const shouldMarkResolved = !['open', 'under_review'].includes(status);
+  const resolvedAt = shouldMarkResolved ? new Date() : null;
+  const adminUid = req.adminViewer.uid;
+
+  let targetType = null;
+  let targetId = null;
+  let targetUid = null;
+  let reportExists = false;
+
+  try {
+    const db = await getMongoDb();
+
+    if (parsed.source === 'main_post') {
+      if (!ObjectId.isValid(parsed.rawId)) {
+        return res.status(400).json({ ok: false, message: 'Invalid main post report id.' });
+      }
+      const reportObjectId = new ObjectId(parsed.rawId);
+      const report = await db.collection('post_reports').findOne({ _id: reportObjectId });
+      if (!report) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      reportExists = true;
+      targetType = 'main_post';
+      targetId = report.postId ? String(report.postId) : null;
+
+      if (targetId && ObjectId.isValid(targetId)) {
+        const post = await db.collection('posts').findOne(
+          { _id: new ObjectId(targetId) },
+          { projection: { uploaderUid: 1 } }
+        );
+        targetUid = (post && post.uploaderUid) || report.targetUid || null;
+      } else {
+        targetUid = report.targetUid || null;
+      }
+
+      if (moderationAction === 'delete_main_post') {
+        const removed = await deleteMainPostById(targetId);
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target post no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await db.collection('post_reports').updateOne(
+        { _id: reportObjectId },
+        {
+          $set: {
+            status,
+            moderationAction,
+            resolutionNote,
+            resolvedAt,
+            resolvedByUid: shouldMarkResolved ? adminUid : null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } else if (parsed.source === 'library_document') {
+      if (!ObjectId.isValid(parsed.rawId)) {
+        return res.status(400).json({ ok: false, message: 'Invalid document report id.' });
+      }
+      const reportObjectId = new ObjectId(parsed.rawId);
+      const report = await db.collection('document_reports').findOne({ _id: reportObjectId });
+      if (!report) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      reportExists = true;
+      targetType = 'library_document';
+      targetId = sanitizeText(report.documentUuid, 120) || null;
+      targetUid = report.targetUid || null;
+
+      if (targetId) {
+        const docResult = await pool.query(
+          `SELECT uploader_uid
+           FROM documents
+           WHERE uuid::text = $1
+           LIMIT 1`,
+          [targetId]
+        );
+        targetUid = (docResult.rows[0] && docResult.rows[0].uploader_uid) || targetUid;
+      }
+
+      if (moderationAction === 'delete_library_document') {
+        const removed = await deleteLibraryDocumentByUuid(targetId);
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target document no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await db.collection('document_reports').updateOne(
+        { _id: reportObjectId },
+        {
+          $set: {
+            status,
+            moderationAction,
+            resolutionNote,
+            resolvedAt,
+            resolvedByUid: shouldMarkResolved ? adminUid : null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } else if (parsed.source === 'profile') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid profile report id.' });
+      }
+      const profileReport = await pool.query(
+        `SELECT id, target_uid
+         FROM user_profile_reports
+         WHERE id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!profileReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      reportExists = true;
+      targetType = 'user_profile';
+      targetId = profileReport.rows[0].target_uid || null;
+      targetUid = profileReport.rows[0].target_uid || null;
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+    } else if (parsed.source === 'chat_message') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid chat message report id.' });
+      }
+      const chatReport = await pool.query(
+        `SELECT id, message_id, message_sender_uid
+         FROM chat_message_reports
+         WHERE id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!chatReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      const reportRow = chatReport.rows[0];
+      reportExists = true;
+      targetType = 'chat_message';
+      targetId = reportRow.message_id ? String(reportRow.message_id) : null;
+      targetUid = reportRow.message_sender_uid || null;
+
+      if (moderationAction === 'delete_chat_message') {
+        const removed = await deleteChatMessageById(reportRow.message_id, adminUid);
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target chat message no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await pool.query(
+        `UPDATE chat_message_reports
+         SET status = $2,
+             resolution_note = $3,
+             resolved_by_uid = $4,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [reportId, mapAdminStatusToChatStatus(status), resolutionNote, shouldMarkResolved ? adminUid : null]
+      );
+    } else if (parsed.source === 'community') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid community report id.' });
+      }
+      const communityReport = await pool.query(
+        `SELECT id, target_type, target_uid, target_post_id, target_comment_id
+         FROM community_reports
+         WHERE id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!communityReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      const reportRow = communityReport.rows[0];
+      reportExists = true;
+      targetType = reportRow.target_type || 'community';
+      targetUid = reportRow.target_uid || null;
+      targetId = reportRow.target_post_id
+        ? String(reportRow.target_post_id)
+        : (reportRow.target_comment_id ? String(reportRow.target_comment_id) : targetUid);
+
+      if (moderationAction === 'take_down_community_post') {
+        if (targetType !== 'post') {
+          return res.status(400).json({ ok: false, message: 'This report does not target a community post.' });
+        }
+        const removed = await takeDownCommunityPostById(reportRow.target_post_id, adminUid, resolutionNote);
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target community post no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'take_down_community_comment') {
+        if (targetType !== 'comment') {
+          return res.status(400).json({ ok: false, message: 'This report does not target a community comment.' });
+        }
+        const removed = await takeDownCommunityCommentById(reportRow.target_comment_id, adminUid, resolutionNote);
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target community comment no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await pool.query(
+        `UPDATE community_reports
+         SET status = $2,
+             resolution_note = $3,
+             resolved_by_uid = $4,
+             resolved_at = $5,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [reportId, status, resolutionNote, shouldMarkResolved ? adminUid : null, resolvedAt]
+      );
+    }
+
+    if (!reportExists) {
+      return res.status(404).json({ ok: false, message: 'Report not found.' });
+    }
+
+    await db.collection('admin_report_actions').updateOne(
+      { reportKey: parsed.key },
+      {
+        $set: {
+          source: parsed.source,
+          sourceReportId: parsed.rawId,
+          reportKey: parsed.key,
+          status,
+          moderationAction,
+          resolutionNote,
+          targetType,
+          targetId,
+          targetUid,
+          resolvedByUid: shouldMarkResolved ? adminUid : null,
+          resolvedAt,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
+
+    return res.json({
+      ok: true,
+      report: {
+        reportId: parsed.key,
+        status,
+        moderationAction,
+        resolutionNote,
+        targetType,
+        targetId,
+        targetUid,
+        resolvedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Admin report action failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to apply report action.' });
   }
 });
 
@@ -1333,6 +1972,7 @@ router.delete('/api/admin/content/main-posts/:id', async (req, res) => {
     await db.collection('post_comments').deleteMany({ postId });
     await db.collection('post_bookmarks').deleteMany({ postId });
     await db.collection('post_reports').deleteMany({ postId });
+    await db.collection('admin_report_actions').deleteMany({ source: 'main_post', targetId: String(postId) });
     return res.json({ ok: true });
   } catch (error) {
     console.error('Admin delete main post failed:', error);
@@ -1745,6 +2385,9 @@ router.delete('/api/admin/content/library-documents/:uuid', async (req, res) => 
     const doc = docResult.rows[0];
 
     await pool.query('DELETE FROM documents WHERE uuid = $1', [uuid]);
+    const db = await getMongoDb();
+    await db.collection('document_reports').deleteMany({ documentUuid: uuid });
+    await db.collection('admin_report_actions').deleteMany({ source: 'library_document', targetId: uuid });
 
     const keys = [doc.link, doc.thumbnail_link].filter(Boolean);
     for (const key of keys) {

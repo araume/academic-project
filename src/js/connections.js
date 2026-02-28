@@ -1338,13 +1338,29 @@ if (messageList) {
     }
 
     if (action === 'report-message') {
-      const reasonInput = window.prompt('Report this message? Optional reason:', '');
-      if (reasonInput === null) return;
+      const reportPayload =
+        typeof window.showReportDialog === 'function'
+          ? await window.showReportDialog({
+              title: 'Report message',
+              subtitle: 'Select a reason and include optional details.',
+            })
+          : (() => {
+              const reason = window.prompt('Report reason:', '');
+              if (reason === null) return null;
+              const text = reason.trim();
+              return {
+                category: 'other',
+                customReason: text || 'Other',
+                details: null,
+                reason: text || 'Other',
+              };
+            })();
+      if (!reportPayload) return;
       try {
         await apiRequest(`/api/connections/messages/${messageId}/report`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: reasonInput.trim() }),
+          body: JSON.stringify(reportPayload),
         });
         showMessage(messageFeedback, 'Message reported.', 'success');
       } catch (error) {

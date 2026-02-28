@@ -8,6 +8,7 @@ const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
 const { uploadToStorage, deleteFromStorage, getSignedUrl, downloadFromStorage } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
+const { parseReportPayload } = require('../services/reporting');
 const {
   createNotification,
   createNotificationsForRecipients,
@@ -1634,7 +1635,6 @@ router.post('/api/posts/:id/bookmark', async (req, res) => {
 
 router.post('/api/posts/:id/report', async (req, res) => {
   const { id } = req.params;
-  const { reason } = req.body || {};
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid post id.' });
   }
@@ -1642,12 +1642,37 @@ router.post('/api/posts/:id/report', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
-    await db.collection('post_reports').insertOne({
-      postId,
-      userUid: req.user.uid,
-      reason: reason ? reason.trim() : null,
-      createdAt: new Date(),
-    });
+    const { category, customReason, details, reason } = parseReportPayload(req.body || {});
+    const post = await db.collection('posts').findOne({ _id: postId }, { projection: { uploaderUid: 1 } });
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+    if (post.uploaderUid && post.uploaderUid === req.user.uid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own post.' });
+    }
+
+    await db.collection('post_reports').updateOne(
+      { postId, userUid: req.user.uid },
+      {
+        $set: {
+          postId,
+          userUid: req.user.uid,
+          targetUid: post.uploaderUid || null,
+          category,
+          customReason: customReason || null,
+          details: details || null,
+          reason,
+          status: 'open',
+          moderationAction: null,
+          resolutionNote: null,
+          resolvedAt: null,
+          resolvedByUid: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
     return res.json({ ok: true });
   } catch (error) {
     console.error('Report failed:', error);

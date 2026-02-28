@@ -4,6 +4,7 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getSignedUrl, uploadToStorage } = require('../services/storage');
 const { sendPushToUsers } = require('../services/pushService');
+const { parseReportPayload } = require('../services/reporting');
 
 const router = express.Router();
 const MESSAGE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
@@ -1434,7 +1435,8 @@ router.post('/api/connections/report-user', async (req, res) => {
   if (!enforceRateLimit(req, res, 'report_user', 20)) return;
 
   const targetUid = sanitizeText(req.body && req.body.targetUid, 120);
-  const reason = sanitizeText(req.body && req.body.reason, 400);
+  const payload = parseReportPayload(req.body || {});
+  const reason = sanitizeText(payload.reason, 900);
   if (!targetUid) {
     return res.status(400).json({ ok: false, message: 'targetUid is required.' });
   }
@@ -2830,7 +2832,8 @@ router.post('/api/connections/messages/:id/report', async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Invalid message id.' });
   }
 
-  const reason = sanitizeText(req.body && req.body.reason, 500) || null;
+  const payload = parseReportPayload(req.body || {});
+  const reason = sanitizeText(payload.reason, 900) || null;
 
   try {
     const messageResult = await pool.query(
