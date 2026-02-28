@@ -483,13 +483,13 @@ a.connection-name-link:hover {
 }
 
 .person-actions .follow-primary {
-  background: #da9b2b;
+  background: #ffffff;
   color: #0f2639;
-  border: 1px solid #c88a1b;
+  border: 1px solid #bebebe;
 }
 
 .person-actions .follow-primary:hover {
-  background: #e2aa3e;
+  background: #969696;
 }
 
 .presence {
@@ -940,7 +940,13 @@ a.connection-name-link:hover {
   border-radius: 12px;
   padding: 14px;
   color: var(--muted);
-  background: #0f2639;
+  background: #dbdbdb;
+}
+
+body.theme-dark .connections-shell .empty {
+  background: rgba(24, 56, 81, 0.92);
+  border-color: var(--app-dark-border);
+  color: var(--app-dark-text-soft);
 }
 
 .modal {

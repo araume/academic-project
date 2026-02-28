@@ -365,27 +365,28 @@ function normalizeSitePageResult(slug, row) {
 async function resolveMobileAppBodyAssets(page) {
   if (!page || page.slug !== 'mobile-app') return page;
   const body = page.body && typeof page.body === 'object' ? { ...page.body } : {};
-  const rawQr = typeof body.qrImageUrl === 'string' ? body.qrImageUrl.trim() : '';
-  if (!rawQr) {
-    return { ...page, body };
+
+  async function resolveAssetUrl(rawValue, label) {
+    const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!raw) return raw;
+    try {
+      const normalized = normalizeStorageKey(raw);
+      const isHttp = /^https?:\/\//i.test(raw);
+      const shouldSign = Boolean(normalized) && (!isHttp || normalized !== raw);
+      if (!shouldSign) return raw;
+      return await getSignedUrl(normalized, SIGNED_TTL);
+    } catch (error) {
+      console.warn(
+        `Mobile app ${label} signing failed; returning raw URL:`,
+        error && error.message ? error.message : error
+      );
+      return raw;
+    }
   }
 
-  try {
-    const normalized = normalizeStorageKey(rawQr);
-    const isHttp = /^https?:\/\//i.test(rawQr);
-    const shouldSign = Boolean(normalized) && (!isHttp || normalized !== rawQr);
-    if (!shouldSign) {
-      return { ...page, body };
-    }
-    body.qrImageUrl = await getSignedUrl(normalized, SIGNED_TTL);
-    return { ...page, body };
-  } catch (error) {
-    console.warn(
-      'Mobile app QR signing failed; returning raw URL:',
-      error && error.message ? error.message : error
-    );
-    return { ...page, body };
-  }
+  body.qrImageUrl = await resolveAssetUrl(body.qrImageUrl, 'QR');
+  body.downloadUrl = await resolveAssetUrl(body.downloadUrl, 'download');
+  return { ...page, body };
 }
 
 router.get('/api/admin/me', requireAuthApi, async (req, res) => {

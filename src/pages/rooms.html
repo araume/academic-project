@@ -102,6 +102,32 @@
           </label>
         </div>
 
+        <form class="meet-search-form" id="meetSearchForm">
+          <label class="meet-search-field">
+            <span>Find room by Meet ID</span>
+            <input
+              type="text"
+              id="meetIdSearchInput"
+              maxlength="80"
+              autocomplete="off"
+              placeholder="Enter Meet ID (e.g., A1B2C3D4)"
+            />
+          </label>
+          <label class="meet-search-field">
+            <span>Password (if required)</span>
+            <input
+              type="password"
+              id="meetIdSearchPasswordInput"
+              maxlength="128"
+              autocomplete="current-password"
+              placeholder="Optional"
+            />
+          </label>
+          <button type="submit" class="ghost-button" id="searchMeetIdButton">Search room</button>
+        </form>
+
+        <div class="meet-search-result is-hidden" id="meetSearchResult"></div>
+
         <p class="inline-message" id="workspaceMessage"></p>
         <div class="rooms-list" id="roomsList"></div>
       </section>
@@ -112,7 +138,7 @@
             <p class="eyebrow">Live Call</p>
             <h3>Group call panel</h3>
           </div>
-          <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave view</button>
+          <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave call</button>
         </header>
         <p class="call-panel-status" id="callPanelStatus">Join a room to start the call on this page.</p>
         <div class="call-frame-wrap is-hidden" id="callFrameWrap">

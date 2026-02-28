@@ -77,7 +77,7 @@ let postImageLightboxImg = null;
 
 const state = {
   page: 1,
-  pageSize: 8,
+  pageSize: 500,
 };
 
 function profileUrlForUid(uid) {

@@ -1580,6 +1580,11 @@ body.theme-dark :is(
   .rooms-list .room-actions button,
   .rooms-list .room-actions button.primary,
   .rooms-list .room-actions button:disabled,
+  .meet-search-result,
+  .meet-search-actions button,
+  .meet-search-actions button.primary,
+  .meet-search-actions button:disabled,
+  .meet-search-empty,
   .rooms-list .empty-state,
   .empty-state
 ) {
@@ -1608,6 +1613,9 @@ body.theme-dark :is(
   .room-top h3,
   .room-meta,
   .room-host,
+  .meet-search-result h3,
+  .meet-search-meta,
+  .meet-search-empty,
   .request-item h4,
   .request-item p,
   .empty-state,

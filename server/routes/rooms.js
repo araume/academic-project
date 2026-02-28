@@ -697,6 +697,102 @@ router.get('/api/rooms', async (req, res) => {
   }
 });
 
+router.get('/api/rooms/search', async (req, res) => {
+  const meetId = sanitizeText(req.query.meetId || '', 80).toUpperCase();
+  if (!meetId || !/^[A-Z0-9_-]{3,80}$/.test(meetId)) {
+    return res.status(400).json({ ok: false, message: 'Enter a valid Meet ID.' });
+  }
+
+  try {
+    const viewer = await getViewer(req.user.uid);
+    if (!viewer) {
+      return res.status(401).json({ ok: false, message: 'Unauthorized.' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        r.*,
+        a.uid AS creator_uid,
+        a.email,
+        a.username,
+        a.display_name AS account_display_name,
+        COALESCE(a.platform_role, 'member') AS creator_platform_role,
+        p.display_name AS profile_display_name,
+        p.photo_link
+       FROM rooms r
+       JOIN accounts a ON a.uid = r.creator_uid
+       LEFT JOIN profiles p ON p.uid = r.creator_uid
+       WHERE upper(r.meet_id) = $1
+       LIMIT 1`,
+      [meetId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Room not found.' });
+    }
+
+    const row = result.rows[0];
+    if (row.state === 'ended' || row.state === 'canceled') {
+      return res.status(404).json({ ok: false, message: 'Room not found.' });
+    }
+
+    const blockedResult = await pool.query(
+      `SELECT 1
+       FROM blocked_users bu
+       WHERE (bu.blocker_uid = $1 AND bu.blocked_uid = $2)
+          OR (bu.blocker_uid = $2 AND bu.blocked_uid = $1)
+       LIMIT 1`,
+      [row.creator_uid, viewer.uid]
+    );
+    if (blockedResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Room not found.' });
+    }
+
+    const canModerateRoomCommunity = row.community_id
+      ? await isCommunityModerator(Number(row.community_id), viewer.uid)
+      : false;
+    const canManage =
+      isOwnerOrAdmin(viewer) || isSameUid(row.creator_uid, viewer.uid) || canModerateRoomCommunity;
+
+    let canAccess = canManage || row.visibility === 'public' || row.visibility === 'private';
+    if (!canAccess && row.visibility === 'course_exclusive') {
+      const courseMatches =
+        Boolean(viewer.course) &&
+        Boolean(row.course_name) &&
+        String(viewer.course).trim().toLowerCase() === String(row.course_name).trim().toLowerCase();
+      const hasMembership = row.community_id
+        ? await hasCommunityMembership(Number(row.community_id), viewer.uid)
+        : false;
+      canAccess = courseMatches || hasMembership;
+    }
+
+    if (!canAccess) {
+      return res.status(404).json({ ok: false, message: 'Room not found.' });
+    }
+
+    const activeCountResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM room_participants
+       WHERE room_id = $1
+         AND status = 'active'`,
+      [row.id]
+    );
+
+    return res.json({
+      ok: true,
+      room: toRoomResponse({
+        ...row,
+        creator_display_name: displayNameFromRow(row),
+        creator_photo_link: await signPhotoIfNeeded(row.photo_link),
+        active_participants: Number(activeCountResult.rows[0] && activeCountResult.rows[0].total) || 0,
+        can_manage: canManage,
+      }),
+    });
+  } catch (error) {
+    console.error('Room search failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to search room.' });
+  }
+});
+
 router.post('/api/rooms', async (req, res) => {
   if (!enforceRateLimit(req, res, 'room_create_direct', 25)) return;
 
@@ -1328,26 +1424,23 @@ router.post('/api/rooms/:id/join', async (req, res) => {
         return res.status(403).json({ ok: false, message: 'You are not allowed to join this course room.' });
       }
     } else if (room.visibility === 'private' && !canManage) {
-      if (!inviteToken) {
-        await client.query('ROLLBACK');
-        return res.status(403).json({ ok: false, message: 'Invite token is required to join this private room.' });
+      let inviteAuthorized = false;
+      if (inviteToken) {
+        const inviteDigest = sha256Hex(inviteToken);
+        const inviteResult = await client.query(
+          `SELECT id
+           FROM room_invites
+           WHERE room_id = $1
+             AND token_digest = $2
+             AND revoked_at IS NULL
+             AND expires_at > NOW()
+           LIMIT 1`,
+          [room.id, inviteDigest]
+        );
+        inviteAuthorized = inviteResult.rows.length > 0;
       }
-      const inviteDigest = sha256Hex(inviteToken);
-      const inviteResult = await client.query(
-        `SELECT id
-         FROM room_invites
-         WHERE room_id = $1
-           AND token_digest = $2
-           AND revoked_at IS NULL
-           AND expires_at > NOW()
-         LIMIT 1`,
-        [room.id, inviteDigest]
-      );
-      if (!inviteResult.rows.length) {
-        await client.query('ROLLBACK');
-        return res.status(403).json({ ok: false, message: 'Invalid or expired invite token.' });
-      }
-      if (room.password_hash) {
+
+      if (!inviteAuthorized && room.password_hash) {
         const passwordOk = await verifyRoomPassword(meetPassword, room.password_hash);
         if (!passwordOk) {
           await client.query('ROLLBACK');
@@ -1458,6 +1551,142 @@ router.post('/api/rooms/:id/join', async (req, res) => {
   }
 });
 
+router.get('/api/rooms/:id/session', async (req, res) => {
+  const roomId = parsePositiveInt(req.params.id);
+  if (!roomId) {
+    return res.status(400).json({ ok: false, message: 'Invalid room id.' });
+  }
+
+  try {
+    const viewer = await getViewer(req.user.uid);
+    if (!viewer) {
+      return res.status(401).json({ ok: false, message: 'Unauthorized.' });
+    }
+
+    const roomResult = await pool.query(
+      `SELECT r.*
+       FROM rooms r
+       WHERE r.id = $1
+       LIMIT 1`,
+      [roomId]
+    );
+    if (!roomResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Room not found.' });
+    }
+    const room = roomResult.rows[0];
+    const participantResult = await pool.query(
+      `SELECT status, role, joined_at, left_at
+       FROM room_participants
+       WHERE room_id = $1
+         AND user_uid = $2
+       LIMIT 1`,
+      [roomId, viewer.uid]
+    );
+    const participant = participantResult.rows[0] || null;
+    const participantStatus = participant ? participant.status : 'none';
+
+    const isCreator = isSameUid(room.creator_uid, viewer.uid);
+    const canModerateRoomCommunity = room.community_id
+      ? await isCommunityModerator(Number(room.community_id), viewer.uid)
+      : false;
+    const canManage = isOwnerOrAdmin(viewer) || isCreator || canModerateRoomCommunity;
+
+    let canAccess = canManage || room.visibility === 'public';
+    if (!canAccess && room.visibility === 'course_exclusive') {
+      const courseMatches =
+        Boolean(viewer.course) &&
+        Boolean(room.course_name) &&
+        String(viewer.course).trim().toLowerCase() === String(room.course_name).trim().toLowerCase();
+      const hasMembership = room.community_id
+        ? await hasCommunityMembership(Number(room.community_id), viewer.uid)
+        : false;
+      canAccess = courseMatches || hasMembership;
+    } else if (!canAccess && room.visibility === 'private') {
+      canAccess = participantStatus !== 'none';
+    }
+
+    if (!canAccess) {
+      return res.status(403).json({ ok: false, message: 'You are not allowed to view this room session.' });
+    }
+
+    const activeCountResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM room_participants
+       WHERE room_id = $1
+         AND status = 'active'`,
+      [roomId]
+    );
+    const activeParticipants = Number(activeCountResult.rows[0] && activeCountResult.rows[0].total) || 0;
+
+    return res.json({
+      ok: true,
+      room: {
+        id: Number(room.id),
+        meetId: room.meet_id,
+        state: room.state,
+        endedAt: room.ended_at,
+        updatedAt: room.updated_at,
+        activeParticipants,
+      },
+      participant: {
+        status: participantStatus,
+        role: participant ? participant.role : null,
+        joinedAt: participant ? participant.joined_at : null,
+        leftAt: participant ? participant.left_at : null,
+      },
+    });
+  } catch (error) {
+    console.error('Room session fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load room session.' });
+  }
+});
+
+router.post('/api/rooms/:id/leave', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'room_leave', 120)) return;
+  const roomId = parsePositiveInt(req.params.id);
+  if (!roomId) {
+    return res.status(400).json({ ok: false, message: 'Invalid room id.' });
+  }
+
+  try {
+    const viewer = await getViewer(req.user.uid);
+    if (!viewer) {
+      return res.status(401).json({ ok: false, message: 'Unauthorized.' });
+    }
+
+    const roomResult = await pool.query(
+      `SELECT id, state
+       FROM rooms
+       WHERE id = $1
+       LIMIT 1`,
+      [roomId]
+    );
+    if (!roomResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Room not found.' });
+    }
+    const room = roomResult.rows[0];
+
+    const update = await pool.query(
+      `UPDATE room_participants
+       SET status = 'left',
+           left_at = NOW()
+       WHERE room_id = $1
+         AND user_uid = $2
+         AND status = 'active'`,
+      [roomId, viewer.uid]
+    );
+
+    return res.json({
+      ok: true,
+      left: update.rowCount > 0,
+      room: { id: Number(room.id), state: room.state },
+    });
+  } catch (error) {
+    console.error('Room leave failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to leave room.' });
+  }
+});
+
 router.post('/api/rooms/:id/start', async (req, res) => {
   if (!enforceRateLimit(req, res, 'room_start', 40)) return;
   const roomId = parsePositiveInt(req.params.id);
@@ -1558,20 +1787,45 @@ router.post('/api/rooms/:id/end', async (req, res) => {
       return res.status(409).json({ ok: false, message: 'Canceled rooms cannot be ended.' });
     }
 
-    await pool.query(
-      `UPDATE rooms
-       SET state = 'ended',
-           ended_at = NOW(),
-           updated_at = NOW()
-       WHERE id = $1`,
-      [roomId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE rooms
+         SET state = 'ended',
+             ended_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [roomId]
+      );
+      const participantsUpdate = await client.query(
+        `UPDATE room_participants
+         SET status = CASE
+               WHEN lower(user_uid) = lower($2) THEN 'left'
+               ELSE 'kicked'
+             END,
+             left_at = NOW()
+         WHERE room_id = $1
+           AND status = 'active'`,
+        [roomId, viewer.uid]
+      );
 
-    await pool.query(
-      `INSERT INTO room_moderation_events (room_id, actor_uid, target_uid, action, meta)
-       VALUES ($1, $2, NULL, 'end_room', '{}'::jsonb)`,
-      [roomId, viewer.uid]
-    );
+      await client.query(
+        `INSERT INTO room_moderation_events (room_id, actor_uid, target_uid, action, meta)
+         VALUES ($1, $2, NULL, 'end_room', $3::jsonb)`,
+        [
+          roomId,
+          viewer.uid,
+          JSON.stringify({ forcedParticipantExitCount: Number(participantsUpdate.rowCount || 0) }),
+        ]
+      );
+      await client.query('COMMIT');
+    } catch (transactionError) {
+      await client.query('ROLLBACK');
+      throw transactionError;
+    } finally {
+      client.release();
+    }
 
     return res.json({ ok: true, state: 'ended' });
   } catch (error) {
