@@ -639,14 +639,16 @@ function roomHostAvatar(room) {
 function clearMeetSearchResult() {
   state.searchedRoom = null;
   if (!meetSearchResult) return;
-  meetSearchResult.classList.add('is-hidden');
   meetSearchResult.innerHTML = '';
+  const node = document.createElement('div');
+  node.className = 'meet-search-empty';
+  node.textContent = 'Search by Meet ID to show a room result here.';
+  meetSearchResult.appendChild(node);
 }
 
 function renderMeetSearchEmpty(message) {
   if (!meetSearchResult) return;
   state.searchedRoom = null;
-  meetSearchResult.classList.remove('is-hidden');
   meetSearchResult.innerHTML = '';
   const node = document.createElement('div');
   node.className = 'meet-search-empty';
@@ -657,10 +659,10 @@ function renderMeetSearchEmpty(message) {
 function renderMeetSearchResult(room) {
   if (!meetSearchResult || !room) return;
   state.searchedRoom = room;
-  meetSearchResult.classList.remove('is-hidden');
   meetSearchResult.innerHTML = '';
 
   const card = document.createElement('article');
+  card.className = 'meet-search-card';
   const safeMeetName = escapeHtml(room.meetName || 'Untitled room');
   const safeMeetId = escapeHtml(room.meetId || '');
   const safeCreatorName = escapeHtml((room.creator && room.creator.displayName) || 'Member');
@@ -1217,6 +1219,7 @@ window.addEventListener('message', handleCallWindowMessage);
 async function init() {
   const prejoinedRoom = consumePrejoinedRoom();
   try {
+    clearMeetSearchResult();
     await loadRoomsContentSettings();
     await loadBootstrap();
     await loadRooms();

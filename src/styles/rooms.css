@@ -549,6 +549,7 @@ body {
   padding: 12px;
   display: grid;
   gap: 10px;
+  min-height: 88px;
 }
 
 .meet-search-result-head {
@@ -558,15 +559,31 @@ body {
   gap: 10px;
 }
 
+.meet-search-card {
+  border: 1px solid rgba(15, 38, 57, 0.12);
+  border-radius: 14px;
+  background: #fff;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.meet-search-card .meet-search-result-head > div {
+  display: grid;
+  gap: 6px;
+}
+
 .meet-search-result h3 {
   margin: 0;
   font-size: 1rem;
+  line-height: 1.25;
 }
 
 .meet-search-meta {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .meet-search-actions {
@@ -604,6 +621,32 @@ body {
   padding: 12px;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.rooms-partition {
+  display: grid;
+  gap: 10px;
+}
+
+.rooms-partition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rooms-partition-head h3 {
+  margin: 0;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  font-size: 0.98rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+.rooms-partition-divider {
+  border-top: 1px solid rgba(15, 38, 57, 0.12);
+  margin: 2px 0;
 }
 
 .rooms-list {

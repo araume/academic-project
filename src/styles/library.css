@@ -322,6 +322,13 @@ body {
 
 .doc-meta h4 {
   margin: 0;
+  line-height: 1.35;
+  max-height: calc(1.35em * 2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .doc-meta p {

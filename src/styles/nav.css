@@ -1577,6 +1577,7 @@ body.theme-dark :is(
 body.theme-dark :is(
   .rooms-list,
   .rooms-list .room-item,
+  .meet-search-card,
   .rooms-list .room-actions button,
   .rooms-list .room-actions button.primary,
   .rooms-list .room-actions button:disabled,
@@ -1613,6 +1614,7 @@ body.theme-dark :is(
   .room-top h3,
   .room-meta,
   .room-host,
+  .rooms-partition-head h3,
   .meet-search-result h3,
   .meet-search-meta,
   .meet-search-empty,
@@ -1622,6 +1624,10 @@ body.theme-dark :is(
   .empty-state p
 ) {
   color: var(--app-dark-text-soft) !important;
+}
+
+body.theme-dark .rooms-partition-divider {
+  border-top-color: var(--app-dark-border) !important;
 }
 
 body.theme-dark .chat-input button {

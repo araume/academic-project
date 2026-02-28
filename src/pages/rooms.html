@@ -126,10 +126,22 @@
           <button type="submit" class="ghost-button" id="searchMeetIdButton">Search room</button>
         </form>
 
-        <div class="meet-search-result is-hidden" id="meetSearchResult"></div>
+        <section class="rooms-partition" aria-label="Room search results">
+          <header class="rooms-partition-head">
+            <h3>Search result</h3>
+          </header>
+          <div class="meet-search-result" id="meetSearchResult"></div>
+        </section>
+
+        <div class="rooms-partition-divider" aria-hidden="true"></div>
 
         <p class="inline-message" id="workspaceMessage"></p>
-        <div class="rooms-list" id="roomsList"></div>
+        <section class="rooms-partition" aria-label="Available room list">
+          <header class="rooms-partition-head">
+            <h3>Available rooms</h3>
+          </header>
+          <div class="rooms-list" id="roomsList"></div>
+        </section>
       </section>
 
       <section class="card call-panel-card is-hidden" id="callPanelCard">
