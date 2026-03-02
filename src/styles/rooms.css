@@ -940,6 +940,15 @@ body {
   text-transform: uppercase;
 }
 
+body.theme-dark .toggle-set {
+  background: rgba(24, 56, 81, 0.92);
+  border-color: var(--app-dark-border);
+}
+
+body.theme-dark .toggle-set legend {
+  color: var(--app-dark-text-soft);
+}
+
 .room-form .toggle-pill {
   display: inline-flex;
   align-items: center;
@@ -998,6 +1007,116 @@ body {
   color: #17354d;
   font-size: 0.82rem;
   word-break: break-word;
+}
+
+.forward-room-modal-card {
+  max-width: 680px;
+}
+
+.forward-room-meta {
+  margin: -2px 0 10px;
+}
+
+.forward-room-search {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.forward-room-search span {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #4d5f6e;
+}
+
+.forward-room-search input {
+  border-radius: 14px;
+  border: 1px solid rgba(21, 63, 94, 0.2);
+  background: #f9fbfd;
+  padding: 11px 12px;
+  font-family: inherit;
+  color: var(--ink);
+}
+
+.forward-room-list {
+  display: grid;
+  gap: 10px;
+  min-height: 180px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.forward-room-item {
+  border: 1px solid rgba(15, 38, 57, 0.13);
+  border-radius: 14px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+}
+
+.forward-room-item-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.forward-room-item-main strong {
+  font-size: 0.94rem;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forward-room-item-main p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.forward-room-send {
+  border: 1px solid rgba(15, 38, 57, 0.15);
+  border-radius: 10px;
+  padding: 7px 12px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.forward-room-send:hover {
+  background: #f4f7fa;
+}
+
+body.theme-dark .forward-room-search span {
+  color: var(--app-dark-text-soft);
+}
+
+body.theme-dark .forward-room-search input,
+body.theme-dark .forward-room-item,
+body.theme-dark .forward-room-send {
+  background: rgba(24, 56, 81, 0.92);
+  border-color: var(--app-dark-border);
+  color: var(--app-dark-text-soft);
+}
+
+body.theme-dark .forward-room-item-main strong,
+body.theme-dark .forward-room-item-main p {
+  color: var(--app-dark-text-soft);
+}
+
+body.theme-dark .forward-room-send:hover {
+  background: rgba(218, 155, 43, 0.14);
+  color: var(--app-dark-text);
 }
 
 .is-hidden {

@@ -47,6 +47,12 @@ const submitRoomButton = document.getElementById('submitRoomButton');
 const roomFormMessage = document.getElementById('roomFormMessage');
 const inviteResult = document.getElementById('inviteResult');
 const inviteResultLink = document.getElementById('inviteResultLink');
+const forwardRoomModal = document.getElementById('forwardRoomModal');
+const forwardRoomModalClose = document.getElementById('forwardRoomModalClose');
+const forwardRoomMeta = document.getElementById('forwardRoomMeta');
+const forwardRoomSearchInput = document.getElementById('forwardRoomSearchInput');
+const forwardRoomMessage = document.getElementById('forwardRoomMessage');
+const forwardRoomList = document.getElementById('forwardRoomList');
 const callPanelCard = document.getElementById('callPanelCard');
 const callPanelStatus = document.getElementById('callPanelStatus');
 const callFrameWrap = document.getElementById('callFrameWrap');
@@ -70,6 +76,8 @@ const state = {
   rooms: [],
   pendingRequests: [],
   searchedRoom: null,
+  forwardRoom: null,
+  forwardConversations: [],
   currentCall: null,
   callHeartbeatTimer: null,
   callHeartbeatInFlight: false,
@@ -646,6 +654,150 @@ function clearMeetSearchResult() {
   meetSearchResult.appendChild(node);
 }
 
+function formatConversationSubtitle(conversation) {
+  if (!conversation) return 'Conversation';
+  const participants = Array.isArray(conversation.participants) ? conversation.participants : [];
+  if (conversation.threadType === 'group') {
+    return `${participants.length} participants • Group chat`;
+  }
+  return 'Private conversation';
+}
+
+function buildForwardRoomMessage(room) {
+  const meetName = String((room && room.meetName) || 'Live room').trim() || 'Live room';
+  const meetId = String((room && room.meetId) || '').trim();
+  const baseRoomUrl = `${window.location.origin}/rooms`;
+  const roomUrl = meetId ? `${baseRoomUrl}?room=${encodeURIComponent(meetId)}` : baseRoomUrl;
+  const visibility = room && room.visibility ? formatStateLabel(room.visibility) : 'Public';
+  return [
+    `Join this room: ${meetName}`,
+    meetId ? `Meet ID: ${meetId}` : '',
+    `Visibility: ${visibility}`,
+    `Open in Rooms: ${roomUrl}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function closeForwardRoomModal() {
+  if (!forwardRoomModal) return;
+  forwardRoomModal.classList.add('is-hidden');
+  state.forwardRoom = null;
+  state.forwardConversations = [];
+  if (forwardRoomSearchInput) {
+    forwardRoomSearchInput.value = '';
+  }
+  if (forwardRoomMeta) {
+    forwardRoomMeta.textContent = 'Select a conversation to send this room.';
+  }
+  showMessage(forwardRoomMessage, '');
+}
+
+function renderForwardConversationList() {
+  if (!forwardRoomList) return;
+  const query = (forwardRoomSearchInput && forwardRoomSearchInput.value ? forwardRoomSearchInput.value : '')
+    .trim()
+    .toLowerCase();
+  const conversations = state.forwardConversations.filter((conversation) => {
+    if (!query) return true;
+    const participantNames = Array.isArray(conversation.participants)
+      ? conversation.participants.map((entry) => entry.displayName).join(' ')
+      : '';
+    const haystack = `${conversation.title || ''} ${participantNames}`.toLowerCase();
+    return haystack.includes(query);
+  });
+
+  forwardRoomList.innerHTML = '';
+  if (!conversations.length) {
+    renderEmpty(forwardRoomList, query ? 'No matching conversations.' : 'No conversations available.');
+    return;
+  }
+
+  conversations.forEach((conversation) => {
+    const row = document.createElement('article');
+    row.className = 'forward-room-item';
+
+    const main = document.createElement('div');
+    main.className = 'forward-room-item-main';
+    const title = document.createElement('strong');
+    title.textContent = conversation.title || 'Conversation';
+    const subtitle = document.createElement('p');
+    subtitle.textContent = formatConversationSubtitle(conversation);
+    main.appendChild(title);
+    main.appendChild(subtitle);
+
+    const sendButton = document.createElement('button');
+    sendButton.type = 'button';
+    sendButton.className = 'forward-room-send';
+    sendButton.textContent = 'Forward';
+    sendButton.addEventListener('click', () => forwardRoomToConversation(conversation, sendButton));
+
+    row.appendChild(main);
+    row.appendChild(sendButton);
+    forwardRoomList.appendChild(row);
+  });
+}
+
+async function openForwardRoomModal(room) {
+  if (!forwardRoomModal || !room) return;
+  state.forwardRoom = room;
+  showMessage(forwardRoomMessage, 'Loading conversations...');
+  forwardRoomModal.classList.remove('is-hidden');
+  if (forwardRoomMeta) {
+    const safeMeetName = String(room.meetName || 'Live room').trim() || 'Live room';
+    const safeMeetId = String(room.meetId || '').trim();
+    forwardRoomMeta.textContent = safeMeetId
+      ? `Forward "${safeMeetName}" (Meet ID: ${safeMeetId})`
+      : `Forward "${safeMeetName}"`;
+  }
+
+  try {
+    const data = await apiRequest('/api/connections/conversations?scope=all&page=1&pageSize=80');
+    state.forwardConversations = Array.isArray(data.conversations) ? data.conversations : [];
+    showMessage(forwardRoomMessage, '');
+    renderForwardConversationList();
+    if (forwardRoomSearchInput) {
+      forwardRoomSearchInput.focus();
+    }
+  } catch (error) {
+    state.forwardConversations = [];
+    renderEmpty(forwardRoomList, error.message || 'Failed to load conversations.');
+    showMessage(forwardRoomMessage, error.message || 'Failed to load conversations.');
+  }
+}
+
+async function forwardRoomToConversation(conversation, button) {
+  if (!conversation || !conversation.id || !state.forwardRoom) return;
+  const room = state.forwardRoom;
+  const payload = {
+    body: buildForwardRoomMessage(room),
+  };
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Sending...';
+  }
+  showMessage(forwardRoomMessage, 'Sending room link...');
+
+  try {
+    await apiRequest(`/api/connections/conversations/${conversation.id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    showMessage(forwardRoomMessage, 'Room link forwarded.', 'success');
+    window.setTimeout(() => {
+      closeForwardRoomModal();
+    }, 500);
+  } catch (error) {
+    showMessage(forwardRoomMessage, error.message || 'Failed to forward room link.');
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Forward';
+    }
+  }
+}
+
 function renderMeetSearchEmpty(message) {
   if (!meetSearchResult) return;
   state.searchedRoom = null;
@@ -700,6 +852,13 @@ function renderMeetSearchResult(room) {
     joinButton.textContent = canStartAndJoin ? 'Start & join' : 'Join call';
     joinButton.addEventListener('click', () => handleJoinSearchedRoom(room));
     actions.appendChild(joinButton);
+    if (canJoinLive) {
+      const forwardButton = document.createElement('button');
+      forwardButton.type = 'button';
+      forwardButton.textContent = 'Forward';
+      forwardButton.addEventListener('click', () => openForwardRoomModal(room));
+      actions.appendChild(forwardButton);
+    }
   } else if (room.state === 'scheduled') {
     const waitingButton = document.createElement('button');
     waitingButton.type = 'button';
@@ -765,6 +924,13 @@ function renderRooms() {
       joinButton.className = 'primary';
       joinButton.addEventListener('click', () => handleJoinRoom(room));
       actions.appendChild(joinButton);
+      if (canJoinLive) {
+        const forwardButton = document.createElement('button');
+        forwardButton.type = 'button';
+        forwardButton.textContent = 'Forward';
+        forwardButton.addEventListener('click', () => openForwardRoomModal(room));
+        actions.appendChild(forwardButton);
+      }
     } else if (room.state === 'scheduled') {
       const waitingButton = document.createElement('button');
       waitingButton.type = 'button';
@@ -1199,6 +1365,24 @@ if (roomModal) {
     if (event.target === roomModal) {
       closeRoomModal();
     }
+  });
+}
+
+if (forwardRoomModalClose) {
+  forwardRoomModalClose.addEventListener('click', closeForwardRoomModal);
+}
+
+if (forwardRoomModal) {
+  forwardRoomModal.addEventListener('click', (event) => {
+    if (event.target === forwardRoomModal) {
+      closeForwardRoomModal();
+    }
+  });
+}
+
+if (forwardRoomSearchInput) {
+  forwardRoomSearchInput.addEventListener('input', () => {
+    renderForwardConversationList();
   });
 }
 

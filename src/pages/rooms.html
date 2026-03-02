@@ -235,6 +235,20 @@
     </div>
   </div>
 
+  <div class="modal is-hidden" id="forwardRoomModal">
+    <div class="modal-card forward-room-modal-card">
+      <button type="button" class="close-button" id="forwardRoomModalClose">×</button>
+      <h2>Forward room link</h2>
+      <p class="subcopy forward-room-meta" id="forwardRoomMeta">Select a conversation to send this room.</p>
+      <label class="forward-room-search">
+        <span>Search conversation</span>
+        <input type="text" id="forwardRoomSearchInput" placeholder="Search by name or title..." />
+      </label>
+      <p class="inline-message" id="forwardRoomMessage"></p>
+      <div class="forward-room-list" id="forwardRoomList"></div>
+    </div>
+  </div>
+
   <script src="/src/js/rooms.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
 </body>

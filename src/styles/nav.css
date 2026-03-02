@@ -1431,6 +1431,20 @@ body.theme-dark :is(
   color: var(--app-dark-text-soft) !important;
 }
 
+body.theme-dark .post-actions button {
+  color: var(--app-dark-text-soft) !important;
+}
+
+body.theme-dark .post-actions button:hover {
+  color: var(--app-dark-text) !important;
+  background: rgba(218, 155, 43, 0.12);
+  border-radius: 10px;
+}
+
+body.theme-dark .post-actions button img {
+  filter: var(--app-dark-icon-filter);
+}
+
 body.theme-dark :is(
   .stats-row div strong,
   .table-wrap th,

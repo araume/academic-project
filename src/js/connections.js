@@ -45,8 +45,6 @@ const messageAttachmentInput = document.getElementById('messageAttachmentInput')
 const messageAttachmentPreview = document.getElementById('messageAttachmentPreview');
 const messageAttachmentName = document.getElementById('messageAttachmentName');
 const removeMessageAttachmentButton = document.getElementById('removeMessageAttachmentButton');
-const emojiToggleButton = document.getElementById('emojiToggleButton');
-const emojiPicker = document.getElementById('emojiPicker');
 
 const openGroupModal = document.getElementById('openGroupModal');
 const groupModal = document.getElementById('groupModal');
@@ -75,8 +73,6 @@ const state = {
 let pollTimer = null;
 let typingStopTimer = null;
 let lastTypingPingAt = 0;
-
-const EMOJI_CHOICES = ['😀', '😁', '😂', '😊', '😍', '😎', '🤔', '👍', '👏', '🔥', '🎯', '📚', '✅', '🚀'];
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
@@ -163,19 +159,6 @@ function setChatFocusMode(enabled) {
   if (chatFocusToggle) {
     chatFocusToggle.textContent = state.chatFocus ? 'Exit expanded' : 'Expand chat';
   }
-}
-
-function renderEmojiPicker() {
-  if (!emojiPicker) return;
-  emojiPicker.innerHTML = '';
-  EMOJI_CHOICES.forEach((emoji) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'emoji-option';
-    button.dataset.emoji = emoji;
-    button.textContent = emoji;
-    emojiPicker.appendChild(button);
-  });
 }
 
 async function apiRequest(url, options = {}) {
@@ -586,9 +569,7 @@ function renderMessages() {
     messageInput.value = '';
     messageInput.disabled = true;
     messageSend.disabled = true;
-    if (emojiToggleButton) emojiToggleButton.disabled = true;
     if (messageAttachmentInput) messageAttachmentInput.disabled = true;
-    if (emojiPicker) emojiPicker.classList.add('is-hidden');
     clearReplySelection();
     clearMessageAttachment();
     renderTypingIndicator();
@@ -602,7 +583,6 @@ function renderMessages() {
     messageInput.value = '';
     messageInput.disabled = true;
     messageSend.disabled = true;
-    if (emojiToggleButton) emojiToggleButton.disabled = true;
     if (messageAttachmentInput) messageAttachmentInput.disabled = true;
     clearReplySelection();
     clearMessageAttachment();
@@ -617,7 +597,6 @@ function renderMessages() {
 
   messageInput.disabled = false;
   messageSend.disabled = false;
-  if (emojiToggleButton) emojiToggleButton.disabled = false;
   if (messageAttachmentInput) messageAttachmentInput.disabled = false;
   renderTypingIndicator();
   renderConversationControls();
@@ -1423,22 +1402,6 @@ if (clearReplyButton) {
   });
 }
 
-if (emojiToggleButton && emojiPicker) {
-  emojiToggleButton.addEventListener('click', () => {
-    emojiPicker.classList.toggle('is-hidden');
-  });
-}
-
-if (emojiPicker) {
-  emojiPicker.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-emoji]');
-    if (!button || !messageInput) return;
-    messageInput.value = `${messageInput.value || ''}${button.dataset.emoji || ''}`;
-    messageInput.focus();
-    queueTypingHeartbeat();
-  });
-}
-
 if (chatFocusToggle) {
   chatFocusToggle.addEventListener('click', () => {
     setChatFocusMode(!state.chatFocus);
@@ -1542,7 +1505,6 @@ window.addEventListener('beforeunload', () => {
 
 async function init() {
   try {
-    renderEmojiPicker();
     setChatFocusMode(false);
     renderConversationControls();
     await loadBootstrap();
