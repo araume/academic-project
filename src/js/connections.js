@@ -45,8 +45,6 @@ const messageAttachmentInput = document.getElementById('messageAttachmentInput')
 const messageAttachmentPreview = document.getElementById('messageAttachmentPreview');
 const messageAttachmentName = document.getElementById('messageAttachmentName');
 const removeMessageAttachmentButton = document.getElementById('removeMessageAttachmentButton');
-const emojiToggleButton = document.getElementById('emojiToggleButton');
-const emojiPicker = document.getElementById('emojiPicker');
 
 const openGroupModal = document.getElementById('openGroupModal');
 const groupModal = document.getElementById('groupModal');
@@ -55,8 +53,6 @@ const groupForm = document.getElementById('groupForm');
 const groupTitle = document.getElementById('groupTitle');
 const groupMembers = document.getElementById('groupMembers');
 const groupMessage = document.getElementById('groupMessage');
-
-const DEFAULT_AVATAR = '/assets/LOGO.png';
 
 const state = {
   me: null,
@@ -78,13 +74,10 @@ let pollTimer = null;
 let typingStopTimer = null;
 let lastTypingPingAt = 0;
 
-const EMOJI_CHOICES = ['😀', '😁', '😂', '😊', '😍', '😎', '🤔', '👍', '👏', '🔥', '🎯', '📚', '✅', '🚀'];
-
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -100,6 +93,19 @@ function setNavAvatar(photoLink, displayName) {
   }
 
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setAvatarContent(container, photoLink, displayName, altText) {
+  if (!container) return;
+  container.textContent = '';
+  if (photoLink) {
+    const img = document.createElement('img');
+    img.src = photoLink;
+    img.alt = altText || `${displayName || 'User'} profile photo`;
+    container.appendChild(img);
+    return;
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function showMessage(target, text, type = 'error') {
@@ -153,19 +159,6 @@ function setChatFocusMode(enabled) {
   if (chatFocusToggle) {
     chatFocusToggle.textContent = state.chatFocus ? 'Exit expanded' : 'Expand chat';
   }
-}
-
-function renderEmojiPicker() {
-  if (!emojiPicker) return;
-  emojiPicker.innerHTML = '';
-  EMOJI_CHOICES.forEach((emoji) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'emoji-option';
-    button.dataset.emoji = emoji;
-    button.textContent = emoji;
-    emojiPicker.appendChild(button);
-  });
 }
 
 async function apiRequest(url, options = {}) {
@@ -305,10 +298,7 @@ function renderUserCards() {
 
     const avatar = document.createElement('div');
     avatar.className = 'person-avatar';
-    const avatarImg = document.createElement('img');
-    avatarImg.src = user.photoLink || DEFAULT_AVATAR;
-    avatarImg.alt = `${user.displayName || 'User'} profile photo`;
-    avatar.appendChild(avatarImg);
+    setAvatarContent(avatar, user.photoLink, user.displayName || 'User', `${user.displayName || 'User'} profile photo`);
 
     const head = document.createElement('div');
     head.className = 'person-head';
@@ -375,6 +365,7 @@ function renderUserCards() {
     } else {
       const followButton = document.createElement('button');
       followButton.type = 'button';
+      followButton.className = 'follow-primary';
       followButton.dataset.action = 'follow';
       followButton.dataset.uid = user.uid;
       followButton.textContent = 'Follow';
@@ -414,10 +405,12 @@ function renderRequests() {
 
     const avatar = document.createElement('div');
     avatar.className = 'person-avatar';
-    const img = document.createElement('img');
-    img.src = request.user.photoLink || DEFAULT_AVATAR;
-    img.alt = `${request.user.displayName || 'User'} profile photo`;
-    avatar.appendChild(img);
+    setAvatarContent(
+      avatar,
+      request.user.photoLink,
+      request.user.displayName || 'User',
+      `${request.user.displayName || 'User'} profile photo`
+    );
 
     const metaWrap = document.createElement('div');
     const title = document.createElement('h4');
@@ -576,9 +569,7 @@ function renderMessages() {
     messageInput.value = '';
     messageInput.disabled = true;
     messageSend.disabled = true;
-    if (emojiToggleButton) emojiToggleButton.disabled = true;
     if (messageAttachmentInput) messageAttachmentInput.disabled = true;
-    if (emojiPicker) emojiPicker.classList.add('is-hidden');
     clearReplySelection();
     clearMessageAttachment();
     renderTypingIndicator();
@@ -592,7 +583,6 @@ function renderMessages() {
     messageInput.value = '';
     messageInput.disabled = true;
     messageSend.disabled = true;
-    if (emojiToggleButton) emojiToggleButton.disabled = true;
     if (messageAttachmentInput) messageAttachmentInput.disabled = true;
     clearReplySelection();
     clearMessageAttachment();
@@ -607,7 +597,6 @@ function renderMessages() {
 
   messageInput.disabled = false;
   messageSend.disabled = false;
-  if (emojiToggleButton) emojiToggleButton.disabled = false;
   if (messageAttachmentInput) messageAttachmentInput.disabled = false;
   renderTypingIndicator();
   renderConversationControls();
@@ -1328,13 +1317,29 @@ if (messageList) {
     }
 
     if (action === 'report-message') {
-      const reasonInput = window.prompt('Report this message? Optional reason:', '');
-      if (reasonInput === null) return;
+      const reportPayload =
+        typeof window.showReportDialog === 'function'
+          ? await window.showReportDialog({
+              title: 'Report message',
+              subtitle: 'Select a reason and include optional details.',
+            })
+          : (() => {
+              const reason = window.prompt('Report reason:', '');
+              if (reason === null) return null;
+              const text = reason.trim();
+              return {
+                category: 'other',
+                customReason: text || 'Other',
+                details: null,
+                reason: text || 'Other',
+              };
+            })();
+      if (!reportPayload) return;
       try {
         await apiRequest(`/api/connections/messages/${messageId}/report`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: reasonInput.trim() }),
+          body: JSON.stringify(reportPayload),
         });
         showMessage(messageFeedback, 'Message reported.', 'success');
       } catch (error) {
@@ -1394,22 +1399,6 @@ if (removeMessageAttachmentButton) {
 if (clearReplyButton) {
   clearReplyButton.addEventListener('click', () => {
     clearReplySelection();
-  });
-}
-
-if (emojiToggleButton && emojiPicker) {
-  emojiToggleButton.addEventListener('click', () => {
-    emojiPicker.classList.toggle('is-hidden');
-  });
-}
-
-if (emojiPicker) {
-  emojiPicker.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-emoji]');
-    if (!button || !messageInput) return;
-    messageInput.value = `${messageInput.value || ''}${button.dataset.emoji || ''}`;
-    messageInput.focus();
-    queueTypingHeartbeat();
   });
 }
 
@@ -1516,7 +1505,6 @@ window.addEventListener('beforeunload', () => {
 
 async function init() {
   try {
-    renderEmojiPicker();
     setChatFocusMode(false);
     renderConversationControls();
     await loadBootstrap();

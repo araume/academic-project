@@ -14,7 +14,7 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
@@ -220,9 +220,16 @@
         </label>
         <label>
           <span>Course</span>
-          <select name="course" id="uploadCourse" required>
-            <option value="">Select course</option>
-          </select>
+          <input
+            type="text"
+            name="course"
+            id="uploadCourse"
+            list="uploadCourseList"
+            placeholder="Type to search courses..."
+            autocomplete="off"
+            required
+          />
+          <datalist id="uploadCourseList"></datalist>
         </label>
         <label>
           <span>Subject/Lesson</span>
@@ -259,6 +266,7 @@
   </div>
 
 
+  <script src="/src/js/report-dialog.js"></script>
   <script src="/src/js/library.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
 </body>

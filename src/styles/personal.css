@@ -153,10 +153,11 @@ body {
 
 .personal-shell {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
-  gap: clamp(20px, 2.2vw, 34px);
-  padding: 26px clamp(16px, 4vw, 48px) 68px;
-  max-width: 1500px;
+  grid-template-columns: clamp(220px, 18vw, 276px) minmax(0, 1fr);
+  gap: clamp(22px, 2.4vw, 36px);
+  padding: 26px clamp(20px, 3.4vw, 56px) 68px;
+  max-width: 1780px;
+  width: 100%;
   margin: 0 auto;
   align-items: start;
   min-width: 0;
@@ -204,7 +205,7 @@ body {
   background: rgba(255, 255, 255, 0.62);
   border: 1px solid rgba(15, 38, 57, 0.09);
   border-radius: 24px;
-  padding: 22px;
+  padding: 24px;
   box-shadow: 0 16px 38px rgba(15, 38, 57, 0.08);
 }
 
@@ -255,7 +256,7 @@ body {
 
 .journal-layout {
   display: grid;
-  grid-template-columns: 330px 1fr;
+  grid-template-columns: clamp(320px, 28vw, 380px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
   min-width: 0;
@@ -614,7 +615,7 @@ body {
 
 .ai-shell {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: clamp(280px, 24vw, 340px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
   height: min(720px, calc(100dvh - var(--app-nav-height, 86px) - 180px));

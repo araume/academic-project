@@ -193,26 +193,102 @@ async function loadReports() {
   try {
     const data = await apiRequest(`/api/admin/reports?${params.toString()}`);
     if (!data.reports.length) {
-      renderEmptyRow(reportsTableBody, 7);
+      renderEmptyRow(reportsTableBody, 9);
       return;
     }
 
+    const reportStatusOptions = [
+      { value: 'open', label: 'Open' },
+      { value: 'under_review', label: 'Under review' },
+      { value: 'resolved_action_taken', label: 'Resolved (action taken)' },
+      { value: 'resolved_no_action', label: 'Resolved (no action)' },
+      { value: 'rejected', label: 'Rejected' },
+    ];
+    const reportActionOptionsBySource = {
+      profile: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      community: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'take_down_community_post', label: 'Take down community post' },
+        { value: 'take_down_community_comment', label: 'Take down community comment' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      main_post: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'delete_main_post', label: 'Delete main post' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      library_document: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'delete_library_document', label: 'Delete document' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      chat_message: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'delete_chat_message', label: 'Delete chat message' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+    };
+
+    const buildOptionMarkup = (options, selected) =>
+      options
+        .map(
+          (option) =>
+            `<option value="${escapeHtml(option.value)}" ${option.value === selected ? 'selected' : ''}>${escapeHtml(
+              option.label
+            )}</option>`
+        )
+        .join('');
+
     reportsTableBody.innerHTML = data.reports
-      .map(
-        (item) => `
+      .map((item) => {
+        const categoryLabel =
+          item.category === 'other'
+            ? item.customReason || 'Other'
+            : item.category
+              ? item.category.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
+              : '-';
+        const reasonText = item.reason || item.details || '';
+        const statusOptions = buildOptionMarkup(reportStatusOptions, item.status || 'open');
+        let sourceActions = reportActionOptionsBySource[item.source] || reportActionOptionsBySource.profile;
+        if (item.source === 'community' && item.targetType !== 'post') {
+          sourceActions = sourceActions.filter((option) => option.value !== 'take_down_community_post');
+        }
+        if (item.source === 'community' && item.targetType !== 'comment') {
+          sourceActions = sourceActions.filter((option) => option.value !== 'take_down_community_comment');
+        }
+        const selectedAction = item.moderationAction || 'none';
+        const actionOptions = buildOptionMarkup(sourceActions, selectedAction);
+        const reportKey = escapeHtml(item.id);
+        return `
           <tr>
             <td>${escapeHtml(item.id)}</td>
             <td>${escapeHtml(item.source)}</td>
             <td>${escapeHtml(item.targetName || item.targetId || '-')}</td>
             <td>${escapeHtml(item.reporterName || '-')}</td>
-            <td>${escapeHtml(item.status || 'open')}</td>
-            <td>${escapeHtml(item.reason || '-')}</td>
+            <td>${escapeHtml(categoryLabel)}</td>
+            <td>
+              <select class="small-select" data-report-status="${reportKey}">
+                ${statusOptions}
+              </select>
+            </td>
+            <td>${escapeHtml(reasonText || '-')}</td>
+            <td>
+              <div class="row-actions">
+                <select class="small-select" data-report-action="${reportKey}">
+                  ${actionOptions}
+                </select>
+                <button class="secondary-button" data-action="apply-report-action" data-report-id="${reportKey}">Apply</button>
+              </div>
+            </td>
             <td>${escapeHtml(new Date(item.createdAt).toLocaleString())}</td>
-          </tr>`
-      )
+          </tr>`;
+      })
       .join('');
   } catch (error) {
-    renderEmptyRow(reportsTableBody, 7, error.message);
+    renderEmptyRow(reportsTableBody, 9, error.message);
   }
 }
 
@@ -801,6 +877,42 @@ async function saveMobileAppPageEditor() {
   } catch (error) {
     setInlineMessage(mobileAppPageMessage, error.message);
   }
+}
+
+if (reportsTableBody) {
+  reportsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="apply-report-action"][data-report-id]');
+    if (!button) return;
+    const reportId = button.dataset.reportId;
+    if (!reportId) return;
+
+    const statusSelect = Array.from(reportsTableBody.querySelectorAll('select[data-report-status]')).find(
+      (item) => item.dataset.reportStatus === reportId
+    );
+    const actionSelect = Array.from(reportsTableBody.querySelectorAll('select[data-report-action]')).find(
+      (item) => item.dataset.reportAction === reportId
+    );
+    const status = statusSelect ? statusSelect.value : 'open';
+    const moderationAction = actionSelect ? actionSelect.value : 'none';
+    const note = window.prompt('Resolution note (optional):', '') || '';
+
+    try {
+      await apiRequest('/api/admin/reports/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reportId,
+          status,
+          moderationAction,
+          note,
+        }),
+      });
+      setPageMessage('Report action applied.', 'success');
+      await Promise.all([loadReports(), loadContent(), loadAccounts()]);
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
 }
 
 accountsTableBody.addEventListener('click', async (event) => {

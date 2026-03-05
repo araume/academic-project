@@ -14,7 +14,7 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
@@ -82,6 +82,7 @@
         </div>
         <div class="profile-own-actions is-hidden" id="profileOwnActions">
           <button type="button" class="ghost-button" id="viewBookmarksButton">Bookmarked posts</button>
+          <button type="button" class="ghost-button" id="toggleEditMode">Edit profile</button>
         </div>
         <p class="form-message" id="profileActionMessage"></p>
       </div>
@@ -176,8 +177,6 @@
     </section>
   </main>
 
-  <button type="button" class="mode-toggle-button" id="toggleEditMode">Edit profile</button>
-
   <div class="floating-modal is-hidden" id="bookmarksModal" role="dialog" aria-modal="true" aria-labelledby="bookmarksModalTitle">
     <div class="floating-modal-card">
       <div class="floating-modal-head">
@@ -189,6 +188,7 @@
     </div>
   </div>
 
+  <script src="/src/js/report-dialog.js"></script>
   <script src="/src/js/profile.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
 </body>

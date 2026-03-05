@@ -1,4 +1,6 @@
 const passwordToggles = document.querySelectorAll('[data-toggle="password"]');
+const APP_THEME_STORAGE_KEY = 'thesis.theme';
+const APP_THEME_CLASS = 'theme-dark';
 const loginForm = document.querySelector('[data-form="login"]');
 const signupForm = document.querySelector('[data-form="signup"]');
 const loginMessage = document.querySelector('[data-message="login"]');
@@ -31,6 +33,24 @@ const resetFlowState = {
   step: 'request',
   resetToken: '',
 };
+
+function applyStoredThemePreference() {
+  try {
+    const theme = String(localStorage.getItem(APP_THEME_STORAGE_KEY) || '').trim().toLowerCase();
+    if (theme === 'dark') {
+      document.body.classList.add(APP_THEME_CLASS);
+      document.documentElement.style.colorScheme = 'dark';
+    } else {
+      document.body.classList.remove(APP_THEME_CLASS);
+      document.documentElement.style.colorScheme = 'light';
+    }
+  } catch (error) {
+    document.body.classList.remove(APP_THEME_CLASS);
+    document.documentElement.style.colorScheme = 'light';
+  }
+}
+
+applyStoredThemePreference();
 
 async function parseApiResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();

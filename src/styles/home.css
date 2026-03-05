@@ -192,6 +192,12 @@ body {
   background: linear-gradient(135deg, #b9a79d, #e7e0db);
   overflow: hidden;
   flex: 0 0 56px;
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .composer-avatar img {
@@ -272,6 +278,12 @@ a.comment-author-link:hover {
   background: #1e2a3a;
   flex: 0 0 44px;
   overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .post-avatar img {
@@ -334,6 +346,13 @@ a.comment-author-link:hover {
   cursor: pointer;
   color: var(--ink-soft);
   font-weight: 600;
+  border-radius: 10px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.post-actions button:hover {
+  color: var(--ink);
+  background: #edf3f8;
 }
 
 .post-actions img {
@@ -1057,6 +1076,13 @@ a.comment-author-link:hover {
   border-radius: 50%;
   overflow: hidden;
   flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  background: #d8cbc3;
+  color: #17384d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .sidecard-avatar img {

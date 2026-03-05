@@ -5,6 +5,7 @@ const requireAuthApi = require('../middleware/requireAuthApi');
 const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 const { bootstrapCommunityForUser } = require('../services/communityService');
 const { createNotification } = require('../services/notificationService');
+const { parseReportPayload } = require('../services/reporting');
 
 const router = express.Router();
 const upload = multer({
@@ -1982,7 +1983,8 @@ router.post('/api/community/:id/reports', async (req, res) => {
   const targetUid = sanitizeText(req.body && req.body.targetUid, 120) || null;
   const targetPostId = parsePositiveInt(req.body && req.body.targetPostId);
   const targetCommentId = parsePositiveInt(req.body && req.body.targetCommentId);
-  const reason = sanitizeText(req.body && req.body.reason, 1000);
+  const reportPayload = parseReportPayload(req.body || {});
+  const reason = sanitizeText(reportPayload.reason, 1000);
 
   if (!communityId) {
     return res.status(400).json({ ok: false, message: 'Invalid community id.' });

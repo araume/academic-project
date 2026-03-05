@@ -12,8 +12,6 @@ const postCommentSubmitButton = postCommentForm
   ? postCommentForm.querySelector('button[type="submit"]')
   : null;
 
-const DEFAULT_AVATAR = '/assets/LOGO.png';
-
 let currentPostId = '';
 let currentPost = null;
 let isSubmittingComment = false;
@@ -37,13 +35,9 @@ function profileUrlForUid(uid) {
 }
 
 function initialsFromName(name) {
-  const words = String(name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!words.length) return 'ME';
-  return words.map((word) => word[0].toUpperCase()).join('');
+  const safe = String(name || '').trim();
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -59,14 +53,23 @@ function setNavAvatar(photoLink, displayName) {
   navAvatarLabel.textContent = initialsFromName(displayName);
 }
 
-function setAvatarImage(container, photoLink, altText) {
+function setAvatarImage(container, photoLink, altText, displayName = '') {
   if (!container) return;
-  const image = container.querySelector('img') || document.createElement('img');
-  image.src = photoLink || DEFAULT_AVATAR;
-  image.alt = altText || 'Profile photo';
-  if (!image.parentElement) {
-    container.appendChild(image);
+  const existingImage = container.querySelector('img');
+  if (photoLink) {
+    const image = existingImage || document.createElement('img');
+    image.src = photoLink;
+    image.alt = altText || 'Profile photo';
+    if (!image.parentElement) {
+      container.textContent = '';
+      container.appendChild(image);
+    }
+    return;
   }
+  if (existingImage) {
+    existingImage.remove();
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function buildProfileNameNode(uid, displayName, className = 'post-author-link') {
@@ -237,7 +240,12 @@ function renderPostCard(post) {
     </div>
   `;
   const avatar = header.querySelector('.post-avatar');
-  setAvatarImage(avatar, post.uploader && post.uploader.photoLink, `${uploaderName} profile photo`);
+  setAvatarImage(
+    avatar,
+    post.uploader && post.uploader.photoLink,
+    `${uploaderName} profile photo`,
+    uploaderName
+  );
   const authorHeading = header.querySelector('.post-meta h1');
   if (authorHeading) {
     authorHeading.textContent = '';

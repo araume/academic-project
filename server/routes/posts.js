@@ -8,6 +8,7 @@ const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
 const { uploadToStorage, deleteFromStorage, getSignedUrl, downloadFromStorage } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
+const { parseReportPayload } = require('../services/reporting');
 const {
   createNotification,
   createNotificationsForRecipients,
@@ -19,6 +20,9 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
+const FEED_HIDE_WITHOUT_INTERACTION_DAYS = 5;
+const FEED_HIDE_THRESHOLD_RECENT_POSTS = 500;
+const FEED_HIDE_THRESHOLD_WINDOW_DAYS = 3;
 
 router.use('/api/posts', requireAuthApi);
 router.use('/api/home', requireAuthApi);
@@ -321,12 +325,37 @@ function buildFeedRankingPipeline({
     { $match: filter },
     {
       $addFields: {
+        _feedTimestamp: {
+          $ifNull: [
+            {
+              $convert: {
+                input: '$uploadDate',
+                to: 'date',
+                onError: null,
+                onNull: null,
+              },
+            },
+            {
+              $ifNull: [
+                {
+                  $convert: {
+                    input: '$createdAt',
+                    to: 'date',
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+                { $toDate: '$_id' },
+              ],
+            },
+          ],
+        },
         _hoursSincePost: {
           $max: [
             0.05,
             {
               $divide: [
-                { $subtract: [now, { $ifNull: ['$uploadDate', now] }] },
+                { $subtract: [now, { $ifNull: ['$_feedTimestamp', now] }] },
                 1000 * 60 * 60,
               ],
             },
@@ -343,13 +372,19 @@ function buildFeedRankingPipeline({
         _freshBoost: {
           $cond: [
             { $lte: ['$_hoursSincePost', 1] },
-            2.6,
+            3.2,
             {
               $cond: [
                 { $lte: ['$_hoursSincePost', 6] },
-                1.6,
+                2.2,
                 {
-                  $cond: [{ $lte: ['$_hoursSincePost', 24] }, 0.75, 0],
+                  $cond: [
+                    { $lte: ['$_hoursSincePost', 24] },
+                    1.2,
+                    {
+                      $cond: [{ $lte: ['$_hoursSincePost', 72] }, 0.55, 0],
+                    },
+                  ],
                 },
               ],
             },
@@ -392,11 +427,12 @@ function buildFeedRankingPipeline({
         },
       },
     },
-    { $sort: { _feedScore: -1, uploadDate: -1, _id: -1 } },
+    { $sort: { _feedScore: -1, _feedTimestamp: -1, _id: -1 } },
     { $skip: skip },
     { $limit: pageSize },
     {
       $project: {
+        _feedTimestamp: 0,
         _hoursSincePost: 0,
         _engagementRaw: 0,
         _followBoost: 0,
@@ -409,6 +445,127 @@ function buildFeedRankingPipeline({
       },
     },
   ];
+}
+
+function buildFeedVisibilityWindowFilter(baseFilter, now = new Date()) {
+  const cutoff = new Date(
+    now.getTime() - FEED_HIDE_WITHOUT_INTERACTION_DAYS * 24 * 60 * 60 * 1000
+  );
+  return {
+    $and: [
+      baseFilter,
+      {
+        $expr: {
+          $or: [
+            {
+              $gt: [
+                {
+                  $convert: {
+                    input: '$likesCount',
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+                0,
+              ],
+            },
+            {
+              $gt: [
+                {
+                  $convert: {
+                    input: '$commentsCount',
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+                0,
+              ],
+            },
+            {
+              $gte: [
+                {
+                  $ifNull: [
+                    {
+                      $convert: {
+                        input: '$uploadDate',
+                        to: 'date',
+                        onError: null,
+                        onNull: null,
+                      },
+                    },
+                    {
+                      $ifNull: [
+                        {
+                          $convert: {
+                            input: '$createdAt',
+                            to: 'date',
+                            onError: null,
+                            onNull: null,
+                          },
+                        },
+                        { $toDate: '$_id' },
+                      ],
+                    },
+                  ],
+                },
+                cutoff,
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+function buildPostDateExpr() {
+  return {
+    $ifNull: [
+      {
+        $convert: {
+          input: '$uploadDate',
+          to: 'date',
+          onError: null,
+          onNull: null,
+        },
+      },
+      {
+        $ifNull: [
+          {
+            $convert: {
+              input: '$createdAt',
+              to: 'date',
+              onError: null,
+              onNull: null,
+            },
+          },
+          { $toDate: '$_id' },
+        ],
+      },
+    ],
+  };
+}
+
+async function countRecentFeedPosts(postsCollection, baseFilter, now = new Date()) {
+  const recentCutoff = new Date(
+    now.getTime() - FEED_HIDE_THRESHOLD_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+  const rows = await postsCollection
+    .aggregate([
+      { $match: baseFilter },
+      {
+        $match: {
+          $expr: {
+            $gte: [buildPostDateExpr(), recentCutoff],
+          },
+        },
+      },
+      { $count: 'count' },
+    ])
+    .toArray();
+  return Number(rows[0]?.count || 0);
 }
 
 function parseSidecardLimit(value, fallback = 5, max = 10) {
@@ -617,8 +774,9 @@ router.get('/api/home/sidecards', async (req, res) => {
 
 router.get('/api/posts', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
-  const pageSize = Math.min(Math.max(Number(req.query.pageSize || 10), 1), 50);
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize || 50), 1), 500);
   const course = (req.query.course || '').trim();
+  const now = new Date();
 
   try {
     const db = await getMongoDb();
@@ -634,16 +792,28 @@ router.get('/api/posts', async (req, res) => {
     if (course && course !== 'all') {
       filter.course = course;
     }
+    let recentPostCount = 0;
+    try {
+      recentPostCount = await countRecentFeedPosts(postsCollection, filter, now);
+    } catch (countError) {
+      console.error('Recent feed count failed:', countError);
+    }
+
+    const shouldHideLowInteraction =
+      recentPostCount >= FEED_HIDE_THRESHOLD_RECENT_POSTS;
+    const feedFilter = shouldHideLowInteraction
+      ? buildFeedVisibilityWindowFilter(filter, now)
+      : filter;
 
     const followedUids = await loadFollowingUids(req.user.uid);
-    const total = await postsCollection.countDocuments(filter);
+    const total = await postsCollection.countDocuments(feedFilter);
     const posts = await postsCollection
       .aggregate(
         buildFeedRankingPipeline({
-          filter,
+          filter: feedFilter,
           skip: (page - 1) * pageSize,
           pageSize,
-          now: new Date(),
+          now,
           userCourse: req.user?.course || '',
           followedUids,
         })
@@ -691,7 +861,19 @@ router.get('/api/posts', async (req, res) => {
       })
     );
 
-    return res.json({ ok: true, total, page, pageSize, posts: response });
+    return res.json({
+      ok: true,
+      total,
+      page,
+      pageSize,
+      feedPolicy: {
+        recentWindowDays: FEED_HIDE_THRESHOLD_WINDOW_DAYS,
+        recentPostCount,
+        hideThreshold: FEED_HIDE_THRESHOLD_RECENT_POSTS,
+        lowInteractionHidingActive: shouldHideLowInteraction,
+      },
+      posts: response,
+    });
   } catch (error) {
     console.error('Posts fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load posts.' });
@@ -1453,7 +1635,6 @@ router.post('/api/posts/:id/bookmark', async (req, res) => {
 
 router.post('/api/posts/:id/report', async (req, res) => {
   const { id } = req.params;
-  const { reason } = req.body || {};
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid post id.' });
   }
@@ -1461,12 +1642,37 @@ router.post('/api/posts/:id/report', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
-    await db.collection('post_reports').insertOne({
-      postId,
-      userUid: req.user.uid,
-      reason: reason ? reason.trim() : null,
-      createdAt: new Date(),
-    });
+    const { category, customReason, details, reason } = parseReportPayload(req.body || {});
+    const post = await db.collection('posts').findOne({ _id: postId }, { projection: { uploaderUid: 1 } });
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+    if (post.uploaderUid && post.uploaderUid === req.user.uid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own post.' });
+    }
+
+    await db.collection('post_reports').updateOne(
+      { postId, userUid: req.user.uid },
+      {
+        $set: {
+          postId,
+          userUid: req.user.uid,
+          targetUid: post.uploaderUid || null,
+          category,
+          customReason: customReason || null,
+          details: details || null,
+          reason,
+          status: 'open',
+          moderationAction: null,
+          resolutionNote: null,
+          resolvedAt: null,
+          resolvedByUid: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
     return res.json({ ok: true });
   } catch (error) {
     console.error('Report failed:', error);

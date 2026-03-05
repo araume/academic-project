@@ -75,6 +75,12 @@ body {
   overflow: hidden;
   flex: 0 0 44px;
   background: #d9d4cd;
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .post-avatar img {

@@ -507,22 +507,6 @@ body {
   color: var(--accent);
 }
 
-.mode-toggle-button {
-  position: fixed;
-  left: 24px;
-  bottom: 24px;
-  border: none;
-  border-radius: 999px;
-  padding: 12px 18px;
-  font-weight: 700;
-  font-family: inherit;
-  cursor: pointer;
-  color: #fff;
-  background: linear-gradient(135deg, #294c66 0%, #143046 100%);
-  box-shadow: 0 14px 28px rgba(15, 38, 57, 0.28);
-  z-index: 40;
-}
-
 .form-message {
   min-height: 18px;
   margin: 0;
@@ -674,9 +658,4 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .mode-toggle-button {
-    left: 20px;
-    right: 20px;
-    bottom: 20px;
-  }
 }

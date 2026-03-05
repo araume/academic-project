@@ -14,7 +14,7 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
@@ -102,8 +102,46 @@
           </label>
         </div>
 
+        <form class="meet-search-form" id="meetSearchForm">
+          <label class="meet-search-field">
+            <span>Find room by Meet ID</span>
+            <input
+              type="text"
+              id="meetIdSearchInput"
+              maxlength="80"
+              autocomplete="off"
+              placeholder="Enter Meet ID (e.g., A1B2C3D4)"
+            />
+          </label>
+          <label class="meet-search-field">
+            <span>Password (if required)</span>
+            <input
+              type="password"
+              id="meetIdSearchPasswordInput"
+              maxlength="128"
+              autocomplete="current-password"
+              placeholder="Optional"
+            />
+          </label>
+          <button type="submit" class="ghost-button" id="searchMeetIdButton">Search room</button>
+        </form>
+
+        <section class="rooms-partition" aria-label="Room search results">
+          <header class="rooms-partition-head">
+            <h3>Search result</h3>
+          </header>
+          <div class="meet-search-result" id="meetSearchResult"></div>
+        </section>
+
+        <div class="rooms-partition-divider" aria-hidden="true"></div>
+
         <p class="inline-message" id="workspaceMessage"></p>
-        <div class="rooms-list" id="roomsList"></div>
+        <section class="rooms-partition" aria-label="Available room list">
+          <header class="rooms-partition-head">
+            <h3>Available rooms</h3>
+          </header>
+          <div class="rooms-list" id="roomsList"></div>
+        </section>
       </section>
 
       <section class="card call-panel-card is-hidden" id="callPanelCard">
@@ -112,7 +150,7 @@
             <p class="eyebrow">Live Call</p>
             <h3>Group call panel</h3>
           </div>
-          <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave view</button>
+          <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave call</button>
         </header>
         <p class="call-panel-status" id="callPanelStatus">Join a room to start the call on this page.</p>
         <div class="call-frame-wrap is-hidden" id="callFrameWrap">
@@ -194,6 +232,20 @@
           <a href="#" target="_blank" rel="noopener noreferrer" id="inviteResultLink"></a>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="forwardRoomModal">
+    <div class="modal-card forward-room-modal-card">
+      <button type="button" class="close-button" id="forwardRoomModalClose">×</button>
+      <h2>Forward room link</h2>
+      <p class="subcopy forward-room-meta" id="forwardRoomMeta">Select a conversation to send this room.</p>
+      <label class="forward-room-search">
+        <span>Search conversation</span>
+        <input type="text" id="forwardRoomSearchInput" placeholder="Search by name or title..." />
+      </label>
+      <p class="inline-message" id="forwardRoomMessage"></p>
+      <div class="forward-room-list" id="forwardRoomList"></div>
     </div>
   </div>
 

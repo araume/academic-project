@@ -9,3 +9,6 @@ mobile/android/android/*.jks
 mobile/android/android/*.keystore
 mobile/android/android/app/google-services.json
 mobile_release_bash.md
+accounts_data.sql
+all_data.sql
+full_local.sql
