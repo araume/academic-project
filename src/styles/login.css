@@ -152,6 +152,17 @@ body {
   transition: border 0.2s ease, box-shadow 0.2s ease;
 }
 
+.form-stack textarea {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #d8d8d8;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+  resize: vertical;
+  min-height: 110px;
+}
+
 .form-stack select {
   padding: 12px 14px;
   border-radius: 12px;
@@ -163,7 +174,8 @@ body {
 }
 
 .form-stack input:focus,
-.form-stack select:focus {
+.form-stack select:focus,
+.form-stack textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(28, 60, 90, 0.15);
@@ -391,18 +403,21 @@ body.theme-dark .panel-footnote {
 }
 
 body.theme-dark .form-stack input,
-body.theme-dark .form-stack select {
+body.theme-dark .form-stack select,
+body.theme-dark .form-stack textarea {
   background: rgba(18, 46, 69, 0.92);
   color: #edc577;
   border-color: rgba(218, 155, 43, 0.34);
 }
 
-body.theme-dark .form-stack input::placeholder {
+body.theme-dark .form-stack input::placeholder,
+body.theme-dark .form-stack textarea::placeholder {
   color: rgba(237, 197, 119, 0.66);
 }
 
 body.theme-dark .form-stack input:focus,
-body.theme-dark .form-stack select:focus {
+body.theme-dark .form-stack select:focus,
+body.theme-dark .form-stack textarea:focus {
   border-color: rgba(218, 155, 43, 0.74);
   box-shadow: 0 0 0 3px rgba(218, 155, 43, 0.2);
 }

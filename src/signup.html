@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MyBuddy - Sign up</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/signup.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <main class="signup-shell">
+    <section class="signup-hero">
+      <div class="brand-card">
+        <img src="/assets/LOGO.png" alt="Thesis logo" class="brand-logo" />
+        <div class="brand-copy">
+          <p class="brand-kicker">Create account</p>
+          <h1>Join the research ecosystem.</h1>
+          <p>Complete your account setup in three quick steps.</p>
+        </div>
+      </div>
+      <a class="hero-link" href="/login">Back to login</a>
+    </section>
+
+    <section class="signup-panel">
+      <article class="signup-card">
+        <header class="panel-header">
+          <p class="panel-tag">Registration flow</p>
+          <h2>Create your profile</h2>
+          <div class="wizard-steps" id="wizardSteps">
+            <button type="button" class="step-chip is-active" data-step-index="1">1. Account details</button>
+            <button type="button" class="step-chip" data-step-index="2">2. Profile</button>
+            <button type="button" class="step-chip" data-step-index="3">3. Content preferences</button>
+          </div>
+          <div class="wizard-progress" aria-hidden="true">
+            <span id="wizardProgressBar"></span>
+          </div>
+        </header>
+
+        <form id="signupWizardForm" class="wizard-form" novalidate>
+          <section class="wizard-step is-active" data-step="1" aria-label="Account details">
+            <label>
+              <span>Email</span>
+              <input type="email" name="email" placeholder="Email" autocomplete="email" required />
+            </label>
+            <label>
+              <span>Password</span>
+              <input type="password" name="password" placeholder="Password" autocomplete="new-password" required />
+            </label>
+            <label>
+              <span>Recovery email</span>
+              <input type="email" name="recoveryEmail" placeholder="Recovery email (optional)" autocomplete="email" />
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="signupShowPassword" />
+              <span>Show password</span>
+            </label>
+            <div class="wizard-actions">
+              <button type="button" class="secondary-button" id="step1Back">Back to login</button>
+              <button type="button" class="primary-button" id="step1Next">Next</button>
+            </div>
+          </section>
+
+          <section class="wizard-step" data-step="2" aria-label="Profile">
+            <label>
+              <span>Username</span>
+              <input type="text" name="username" placeholder="Username" autocomplete="username" />
+            </label>
+            <label>
+              <span>Display name</span>
+              <input type="text" name="displayName" placeholder="Display name" />
+            </label>
+            <label>
+              <span>Course</span>
+              <select name="course" id="signupCourseSelect" required>
+                <option value="">Select course</option>
+              </select>
+            </label>
+            <label>
+              <span>Student number</span>
+              <input type="text" name="studentNumber" placeholder="Student number (required for students)" />
+            </label>
+            <label>
+              <span>Professor one-time code (optional)</span>
+              <input
+                type="text"
+                name="professorCode"
+                placeholder="Use only when registering as professor"
+                autocomplete="off"
+              />
+            </label>
+            <div class="wizard-actions">
+              <button type="button" class="secondary-button" id="step2Back">Back</button>
+              <button type="button" class="primary-button" id="step2Next">Next</button>
+            </div>
+          </section>
+
+          <section class="wizard-step" data-step="3" aria-label="Content preferences">
+            <label>
+              <span>Gender</span>
+              <select name="gender" required>
+                <option value="">Select gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="non_binary">Non-binary</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>
+              <span>Content preference</span>
+              <select name="contentPreference" required>
+                <option value="">Select preference</option>
+                <option value="balanced">Balanced</option>
+                <option value="theory">Theory-focused</option>
+                <option value="practical">Practical-focused</option>
+                <option value="research">Research-focused</option>
+              </select>
+            </label>
+            <p class="step-note">
+              Student accounts require a student number. If you provide a valid professor one-time code,
+              your account will be registered as professor.
+            </p>
+            <div class="wizard-actions">
+              <button type="button" class="secondary-button" id="step3Back">Back</button>
+              <button type="submit" class="primary-button" id="signupSubmitButton">Create account</button>
+            </div>
+          </section>
+
+          <p class="form-message" id="signupMessage"></p>
+        </form>
+      </article>
+    </section>
+  </main>
+
+  <script src="/src/js/signup.js"></script>
+</body>
+</html>

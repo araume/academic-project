@@ -8,6 +8,7 @@ const NOTIFICATION_TYPES = new Set([
   'document_liked',
   'document_commented',
   'community_rules_required',
+  'admin_custom',
 ]);
 
 const TYPE_SETTING_COLUMN = {
@@ -101,7 +102,8 @@ async function ensureNotificationsTables() {
           'post_commented',
           'document_liked',
           'document_commented',
-          'community_rules_required'
+          'community_rules_required',
+          'admin_custom'
         )
       ),
       entity_type TEXT,
@@ -137,7 +139,8 @@ async function ensureNotificationsTables() {
           'post_commented',
           'document_liked',
           'document_commented',
-          'community_rules_required'
+          'community_rules_required',
+          'admin_custom'
         )
       );
   `;
@@ -415,6 +418,8 @@ function buildPushPayload({ type, actorDisplayName, entityType, entityId, target
   const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle.trim() : 'your post';
   const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle.trim() : 'your upload';
   const communityName = typeof meta.communityName === 'string' ? meta.communityName.trim() : 'your community';
+  const customTitle = typeof meta.title === 'string' ? meta.title.trim() : 'Admin notice';
+  const customMessage = typeof meta.message === 'string' ? meta.message.trim() : 'A new admin notice is available.';
 
   if (type === 'following_new_post') {
     return {
@@ -455,6 +460,13 @@ function buildPushPayload({ type, actorDisplayName, entityType, entityId, target
     return {
       title: 'Community update',
       body: `Please review the latest rules in ${communityName}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'admin_custom') {
+    return {
+      title: customTitle || 'Admin notice',
+      body: customMessage || 'A new admin notice is available.',
       data: { type, entityType, entityId, targetUrl },
     };
   }

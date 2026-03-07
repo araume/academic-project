@@ -6,6 +6,14 @@ CREATE TABLE IF NOT EXISTS accounts (
   username TEXT,
   display_name TEXT,
   course TEXT,
+  gender TEXT,
+  content_preference JSONB NOT NULL DEFAULT '{}'::jsonb,
+  student_number TEXT,
+  id_verification_status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (id_verification_status IN ('pending', 'approved', 'rejected')),
+  id_verification_note TEXT,
+  id_verified_by_uid TEXT,
+  id_verified_at TIMESTAMPTZ,
   platform_role TEXT NOT NULL DEFAULT 'member',
   recovery_email TEXT,
   email_verified BOOLEAN NOT NULL DEFAULT false,
@@ -21,6 +29,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS accounts_uid_unique_idx ON accounts(uid);
 
 ALTER TABLE accounts
   ADD COLUMN IF NOT EXISTS platform_role TEXT NOT NULL DEFAULT 'member';
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS gender TEXT;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS content_preference JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS student_number TEXT;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS id_verification_status TEXT NOT NULL DEFAULT 'pending';
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS id_verification_note TEXT;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS id_verified_by_uid TEXT;
+
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS id_verified_at TIMESTAMPTZ;
 
 ALTER TABLE accounts
   ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
@@ -40,6 +69,13 @@ ALTER TABLE accounts
 ALTER TABLE accounts
   ADD COLUMN IF NOT EXISTS banned_by_uid TEXT;
 
+ALTER TABLE accounts
+  DROP CONSTRAINT IF EXISTS accounts_id_verification_status_check;
+
+ALTER TABLE accounts
+  ADD CONSTRAINT accounts_id_verification_status_check
+    CHECK (id_verification_status IN ('pending', 'approved', 'rejected'));
+
 CREATE TABLE IF NOT EXISTS courses (
   id SERIAL PRIMARY KEY,
   course_code TEXT UNIQUE NOT NULL,
@@ -58,11 +94,45 @@ CREATE TABLE IF NOT EXISTS documents (
   subject TEXT NOT NULL,
   views INTEGER NOT NULL DEFAULT 0,
   popularity INTEGER NOT NULL DEFAULT 0,
-  visibility TEXT NOT NULL CHECK (visibility IN ('public', 'private')),
+  visibility TEXT NOT NULL CHECK (visibility IN ('public', 'private', 'course_exclusive')),
+  source TEXT NOT NULL DEFAULT 'library' CHECK (source IN ('vault', 'library')),
   aiallowed BOOLEAN NOT NULL DEFAULT false,
   link TEXT NOT NULL,
-  thumbnail_link TEXT
+  thumbnail_link TEXT,
+  is_restricted BOOLEAN NOT NULL DEFAULT false,
+  restricted_at TIMESTAMPTZ,
+  restricted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  restricted_reason TEXT
 );
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'library';
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS is_restricted BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS restricted_at TIMESTAMPTZ;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS restricted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS restricted_reason TEXT;
+
+ALTER TABLE documents
+  DROP CONSTRAINT IF EXISTS documents_visibility_check;
+
+ALTER TABLE documents
+  ADD CONSTRAINT documents_visibility_check
+    CHECK (visibility IN ('public', 'private', 'course_exclusive'));
+
+ALTER TABLE documents
+  DROP CONSTRAINT IF EXISTS documents_source_check;
+
+ALTER TABLE documents
+  ADD CONSTRAINT documents_source_check
+    CHECK (source IN ('vault', 'library'));
 
 DO $$
 BEGIN
@@ -74,6 +144,21 @@ BEGIN
     ALTER TABLE accounts
       ADD CONSTRAINT accounts_banned_by_uid_fkey
       FOREIGN KEY (banned_by_uid)
+      REFERENCES accounts(uid)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'accounts_id_verified_by_uid_fkey'
+  ) THEN
+    ALTER TABLE accounts
+      ADD CONSTRAINT accounts_id_verified_by_uid_fkey
+      FOREIGN KEY (id_verified_by_uid)
       REFERENCES accounts(uid)
       ON DELETE SET NULL;
   END IF;
@@ -109,6 +194,18 @@ CREATE TABLE IF NOT EXISTS password_reset_codes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS professor_registration_codes (
+  id BIGSERIAL PRIMARY KEY,
+  code_digest TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  consumed_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  consumed_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   session_id TEXT PRIMARY KEY,
   uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
@@ -116,6 +213,64 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_disciplinary_actions (
+  id BIGSERIAL PRIMARY KEY,
+  target_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  issued_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('warn', 'suspend', 'ban')),
+  reason TEXT,
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ends_at TIMESTAMPTZ,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ,
+  revoked_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  revoked_reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS account_appeals (
+  id BIGSERIAL PRIMARY KEY,
+  appellant_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  disciplinary_action_id BIGINT REFERENCES account_disciplinary_actions(id) ON DELETE SET NULL,
+  appeal_type TEXT NOT NULL CHECK (appeal_type IN ('warning', 'suspension', 'ban', 'verification_rejection', 'other')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'under_review', 'accepted', 'denied', 'withdrawn')),
+  message TEXT NOT NULL,
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  resolution_note TEXT,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS restricted_content_queue (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT NOT NULL CHECK (source IN (
+    'main_post',
+    'library_document',
+    'community_post',
+    'community_comment',
+    'chat_message'
+  )),
+  report_key TEXT,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  course TEXT,
+  reason TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  hidden_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  restore_deadline_at TIMESTAMPTZ NOT NULL,
+  restored_at TIMESTAMPTZ,
+  restored_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  purged_at TIMESTAMPTZ,
+  purged_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'restricted' CHECK (status IN ('restricted', 'restored', 'purged')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS document_likes (
   id SERIAL PRIMARY KEY,
@@ -129,13 +284,35 @@ CREATE INDEX IF NOT EXISTS documents_course_idx ON documents(course);
 CREATE INDEX IF NOT EXISTS documents_uploaddate_idx ON documents(uploaddate);
 CREATE INDEX IF NOT EXISTS documents_popularity_idx ON documents(popularity);
 CREATE INDEX IF NOT EXISTS documents_views_idx ON documents(views);
+CREATE INDEX IF NOT EXISTS documents_restricted_idx ON documents(is_restricted, uploaddate DESC);
+CREATE INDEX IF NOT EXISTS documents_source_visibility_idx ON documents(source, visibility, uploaddate DESC);
 CREATE INDEX IF NOT EXISTS email_verification_tokens_uid_idx ON email_verification_tokens(uid);
 CREATE INDEX IF NOT EXISTS email_verification_tokens_expires_idx ON email_verification_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS password_reset_codes_uid_idx ON password_reset_codes(uid);
 CREATE INDEX IF NOT EXISTS password_reset_codes_code_expires_idx ON password_reset_codes(code_expires_at);
 CREATE INDEX IF NOT EXISTS password_reset_codes_reset_token_expires_idx ON password_reset_codes(reset_token_expires_at);
+CREATE INDEX IF NOT EXISTS professor_registration_codes_active_idx
+  ON professor_registration_codes(is_active, consumed_at, expires_at);
 CREATE INDEX IF NOT EXISTS auth_sessions_uid_idx ON auth_sessions(uid);
 CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS accounts_platform_role_idx ON accounts(platform_role);
+CREATE INDEX IF NOT EXISTS accounts_id_verification_status_idx ON accounts(id_verification_status);
+CREATE INDEX IF NOT EXISTS accounts_student_number_idx ON accounts(student_number);
+CREATE INDEX IF NOT EXISTS account_disciplinary_actions_target_active_idx
+  ON account_disciplinary_actions(target_uid, active, created_at DESC);
+CREATE INDEX IF NOT EXISTS account_disciplinary_actions_target_type_idx
+  ON account_disciplinary_actions(target_uid, action_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS account_appeals_appellant_created_idx
+  ON account_appeals(appellant_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS account_appeals_status_created_idx
+  ON account_appeals(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS restricted_content_queue_status_deadline_idx
+  ON restricted_content_queue(status, restore_deadline_at);
+CREATE INDEX IF NOT EXISTS restricted_content_queue_target_idx
+  ON restricted_content_queue(source, target_type, target_id);
+CREATE UNIQUE INDEX IF NOT EXISTS restricted_content_queue_active_target_idx
+  ON restricted_content_queue(source, target_type, target_id)
+  WHERE status = 'restricted';
 
 CREATE TABLE IF NOT EXISTS profiles (
   id SERIAL PRIMARY KEY,
@@ -188,7 +365,8 @@ CREATE TABLE IF NOT EXISTS notifications (
       'post_commented',
       'document_liked',
       'document_commented',
-      'community_rules_required'
+      'community_rules_required',
+      'admin_custom'
     )
   ),
   entity_type TEXT,
@@ -211,7 +389,8 @@ ALTER TABLE notifications
       'post_commented',
       'document_liked',
       'document_commented',
-      'community_rules_required'
+      'community_rules_required',
+      'admin_custom'
     )
   );
 
@@ -568,6 +747,72 @@ CREATE TABLE IF NOT EXISTS community_comment_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS subjects (
+  id BIGSERIAL PRIMARY KEY,
+  course_code TEXT,
+  course_name TEXT NOT NULL,
+  subject_code TEXT,
+  subject_name TEXT NOT NULL,
+  description TEXT,
+  created_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (course_name, subject_name)
+);
+
+CREATE TABLE IF NOT EXISTS subject_memberships (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  state TEXT NOT NULL DEFAULT 'member'
+    CHECK (state IN ('pending', 'member', 'left', 'banned')),
+  joined_at TIMESTAMPTZ,
+  left_at TIMESTAMPTZ,
+  banned_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (subject_id, user_uid)
+);
+
+CREATE TABLE IF NOT EXISTS subject_posts (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  author_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  attachment_library_document_uuid UUID REFERENCES documents(uuid) ON DELETE SET NULL,
+  likes_count INTEGER NOT NULL DEFAULT 0,
+  comments_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'taken_down')),
+  taken_down_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  taken_down_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS subject_comments (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES subject_posts(id) ON DELETE CASCADE,
+  author_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'taken_down')),
+  taken_down_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  taken_down_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS subject_post_likes (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES subject_posts(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (subject_id, post_id, user_uid)
+);
+
 CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows(follower_uid);
 CREATE INDEX IF NOT EXISTS follows_target_idx ON follows(target_uid);
 CREATE INDEX IF NOT EXISTS follow_requests_target_status_idx ON follow_requests(target_uid, status);
@@ -608,6 +853,14 @@ CREATE INDEX IF NOT EXISTS community_post_reports_community_idx ON community_pos
 CREATE INDEX IF NOT EXISTS community_post_reports_post_idx ON community_post_reports(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS community_comment_reports_community_idx ON community_comment_reports(community_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS community_comment_reports_comment_idx ON community_comment_reports(comment_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subjects_course_name_idx ON subjects(course_name, is_active);
+CREATE INDEX IF NOT EXISTS subject_memberships_user_state_idx ON subject_memberships(user_uid, state);
+CREATE INDEX IF NOT EXISTS subject_memberships_subject_state_idx ON subject_memberships(subject_id, state);
+CREATE INDEX IF NOT EXISTS subject_posts_subject_created_idx ON subject_posts(subject_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_posts_subject_likes_idx ON subject_posts(subject_id, likes_count DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_comments_post_created_idx ON subject_comments(post_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS subject_post_likes_post_idx ON subject_post_likes(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_post_likes_user_idx ON subject_post_likes(user_uid, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS rooms (
   id BIGSERIAL PRIMARY KEY,
@@ -727,6 +980,13 @@ CREATE TABLE IF NOT EXISTS site_page_content (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS platform_feature_overrides (
+  feature_key TEXT PRIMARY KEY,
+  enabled BOOLEAN NOT NULL,
+  updated_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS rooms_state_scheduled_idx ON rooms(state, scheduled_at);
 CREATE INDEX IF NOT EXISTS rooms_visibility_created_idx ON rooms(visibility, created_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_community_created_idx ON rooms(community_id, created_at DESC);
@@ -745,3 +1005,383 @@ CREATE INDEX IF NOT EXISTS admin_audit_logs_executor_idx ON admin_audit_logs(exe
 CREATE INDEX IF NOT EXISTS admin_audit_logs_course_idx ON admin_audit_logs(course, created_at DESC);
 CREATE INDEX IF NOT EXISTS admin_audit_logs_action_idx ON admin_audit_logs(action_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS site_page_content_updated_idx ON site_page_content(updated_at DESC);
+CREATE INDEX IF NOT EXISTS platform_feature_overrides_updated_idx ON platform_feature_overrides(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS workbenches (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  course TEXT NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'invite_only'
+    CHECK (visibility IN ('open', 'invite_only')),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('pending', 'active', 'archived')),
+  owner_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  created_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  approved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workbench_members (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member'
+    CHECK (role IN ('owner', 'manager', 'member', 'viewer')),
+  state TEXT NOT NULL DEFAULT 'active'
+    CHECK (state IN ('pending', 'active', 'removed')),
+  invited_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (workbench_id, user_uid)
+);
+
+CREATE TABLE IF NOT EXISTS workbench_nodes (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  created_by_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  markdown_content TEXT NOT NULL DEFAULT '',
+  node_type TEXT NOT NULL DEFAULT 'file' CHECK (node_type IN ('file', 'folder')),
+  parent_node_id BIGINT REFERENCES workbench_nodes(id) ON DELETE SET NULL,
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'members')),
+  is_deleted BOOLEAN NOT NULL DEFAULT false,
+  deleted_at TIMESTAMPTZ,
+  deleted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  shared_token TEXT,
+  shared_at TIMESTAMPTZ,
+  copied_from_node_id BIGINT REFERENCES workbench_nodes(id) ON DELETE SET NULL,
+  position_x DOUBLE PRECISION,
+  position_y DOUBLE PRECISION,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'ai')),
+  ai_model TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workbench_edges (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  from_node_id BIGINT NOT NULL REFERENCES workbench_nodes(id) ON DELETE CASCADE,
+  to_node_id BIGINT NOT NULL REFERENCES workbench_nodes(id) ON DELETE CASCADE,
+  from_anchor TEXT NOT NULL DEFAULT 'right' CHECK (from_anchor IN ('top', 'right', 'bottom', 'left')),
+  to_anchor TEXT NOT NULL DEFAULT 'left' CHECK (to_anchor IN ('top', 'right', 'bottom', 'left')),
+  description TEXT NOT NULL DEFAULT '',
+  created_by_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (from_node_id <> to_node_id),
+  UNIQUE (workbench_id, from_node_id, to_node_id)
+);
+
+ALTER TABLE workbench_edges
+  ADD COLUMN IF NOT EXISTS from_anchor TEXT NOT NULL DEFAULT 'right';
+
+ALTER TABLE workbench_edges
+  ADD COLUMN IF NOT EXISTS to_anchor TEXT NOT NULL DEFAULT 'left';
+
+UPDATE workbench_edges
+SET from_anchor = 'right'
+WHERE from_anchor IS NULL
+   OR from_anchor NOT IN ('top', 'right', 'bottom', 'left');
+
+UPDATE workbench_edges
+SET to_anchor = 'left'
+WHERE to_anchor IS NULL
+   OR to_anchor NOT IN ('top', 'right', 'bottom', 'left');
+
+ALTER TABLE workbench_edges
+  DROP CONSTRAINT IF EXISTS workbench_edges_from_anchor_check;
+
+ALTER TABLE workbench_edges
+  ADD CONSTRAINT workbench_edges_from_anchor_check
+    CHECK (from_anchor IN ('top', 'right', 'bottom', 'left'));
+
+ALTER TABLE workbench_edges
+  DROP CONSTRAINT IF EXISTS workbench_edges_to_anchor_check;
+
+ALTER TABLE workbench_edges
+  ADD CONSTRAINT workbench_edges_to_anchor_check
+    CHECK (to_anchor IN ('top', 'right', 'bottom', 'left'));
+
+CREATE TABLE IF NOT EXISTS workbench_notes (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  node_id BIGINT REFERENCES workbench_nodes(id) ON DELETE CASCADE,
+  edge_id BIGINT REFERENCES workbench_edges(id) ON DELETE CASCADE,
+  author_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'ai')),
+  ai_model TEXT,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK ((CASE WHEN node_id IS NULL THEN 0 ELSE 1 END) + (CASE WHEN edge_id IS NULL THEN 0 ELSE 1 END) = 1)
+);
+
+CREATE TABLE IF NOT EXISTS workbench_professor_assignments (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  professor_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  assigned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workbench_scoped_privileges (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  granted_role TEXT NOT NULL CHECK (granted_role IN ('manager', 'professor_scoped')),
+  granted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  reason TEXT,
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workbench_requests (
+  id BIGSERIAL PRIMARY KEY,
+  requester_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  course TEXT NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'invite_only'
+    CHECK (visibility IN ('open', 'invite_only')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),
+  review_note TEXT,
+  reviewed_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  created_workbench_id BIGINT REFERENCES workbenches(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workbench_ownership_transfers (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  from_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  to_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  requested_by_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'accepted', 'rejected', 'canceled', 'expired')),
+  temp_privilege_hours INTEGER NOT NULL DEFAULT 72 CHECK (temp_privilege_hours >= 0),
+  expires_at TIMESTAMPTZ NOT NULL,
+  responded_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  responded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS task_groups (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT REFERENCES workbenches(id) ON DELETE CASCADE,
+  owner_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  visibility TEXT NOT NULL DEFAULT 'workbench'
+    CHECK (visibility IN ('personal', 'workbench')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id BIGSERIAL PRIMARY KEY,
+  task_group_id BIGINT NOT NULL REFERENCES task_groups(id) ON DELETE CASCADE,
+  workbench_id BIGINT REFERENCES workbenches(id) ON DELETE CASCADE,
+  creator_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  task_type TEXT NOT NULL DEFAULT 'collaborative'
+    CHECK (task_type IN ('personal', 'collaborative')),
+  priority TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low', 'normal', 'urgent')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'in_progress', 'completed', 'archived')),
+  requires_submission_file BOOLEAN NOT NULL DEFAULT false,
+  due_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS task_assignees (
+  id BIGSERIAL PRIMARY KEY,
+  task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  assigned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  state TEXT NOT NULL DEFAULT 'assigned'
+    CHECK (state IN ('assigned', 'accepted', 'declined', 'completed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (task_id, user_uid)
+);
+
+CREATE TABLE IF NOT EXISTS task_submissions (
+  id BIGSERIAL PRIMARY KEY,
+  task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  submitted_by_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  storage_key TEXT NOT NULL,
+  original_filename TEXT,
+  mime_type TEXT,
+  size_bytes BIGINT CHECK (size_bytes IS NULL OR size_bytes >= 0),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (task_id, submitted_by_uid)
+);
+
+CREATE TABLE IF NOT EXISTS task_status_history (
+  id BIGSERIAL PRIMARY KEY,
+  task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  changed_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS workbenches_owner_idx ON workbenches(owner_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS workbenches_course_idx ON workbenches(course, visibility, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_members_user_idx ON workbench_members(user_uid, state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_nodes_workbench_idx ON workbench_nodes(workbench_id, sort_order, updated_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_nodes_parent_idx ON workbench_nodes(workbench_id, parent_node_id, is_deleted, sort_order, updated_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_nodes_deleted_idx ON workbench_nodes(workbench_id, is_deleted, deleted_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS workbench_nodes_shared_token_unique_idx
+  ON workbench_nodes(shared_token)
+  WHERE shared_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS workbench_edges_workbench_idx ON workbench_edges(workbench_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_notes_workbench_idx ON workbench_notes(workbench_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_professor_assignments_active_idx
+  ON workbench_professor_assignments(workbench_id, professor_uid, active, expires_at);
+CREATE INDEX IF NOT EXISTS workbench_scoped_privileges_active_idx
+  ON workbench_scoped_privileges(workbench_id, user_uid, active, expires_at);
+CREATE INDEX IF NOT EXISTS workbench_requests_status_course_idx
+  ON workbench_requests(status, course, created_at DESC);
+CREATE INDEX IF NOT EXISTS workbench_ownership_transfers_workbench_idx
+  ON workbench_ownership_transfers(workbench_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS task_groups_workbench_idx ON task_groups(workbench_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS tasks_workbench_status_idx ON tasks(workbench_id, status, due_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS task_assignees_user_state_idx ON task_assignees(user_uid, state, created_at DESC);
+CREATE INDEX IF NOT EXISTS task_submissions_task_idx ON task_submissions(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS task_status_history_task_idx ON task_status_history(task_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS workbench_professor_assignments_active_unique_idx
+  ON workbench_professor_assignments(workbench_id, professor_uid)
+  WHERE active = true;
+CREATE UNIQUE INDEX IF NOT EXISTS workbench_scoped_privileges_active_unique_idx
+  ON workbench_scoped_privileges(workbench_id, user_uid, granted_role)
+  WHERE active = true;
+CREATE UNIQUE INDEX IF NOT EXISTS workbench_ownership_transfer_pending_idx
+  ON workbench_ownership_transfers(workbench_id)
+  WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS ai_audit_events (
+  id BIGSERIAL PRIMARY KEY,
+  actor_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('openai', 'mcp')),
+  event_type TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('success', 'blocked', 'error')),
+  model TEXT,
+  request_id TEXT,
+  input_chars INTEGER NOT NULL DEFAULT 0,
+  output_chars INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage_daily (
+  id BIGSERIAL PRIMARY KEY,
+  usage_date DATE NOT NULL,
+  uid TEXT REFERENCES accounts(uid) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('openai', 'mcp')),
+  metric_key TEXT NOT NULL,
+  call_count INTEGER NOT NULL DEFAULT 0,
+  input_chars INTEGER NOT NULL DEFAULT 0,
+  output_chars INTEGER NOT NULL DEFAULT 0,
+  last_event_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (usage_date, uid, provider, metric_key)
+);
+
+CREATE TABLE IF NOT EXISTS ai_content_scans (
+  id BIGSERIAL PRIMARY KEY,
+  target_type TEXT NOT NULL CHECK (target_type IN ('post', 'document')),
+  target_id TEXT NOT NULL,
+  requested_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  provider TEXT NOT NULL DEFAULT 'openai' CHECK (provider IN ('openai')),
+  model TEXT,
+  risk_level TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (risk_level IN ('low', 'medium', 'high', 'critical', 'unknown')),
+  risk_score NUMERIC(5,2),
+  result JSONB NOT NULL DEFAULT '{}'::jsonb,
+  excerpt TEXT,
+  status TEXT NOT NULL DEFAULT 'completed'
+    CHECK (status IN ('completed', 'failed', 'skipped')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS room_ai_summaries (
+  id BIGSERIAL PRIMARY KEY,
+  room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  requested_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  provider TEXT NOT NULL DEFAULT 'openai' CHECK (provider IN ('openai')),
+  model TEXT,
+  summary_text TEXT,
+  keypoints JSONB NOT NULL DEFAULT '[]'::jsonb,
+  transcript_excerpt TEXT,
+  consent_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'completed'
+    CHECK (status IN ('completed', 'failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ai_audit_events_actor_created_idx
+  ON ai_audit_events(actor_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_audit_events_scope_created_idx
+  ON ai_audit_events(scope_type, scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_audit_events_provider_status_idx
+  ON ai_audit_events(provider, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ai_usage_daily_uid_date_idx
+  ON ai_usage_daily(uid, usage_date DESC);
+CREATE INDEX IF NOT EXISTS ai_usage_daily_provider_metric_idx
+  ON ai_usage_daily(provider, metric_key, usage_date DESC);
+
+CREATE INDEX IF NOT EXISTS ai_content_scans_target_created_idx
+  ON ai_content_scans(target_type, target_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_content_scans_status_created_idx
+  ON ai_content_scans(status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS room_ai_summaries_room_created_idx
+  ON room_ai_summaries(room_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS room_ai_summaries_requester_created_idx
+  ON room_ai_summaries(requested_by_uid, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id BIGSERIAL PRIMARY KEY,
+  schema_key TEXT NOT NULL,
+  schema_checksum TEXT NOT NULL,
+  applied_by TEXT,
+  notes TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (schema_key, schema_checksum)
+);
+
+CREATE INDEX IF NOT EXISTS schema_migrations_schema_applied_idx
+  ON schema_migrations(schema_key, applied_at DESC);

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Units</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/subjects.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Workbench"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Workbench</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" class="is-active" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">M</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="subjects-shell">
+    <aside class="subjects-list-panel">
+      <div class="subjects-list-head">
+        <div>
+          <p class="eyebrow">Units</p>
+          <h1>Course units</h1>
+        </div>
+        <button type="button" class="primary-button is-hidden" id="openCreateSubjectModal">Create unit</button>
+      </div>
+      <div id="subjectsList" class="subjects-list"></div>
+    </aside>
+
+    <section class="subject-feed-panel">
+      <div class="subject-feed-head">
+        <div>
+          <p class="eyebrow" id="subjectCourseLabel">Select a unit</p>
+          <h2 id="subjectTitle">Unit feed</h2>
+          <p id="subjectDescription" class="subject-description">Choose a unit on the left to load posts.</p>
+        </div>
+        <button type="button" class="primary-button" id="openCreateSubjectPostModal" disabled>New unit post</button>
+      </div>
+      <div id="subjectPosts" class="subject-posts">
+        <p class="subject-empty">Choose a unit to view posts.</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal is-hidden" id="createSubjectModal">
+    <div class="modal-card">
+      <button type="button" class="close-button" id="closeCreateSubjectModal">×</button>
+      <h3>Create unit</h3>
+      <form id="createSubjectForm" class="subject-form">
+        <label>
+          <span>Unit name</span>
+          <input type="text" name="subjectName" required />
+        </label>
+        <label>
+          <span>Unit code (optional)</span>
+          <input type="text" name="subjectCode" />
+        </label>
+        <label>
+          <span>Course (optional for admins)</span>
+          <input type="text" name="courseName" />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea name="description" rows="3"></textarea>
+        </label>
+        <button type="submit" class="primary-button">Create</button>
+        <p id="createSubjectMessage" class="form-message"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="createSubjectPostModal">
+    <div class="modal-card">
+      <button type="button" class="close-button" id="closeCreateSubjectPostModal">×</button>
+      <h3>Create unit post</h3>
+      <form id="createSubjectPostForm" class="subject-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea name="content" rows="4" required></textarea>
+        </label>
+        <label>
+          <span>Attach Open Library document UUID (optional)</span>
+          <input type="text" name="attachmentLibraryDocumentUuid" />
+        </label>
+        <button type="submit" class="primary-button">Post</button>
+        <p id="createSubjectPostMessage" class="form-message"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/src/js/subjects.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

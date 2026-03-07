@@ -18,9 +18,10 @@
       <nav class="nav-links">
         <a href="/home" class="is-active" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Workbench"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Workbench</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -54,6 +55,15 @@
         <button class="composer-button" id="createPostToggle">
           <img src="/assets/write-create.svg" alt="" />
           Create post
+        </button>
+      </div>
+
+      <div class="feed-scope-toggle" id="feedScopeToggle" role="tablist" aria-label="Feed scope">
+        <button type="button" class="feed-scope-chip is-active" data-feed-scope="global" role="tab" aria-selected="true">
+          Global feed
+        </button>
+        <button type="button" class="feed-scope-chip" data-feed-scope="course" role="tab" aria-selected="false">
+          Course feed
         </button>
       </div>
 

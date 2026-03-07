@@ -448,10 +448,11 @@ function renderProfilePosts(data) {
 
   const mainFeedPosts = Array.isArray(data.mainFeedPosts) ? data.mainFeedPosts : [];
   const communityPosts = Array.isArray(data.communityPosts) ? data.communityPosts : [];
+  const legacyCommunityPostsEnabled = data.legacyCommunityPostsEnabled !== false;
 
   if (!mainFeedPosts.length && !communityPosts.length) {
     profilePostsHint.textContent = 'No posts to show yet.';
-    if (!data.canViewCommunityPosts && !isOwnProfile) {
+    if (legacyCommunityPostsEnabled && !data.canViewCommunityPosts && !isOwnProfile) {
       profilePostsHint.textContent = 'Community posts are visible only to viewers from the same course.';
     }
     const empty = document.createElement('p');
@@ -462,7 +463,7 @@ function renderProfilePosts(data) {
   }
 
   profilePostsHint.textContent = '';
-  if (!data.canViewCommunityPosts && !isOwnProfile) {
+  if (legacyCommunityPostsEnabled && !data.canViewCommunityPosts && !isOwnProfile) {
     profilePostsHint.textContent = 'Community posts are visible only to viewers from the same course.';
   }
 

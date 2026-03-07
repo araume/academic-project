@@ -1,0 +1,32 @@
+Introduction to Computing
+Fundamentals of Programming
+Computer Programming 1
+Computer Programming 2
+Intermediate Programming
+Object-Oriented Programming
+Data Structures and Algorithms
+Information Management / Database Systems
+Applications Development and Emerging Technologies
+Discrete Structures 1
+Discrete Structures 2
+Programming Languages
+Algorithms and Complexity
+Automata Theory and Formal Languages
+Networks and Communications
+Operating Systems
+Computer Architecture and Organization
+Software Engineering 1
+Software Engineering 2
+Information Assurance and Security
+Human-Computer Interaction
+Social and Professional Issues
+Professional Ethics in Computing
+Systems Analysis and Design
+Project Management
+Modeling and Simulation
+Networking courses
+Multimedia Technologies
+Thesis 1
+Thesis 2
+Practicum / OJT
+Electives / Specialization courses

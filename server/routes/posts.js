@@ -9,6 +9,7 @@ const pool = require('../db/pool');
 const { uploadToStorage, deleteFromStorage, getSignedUrl, downloadFromStorage } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const { parseReportPayload } = require('../services/reporting');
+const { isGlobalCourseFeedEnabled, isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 const {
   createNotification,
   createNotificationsForRecipients,
@@ -23,6 +24,8 @@ const upload = multer({
 const FEED_HIDE_WITHOUT_INTERACTION_DAYS = 5;
 const FEED_HIDE_THRESHOLD_RECENT_POSTS = 500;
 const FEED_HIDE_THRESHOLD_WINDOW_DAYS = 3;
+const FEED_SCOPE_GLOBAL = 'global';
+const FEED_SCOPE_COURSE = 'course';
 
 router.use('/api/posts', requireAuthApi);
 router.use('/api/home', requireAuthApi);
@@ -30,16 +33,34 @@ router.use('/api/home', requireAuthApi);
 function buildVisibilityFilter(user) {
   const userCourse = user && user.course;
   const userUid = user && user.uid;
+  const includeCourseExclusive = isUnifiedVisibilityEnabled();
   const filter = {
-    $or: [{ visibility: 'public' }],
+    moderationStatus: { $ne: 'restricted' },
+    $or: [{ visibility: 'public' }, { visibility: null }, { visibility: { $exists: false } }],
   };
   if (userCourse) {
-    filter.$or.push({ visibility: 'private', course: userCourse });
+    if (includeCourseExclusive) {
+      filter.$or.push({
+        visibility: { $in: ['private', 'course_exclusive'] },
+        course: userCourse,
+      });
+    } else {
+      filter.$or.push({
+        visibility: 'private',
+        course: userCourse,
+      });
+    }
   }
   if (userUid) {
     filter.$or.push({ uploaderUid: userUid });
   }
   return filter;
+}
+
+function normalizeFeedScope(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized === FEED_SCOPE_COURSE) return FEED_SCOPE_COURSE;
+  return FEED_SCOPE_GLOBAL;
 }
 
 const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
@@ -135,6 +156,7 @@ async function loadLibraryDocumentContext(uuid) {
       `SELECT uuid, title, description, course, subject, filename, link, aiallowed
        FROM documents
        WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [uuid]
     );
@@ -146,6 +168,40 @@ async function loadLibraryDocumentContext(uuid) {
     console.error('Library doc context load failed:', error);
     return null;
   }
+}
+
+async function canAttachLibraryDocumentForUser(user, uuid) {
+  if (!user || !user.uid || !uuid) return false;
+  const userCourse = user.course ? String(user.course).trim() : '';
+  const includeCourseExclusive = isUnifiedVisibilityEnabled();
+  const values = [uuid];
+  const filters = ['uuid = $1', 'COALESCE(is_restricted, false) = false'];
+
+  values.push(user.uid);
+  const uidParam = values.length;
+  if (userCourse) {
+    values.push(userCourse);
+    const courseParam = values.length;
+    const courseVisibilityClause = includeCourseExclusive
+      ? `(visibility IN ('private', 'course_exclusive') AND course = $${courseParam})`
+      : `(visibility = 'private' AND course = $${courseParam})`;
+    filters.push(
+      `(uploader_uid = $${uidParam}
+        OR visibility = 'public'
+        OR ${courseVisibilityClause})`
+    );
+  } else {
+    filters.push(`(uploader_uid = $${uidParam} OR visibility = 'public')`);
+  }
+
+  const result = await pool.query(
+    `SELECT uuid
+     FROM documents
+     WHERE ${filters.join(' AND ')}
+     LIMIT 1`,
+    values
+  );
+  return result.rowCount > 0;
 }
 
 async function getAccessiblePostForUser(req, postId) {
@@ -298,6 +354,25 @@ async function loadFollowingUids(viewerUid) {
        FROM follows
        WHERE follower_uid = $1`,
       [viewerUid]
+    );
+    return result.rows.map((row) => row.uid).filter(Boolean);
+  } catch (error) {
+    if (error && error.code === '42P01') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function loadCourseMemberUids(courseName) {
+  const normalizedCourse = typeof courseName === 'string' ? courseName.trim() : '';
+  if (!normalizedCourse) return [];
+  try {
+    const result = await pool.query(
+      `SELECT uid
+       FROM accounts
+       WHERE course = $1`,
+      [normalizedCourse]
     );
     return result.rows.map((row) => row.uid).filter(Boolean);
   } catch (error) {
@@ -643,13 +718,17 @@ router.get('/api/home/sidecards', async (req, res) => {
       (async () => {
         const filters = [];
         const values = [];
+        filters.push('COALESCE(d.is_restricted, false) = false');
+        const sharedVisibilityClause = isUnifiedVisibilityEnabled()
+          ? "d.visibility IN ('private', 'course_exclusive')"
+          : "d.visibility = 'private'";
         if (userCourse && userUid) {
           values.push(userCourse);
           const courseParam = values.length;
           values.push(userUid);
           const uidParam = values.length;
           filters.push(
-            `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+            `(d.visibility = 'public' OR (${sharedVisibilityClause} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
           );
         } else if (userUid) {
           values.push(userUid);
@@ -776,6 +855,9 @@ router.get('/api/posts', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 50), 1), 500);
   const course = (req.query.course || '').trim();
+  const requestedFeedScope = normalizeFeedScope(req.query.feedScope);
+  const feedScopeEnabled = isGlobalCourseFeedEnabled();
+  const feedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
   const now = new Date();
 
   try {
@@ -789,6 +871,46 @@ router.get('/api/posts', async (req, res) => {
     if (excludedAuthors.length) {
       filter.uploaderUid = { $nin: excludedAuthors };
     }
+
+    if (feedScope === FEED_SCOPE_COURSE) {
+      const viewerCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
+      if (!viewerCourse) {
+        return res.json({
+          ok: true,
+          total: 0,
+          page,
+          pageSize,
+          feedScope,
+          feedScopeEnabled,
+          requestedFeedScope,
+          unifiedVisibilityEnabled: isUnifiedVisibilityEnabled(),
+          feedPolicy: {
+            recentWindowDays: FEED_HIDE_THRESHOLD_WINDOW_DAYS,
+            recentPostCount: 0,
+            hideThreshold: FEED_HIDE_THRESHOLD_RECENT_POSTS,
+            lowInteractionHidingActive: false,
+          },
+          posts: [],
+        });
+      }
+
+      let courseUserUids = [];
+      try {
+        courseUserUids = await loadCourseMemberUids(viewerCourse);
+      } catch (error) {
+        console.error('Course-scope user loading failed:', error);
+      }
+
+      const scopeClauses = [{ course: viewerCourse }];
+      if (courseUserUids.length) {
+        scopeClauses.push({ uploaderUid: { $in: courseUserUids } });
+      }
+      if (!Array.isArray(filter.$and)) {
+        filter.$and = [];
+      }
+      filter.$and.push({ $or: scopeClauses });
+    }
+
     if (course && course !== 'all') {
       filter.course = course;
     }
@@ -866,6 +988,10 @@ router.get('/api/posts', async (req, res) => {
       total,
       page,
       pageSize,
+      feedScope,
+      feedScopeEnabled,
+      requestedFeedScope,
+      unifiedVisibilityEnabled: isUnifiedVisibilityEnabled(),
       feedPolicy: {
         recentWindowDays: FEED_HIDE_THRESHOLD_WINDOW_DAYS,
         recentPostCount,
@@ -1262,6 +1388,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
   }
 
   const visibilityValue = 'public';
+  const userCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
 
   try {
     const db = await getMongoDb();
@@ -1308,6 +1435,13 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
       if (!libraryDocumentUuid) {
         return res.status(400).json({ ok: false, message: 'Library document details required.' });
       }
+      const canAttach = await canAttachLibraryDocumentForUser(req.user, libraryDocumentUuid);
+      if (!canAttach) {
+        return res.status(404).json({
+          ok: false,
+          message: 'Open Library document is not accessible.',
+        });
+      }
       attachment = {
         type: 'library_doc',
         libraryDocumentUuid,
@@ -1330,7 +1464,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const postDoc = {
       title: title.trim(),
       content: content.trim(),
-      course: null,
+      course: userCourse || null,
       visibility: visibilityValue,
       attachment,
       uploadDate: now,
@@ -1400,7 +1534,9 @@ router.patch('/api/posts/:id', async (req, res) => {
   if (title) updates.title = title.trim();
   if (content) updates.content = content.trim();
   updates.visibility = 'public';
-  updates.course = null;
+  if (req.user && req.user.course) {
+    updates.course = String(req.user.course).trim() || null;
+  }
 
   try {
     const db = await getMongoDb();
@@ -1469,8 +1605,16 @@ router.post('/api/posts/:id/like', async (req, res) => {
     const postId = new ObjectId(id);
     const likesCollection = db.collection('post_likes');
     const postsCollection = db.collection('posts');
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: postId,
+    };
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
     const postForRecipient = await postsCollection.findOne(
-      { _id: postId },
+      filter,
       { projection: { uploaderUid: 1, title: 1 } }
     );
     if (!postForRecipient) {
@@ -1534,6 +1678,21 @@ router.get('/api/posts/:id/comments', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: postId,
+    };
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
+    const post = await db
+      .collection('posts')
+      .findOne(filter, { projection: { _id: 1 } });
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+
     const comments = await db
       .collection('post_comments')
       .find({ postId })
@@ -1560,9 +1719,17 @@ router.post('/api/posts/:id/comments', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: postId,
+    };
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
     const post = await db
       .collection('posts')
-      .findOne({ _id: postId }, { projection: { uploaderUid: 1, title: 1 } });
+      .findOne(filter, { projection: { uploaderUid: 1, title: 1 } });
     if (!post) {
       return res.status(404).json({ ok: false, message: 'Post not found.' });
     }

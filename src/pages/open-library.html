@@ -18,9 +18,10 @@
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Workbench"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Workbench</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" class="is-active" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -235,11 +236,15 @@
           <span>Subject/Lesson</span>
           <input type="text" name="subject" required />
         </label>
+        <label>
+          <span>Visibility</span>
+          <select name="visibility" required>
+            <option value="public">Public (all users)</option>
+            <option value="course_exclusive">Course exclusive (same course)</option>
+            <option value="private">Private (only me)</option>
+          </select>
+        </label>
         <div class="upload-toggles">
-          <label class="toggle">
-            <input type="checkbox" name="visibility" value="private" />
-            <span>Private (course members only)</span>
-          </label>
           <label class="toggle">
             <input type="checkbox" name="aiallowed" />
             <span>Allow AI conversation</span>

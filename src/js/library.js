@@ -852,8 +852,12 @@ if (uploadForm) {
     uploadMessage.textContent = '';
 
     const formData = new FormData(uploadForm);
-    const isPrivate = formData.get('visibility') === 'private';
-    formData.set('visibility', isPrivate ? 'private' : 'public');
+    const rawVisibility = String(formData.get('visibility') || '').trim().toLowerCase();
+    const visibility =
+      rawVisibility === 'private' || rawVisibility === 'course_exclusive'
+        ? rawVisibility
+        : 'public';
+    formData.set('visibility', visibility);
     const submitButton = uploadForm.querySelector('button[type="submit"]');
     const originalSubmitLabel = submitButton ? submitButton.textContent : 'Upload';
     if (submitButton) {

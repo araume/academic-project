@@ -27,6 +27,39 @@ clean_invalid_native_asset_cache() {
   fi
 }
 
+build_with_internal_error_retry() {
+  local mode="$1"
+  local log_file
+  log_file="$(mktemp)"
+
+  local -a cmd=(
+    "$FLUTTER_BIN"
+    build
+    "$mode"
+    --release
+    --dart-define="API_BASE_URL=$API_BASE_URL"
+  )
+
+  if "${cmd[@]}" 2>&1 | tee "$log_file"; then
+    rm -f "$log_file"
+    return 0
+  fi
+
+  if grep -qE "Internal problem:|ConstantsTransformer\\.getStaticType" "$log_file"; then
+    echo "Detected Dart compiler internal crash. Cleaning caches and retrying once..."
+    "$FLUTTER_BIN" clean
+    rm -rf "$ROOT_DIR/build" "$ROOT_DIR/.dart_tool/flutter_build"
+    clean_invalid_native_asset_cache
+    "$FLUTTER_BIN" pub get
+    rm -f "$log_file"
+    "${cmd[@]}"
+    return $?
+  fi
+
+  rm -f "$log_file"
+  return 1
+}
+
 usage() {
   cat <<USAGE
 Usage: $0 <api_base_url> [appbundle|apk|both]
@@ -104,11 +137,11 @@ if [[ "$RUN_CHECKS" == "1" ]]; then
 fi
 
 if [[ "$TARGET" == "appbundle" || "$TARGET" == "both" ]]; then
-  "$FLUTTER_BIN" build appbundle --release --dart-define="API_BASE_URL=$API_BASE_URL"
+  build_with_internal_error_retry appbundle
 fi
 
 if [[ "$TARGET" == "apk" || "$TARGET" == "both" ]]; then
-  "$FLUTTER_BIN" build apk --release --dart-define="API_BASE_URL=$API_BASE_URL"
+  build_with_internal_error_retry apk
 fi
 
 echo "Release build complete."

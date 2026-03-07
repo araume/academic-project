@@ -214,6 +214,13 @@ body {
   color: var(--ink-soft);
 }
 
+.hero-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .stats-row {
   margin-top: 18px;
   display: grid;

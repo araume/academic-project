@@ -2,6 +2,7 @@ function normalizeRole(value) {
   if (typeof value !== 'string') return '';
   const normalized = value.trim().toLowerCase();
   if (normalized === 'administrator') return 'admin';
+  if (normalized === 'student') return 'member';
   return normalized;
 }
 
@@ -19,7 +20,7 @@ function getPlatformRole(user) {
   ];
   for (const candidate of candidates) {
     const normalized = normalizeRole(candidate);
-    if (normalized === 'owner' || normalized === 'admin' || normalized === 'member') {
+    if (normalized === 'owner' || normalized === 'admin' || normalized === 'professor' || normalized === 'member') {
       return normalized;
     }
   }
@@ -35,8 +36,14 @@ function hasOwnerPrivileges(user) {
   return getPlatformRole(user) === 'owner';
 }
 
+function hasProfessorPrivileges(user) {
+  const role = getPlatformRole(user);
+  return role === 'owner' || role === 'admin' || role === 'professor';
+}
+
 module.exports = {
   getPlatformRole,
   hasAdminPrivileges,
   hasOwnerPrivileges,
+  hasProfessorPrivileges,
 };

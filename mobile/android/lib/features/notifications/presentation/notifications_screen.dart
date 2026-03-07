@@ -7,9 +7,14 @@ import '../data/notifications_models.dart';
 import '../data/notifications_repository.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key, required this.repository});
+  const NotificationsScreen({
+    super.key,
+    required this.repository,
+    this.onOpenSource,
+  });
 
   final NotificationsRepository repository;
+  final Future<void> Function(AppNotification notification)? onOpenSource;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -142,6 +147,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               (item) => AppNotification(
                 id: item.id,
                 type: item.type,
+                entityType: item.entityType,
+                entityId: item.entityId,
+                targetUrl: item.targetUrl,
                 message: item.message,
                 isRead: true,
                 createdAt: item.createdAt,
@@ -177,6 +185,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       _notifications[index] = AppNotification(
         id: notification.id,
         type: notification.type,
+        entityType: notification.entityType,
+        entityId: notification.entityId,
+        targetUrl: notification.targetUrl,
         message: notification.message,
         isRead: true,
         createdAt: notification.createdAt,
@@ -199,6 +210,23 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       });
       showAppSnackBar(context, 'Failed to mark notification as read.',
           isError: true);
+    }
+  }
+
+  Future<void> _openNotification(AppNotification notification) async {
+    await _markRead(notification);
+
+    final onOpenSource = widget.onOpenSource;
+    if (onOpenSource == null) return;
+    try {
+      await onOpenSource(notification);
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        'Could not open the source of this notification.',
+        isError: true,
+      );
     }
   }
 
@@ -277,12 +305,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           return AppSectionCard(
             margin: const EdgeInsets.only(bottom: 8),
             child: ListTile(
-              onTap: () => _markRead(item),
+              onTap: () => _openNotification(item),
               contentPadding: EdgeInsets.zero,
               leading: CircleAvatar(
                 backgroundColor: item.isRead
                     ? const Color(0xFFEAE6E1)
-                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.18),
+                    : Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.18),
                 child: Icon(_iconForType(item.type), color: AppPalette.ink),
               ),
               title: Text(

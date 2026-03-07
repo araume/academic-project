@@ -3,7 +3,7 @@
   --app-nav-height: 86px;
   --app-nav-icon-size: 26px;
   --app-nav-link-size: 48px;
-  --app-nav-link-track: min(620px, 58vw);
+  --app-nav-link-track: min(700px, 64vw);
   --app-button-hover-shadow: 0 10px 18px rgba(15, 38, 57, 0.14);
   --app-button-active-shadow: 0 5px 10px rgba(15, 38, 57, 0.12);
   --app-button-focus-ring: 0 0 0 3px rgba(47, 94, 123, 0.26);
@@ -1677,4 +1677,22 @@ body.theme-dark .connections-shell .request-list {
   border: 1px solid var(--app-dark-border) !important;
   border-radius: 12px;
   padding: 8px !important;
+}
+
+body.theme-dark .feed-scope-toggle {
+  background: rgba(24, 56, 81, 0.9) !important;
+  border-color: var(--app-dark-border) !important;
+}
+
+body.theme-dark .feed-scope-chip {
+  color: var(--app-dark-text-soft) !important;
+}
+
+body.theme-dark .feed-scope-chip:hover {
+  background: rgba(218, 155, 43, 0.2) !important;
+}
+
+body.theme-dark .feed-scope-chip.is-active {
+  background: #da9b2b !important;
+  color: #0f2639 !important;
 }

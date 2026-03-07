@@ -22,6 +22,8 @@ function buildNotificationMessage(row) {
   const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle : 'a post';
   const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle : 'a document';
   const communityName = typeof meta.communityName === 'string' ? meta.communityName : 'this community';
+  const customTitle = typeof meta.title === 'string' ? meta.title : 'Admin notice';
+  const customMessage = typeof meta.message === 'string' ? meta.message : 'A new admin notice is available.';
 
   if (row.type === 'following_new_post') {
     return `shared a new post: ${postTitle}`;
@@ -40,6 +42,9 @@ function buildNotificationMessage(row) {
   }
   if (row.type === 'community_rules_required') {
     return `Please agree to the community rules for ${communityName} to interact.`;
+  }
+  if (row.type === 'admin_custom') {
+    return `${customTitle}: ${customMessage}`;
   }
   return 'interacted with your content.';
 }

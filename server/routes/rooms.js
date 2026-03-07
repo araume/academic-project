@@ -5,6 +5,7 @@ const requireAuthApi = require('../middleware/requireAuthApi');
 const { getSignedUrl } = require('../services/storage');
 const { bootstrapCommunityForUser } = require('../services/communityService');
 const { ensureRoomsReady, expirePendingRoomRequests } = require('../services/roomsService');
+const { isRoomAiSummaryEnabled } = require('../services/featureFlags');
 
 const router = express.Router();
 
@@ -542,6 +543,9 @@ router.get('/api/rooms/bootstrap', async (req, res) => {
       communities,
       requestHostCommunities,
       pendingRequestsToReview,
+      features: {
+        roomAiSummaryEnabled: isRoomAiSummaryEnabled(),
+      },
     });
   } catch (error) {
     console.error('Rooms bootstrap fetch failed:', error);

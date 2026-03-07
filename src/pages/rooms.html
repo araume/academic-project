@@ -18,9 +18,10 @@
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Workbench"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Workbench</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" class="is-active" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -81,6 +82,7 @@
             <p class="subcopy" id="workspaceHint">Visible rooms in the selected course.</p>
           </div>
           <div class="workspace-actions">
+            <span class="ai-feature-pill" id="roomAiFeaturePill">AI summary: checking...</span>
             <button type="button" class="ghost-button" id="refreshRoomsButton">Refresh</button>
             <button type="button" class="primary-button" id="openCreateRoomButton">Create room</button>
           </div>
@@ -153,6 +155,34 @@
           <button type="button" class="ghost-button is-hidden" id="leaveCallButton">Leave call</button>
         </header>
         <p class="call-panel-status" id="callPanelStatus">Join a room to start the call on this page.</p>
+        <section class="call-ai-panel is-hidden" id="callAiPanel">
+          <div class="call-ai-panel-head">
+            <h4>AI meeting summary</h4>
+            <span class="ai-feature-pill" id="callAiFeaturePill">Inactive</span>
+          </div>
+          <p class="call-ai-copy">Paste meeting transcript or key points to generate a structured summary.</p>
+          <label class="checkbox-label call-ai-consent">
+            <input type="checkbox" id="callAiConsentToggle" />
+            <span>I confirm participants consent to AI summarization.</span>
+          </label>
+          <label class="call-ai-transcript">
+            <span>Transcript / notes</span>
+            <textarea id="callAiTranscriptInput" rows="4" maxlength="20000" placeholder="Paste transcript or discussion notes..."></textarea>
+          </label>
+          <div class="call-ai-actions">
+            <button type="button" class="ghost-button" id="callAiSummaryButton">Generate summary</button>
+            <button type="button" class="ghost-button" id="callAiSummaryClearButton">Clear</button>
+          </div>
+          <p class="inline-message" id="callAiSummaryMessage"></p>
+          <article class="call-ai-result is-hidden" id="callAiResult">
+            <h5>Summary</h5>
+            <p id="callAiSummaryText"></p>
+            <h5>Key points</h5>
+            <ul id="callAiKeyPoints"></ul>
+            <h5>Action items</h5>
+            <ul id="callAiActionItems"></ul>
+          </article>
+        </section>
         <div class="call-frame-wrap is-hidden" id="callFrameWrap">
           <iframe
             id="callFrame"

@@ -60,6 +60,7 @@ const libraryDocOpenMessage = document.getElementById('libraryDocOpenMessage');
 const trendingDiscussionsList = document.getElementById('trendingDiscussionsList');
 const courseMaterialsList = document.getElementById('courseMaterialsList');
 const suggestedRoomsList = document.getElementById('suggestedRoomsList');
+const feedScopeToggle = document.getElementById('feedScopeToggle');
 
 let currentPostId = null;
 let currentLibraryDoc = null;
@@ -78,6 +79,8 @@ let postImageLightboxImg = null;
 const state = {
   page: 1,
   pageSize: 500,
+  feedScope: 'global',
+  feedScopeEnabled: true,
 };
 
 function profileUrlForUid(uid) {
@@ -373,6 +376,21 @@ function setPostingState(button, isPosting) {
   button.disabled = false;
   button.textContent = button.dataset.originalText || button.textContent || 'Post';
   delete button.dataset.originalText;
+}
+
+function updateFeedScopeUI() {
+  if (!feedScopeToggle) return;
+  feedScopeToggle.hidden = !state.feedScopeEnabled;
+  if (!state.feedScopeEnabled) {
+    return;
+  }
+  const buttons = feedScopeToggle.querySelectorAll('[data-feed-scope]');
+  buttons.forEach((button) => {
+    const scope = button.getAttribute('data-feed-scope');
+    const isActive = scope === state.feedScope;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -1046,19 +1064,31 @@ async function handleAction(action, post) {
 
 async function fetchPosts() {
   try {
+    const requestedFeedScope = state.feedScopeEnabled ? state.feedScope : 'global';
     const params = new URLSearchParams({
       page: state.page,
       pageSize: state.pageSize,
+      feedScope: requestedFeedScope,
     });
     const response = await fetch(`/api/posts?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Failed to load posts.');
     }
+    if (typeof data.feedScopeEnabled === 'boolean') {
+      state.feedScopeEnabled = data.feedScopeEnabled;
+    }
+    if (typeof data.feedScope === 'string') {
+      state.feedScope = data.feedScope === 'course' ? 'course' : 'global';
+    }
+    updateFeedScopeUI();
     postCache = new Map(data.posts.map((post) => [post.id, post]));
     postsFeed.innerHTML = '';
     if (!data.posts.length) {
-      postsFeed.innerHTML = '<p>No posts yet. Be the first to share.</p>';
+      const emptyMessage = state.feedScope === 'course'
+        ? 'No course posts yet. Switch to Global feed or create a new post.'
+        : 'No posts yet. Be the first to share.';
+      postsFeed.innerHTML = `<p>${emptyMessage}</p>`;
       return;
     }
     data.posts.forEach((post, index) => {
@@ -1069,6 +1099,20 @@ async function fetchPosts() {
   } catch (error) {
     postsFeed.innerHTML = `<p>${error.message}</p>`;
   }
+}
+
+if (feedScopeToggle) {
+  feedScopeToggle.addEventListener('click', async (event) => {
+    if (!state.feedScopeEnabled) return;
+    const target = event.target instanceof Element ? event.target.closest('[data-feed-scope]') : null;
+    if (!target) return;
+    const scope = target.getAttribute('data-feed-scope');
+    if (!scope || scope === state.feedScope) return;
+    state.feedScope = scope === 'course' ? 'course' : 'global';
+    state.page = 1;
+    updateFeedScopeUI();
+    await fetchPosts();
+  });
 }
 
 async function loadCurrentProfile() {
@@ -1419,6 +1463,7 @@ window.addEventListener('open-post-modal', async (event) => {
 
 async function initHome() {
   updateSelectedLibraryDocUI();
+  updateFeedScopeUI();
 
   await Promise.all([
     loadCurrentProfile(),

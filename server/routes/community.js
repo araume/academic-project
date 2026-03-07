@@ -6,6 +6,7 @@ const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../service
 const { bootstrapCommunityForUser } = require('../services/communityService');
 const { createNotification } = require('../services/notificationService');
 const { parseReportPayload } = require('../services/reporting');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 
 const router = express.Router();
 const upload = multer({
@@ -1081,14 +1082,17 @@ router.post('/api/community/:id/posts', upload.single('file'), async (req, res) 
       }
 
       const docParams = [libraryDocumentUuid];
-      const docVisibilityFilters = ['uuid::text = $1'];
+      const docVisibilityFilters = ['uuid::text = $1', 'COALESCE(is_restricted, false) = false'];
       if (viewer && viewer.course) {
         docParams.push(viewer.course);
         const courseParam = docParams.length;
         docParams.push(req.user.uid);
         const uidParam = docParams.length;
+        const sharedVisibilityClause = isUnifiedVisibilityEnabled()
+          ? "visibility IN ('private', 'course_exclusive')"
+          : "visibility = 'private'";
         docVisibilityFilters.push(
-          `(visibility = 'public' OR (visibility = 'private' AND (course = $${courseParam} OR uploader_uid = $${uidParam})))`
+          `(visibility = 'public' OR (${sharedVisibilityClause} AND (course = $${courseParam} OR uploader_uid = $${uidParam})))`
         );
       } else {
         docParams.push(req.user.uid);

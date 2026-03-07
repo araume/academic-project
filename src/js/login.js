@@ -12,6 +12,16 @@ const closeSignupModalButton = document.getElementById('closeSignupModal');
 const backToLoginButton = document.getElementById('backToLogin');
 const signupCourseSelect = document.getElementById('signupCourseSelect');
 const resendVerificationButton = document.getElementById('resendVerificationButton');
+const openAccessAppealModalButton = document.getElementById('openAccessAppealModal');
+const accessAppealModal = document.getElementById('accessAppealModal');
+const closeAccessAppealModalButton = document.getElementById('closeAccessAppealModal');
+const backToLoginFromAppealButton = document.getElementById('backToLoginFromAppeal');
+const accessAppealForm = document.getElementById('accessAppealForm');
+const accessAppealTitle = document.getElementById('accessAppealTitle');
+const appealEmailInput = document.getElementById('appealEmailInput');
+const appealPasswordInput = document.getElementById('appealPasswordInput');
+const appealMessageInput = document.getElementById('appealMessageInput');
+const accessAppealMessage = document.getElementById('accessAppealMessage');
 const openForgotPasswordModalButton = document.getElementById('openForgotPasswordModal');
 const forgotPasswordModal = document.getElementById('forgotPasswordModal');
 const closeForgotPasswordModalButton = document.getElementById('closeForgotPasswordModal');
@@ -29,6 +39,7 @@ const resetPasswordStep = document.getElementById('resetPasswordStep');
 const forgotPasswordMessage = document.getElementById('forgotPasswordMessage');
 
 let pendingVerificationEmail = '';
+let pendingAccessAppealType = '';
 const resetFlowState = {
   step: 'request',
   resetToken: '',
@@ -71,7 +82,10 @@ function setMessage(target, text, type = 'error') {
 }
 
 function openSignupModal() {
-  if (!signupModal) return;
+  if (!signupModal) {
+    window.location.href = '/signup';
+    return;
+  }
   signupModal.classList.remove('is-hidden');
   const firstInput = signupModal.querySelector('input[name="email"]');
   if (firstInput) {
@@ -83,6 +97,35 @@ function closeSignupModal() {
   if (!signupModal) return;
   signupModal.classList.add('is-hidden');
   setMessage(signupMessage, '');
+}
+
+function openAccessAppealModal() {
+  if (!accessAppealModal) return;
+  const appealType = pendingAccessAppealType || 'ban';
+  if (accessAppealTitle) {
+    accessAppealTitle.textContent =
+      appealType === 'verification_rejection' ? 'Appeal verification decision' : 'Appeal account ban';
+  }
+  if (appealEmailInput) {
+    appealEmailInput.value = currentLoginEmail();
+  }
+  if (appealPasswordInput) {
+    appealPasswordInput.value = '';
+  }
+  if (appealMessageInput) {
+    appealMessageInput.value = '';
+  }
+  setMessage(accessAppealMessage, '');
+  accessAppealModal.classList.remove('is-hidden');
+  if (appealMessageInput) {
+    appealMessageInput.focus();
+  }
+}
+
+function closeAccessAppealModal() {
+  if (!accessAppealModal) return;
+  accessAppealModal.classList.add('is-hidden');
+  setMessage(accessAppealMessage, '');
 }
 
 function normalizeResetCode(value) {
@@ -156,12 +199,24 @@ if (openForgotPasswordModalButton) {
   openForgotPasswordModalButton.addEventListener('click', openForgotPasswordModal);
 }
 
+if (openAccessAppealModalButton) {
+  openAccessAppealModalButton.addEventListener('click', openAccessAppealModal);
+}
+
 if (closeForgotPasswordModalButton) {
   closeForgotPasswordModalButton.addEventListener('click', closeForgotPasswordModal);
 }
 
+if (closeAccessAppealModalButton) {
+  closeAccessAppealModalButton.addEventListener('click', closeAccessAppealModal);
+}
+
 if (backToLoginFromForgotButton) {
   backToLoginFromForgotButton.addEventListener('click', closeForgotPasswordModal);
+}
+
+if (backToLoginFromAppealButton) {
+  backToLoginFromAppealButton.addEventListener('click', closeAccessAppealModal);
 }
 
 if (signupModal) {
@@ -180,10 +235,19 @@ if (forgotPasswordModal) {
   });
 }
 
+if (accessAppealModal) {
+  accessAppealModal.addEventListener('click', (event) => {
+    if (event.target === accessAppealModal) {
+      closeAccessAppealModal();
+    }
+  });
+}
+
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeSignupModal();
     closeForgotPasswordModal();
+    closeAccessAppealModal();
   }
 });
 
@@ -212,6 +276,23 @@ function showResendButton() {
   }
 }
 
+function hideAccessAppealButton() {
+  if (openAccessAppealModalButton) {
+    openAccessAppealModalButton.classList.add('is-hidden');
+  }
+}
+
+function showAccessAppealButton(type) {
+  pendingAccessAppealType = type || 'ban';
+  if (openAccessAppealModalButton) {
+    openAccessAppealModalButton.classList.remove('is-hidden');
+    openAccessAppealModalButton.textContent =
+      pendingAccessAppealType === 'verification_rejection'
+        ? 'Appeal verification decision'
+        : 'Appeal account ban';
+  }
+}
+
 function currentLoginEmail() {
   if (!loginForm) return '';
   const input = loginForm.querySelector('input[name="email"]');
@@ -223,6 +304,7 @@ async function handleLoginSubmit(event) {
   if (!loginForm) return;
   setMessage(loginMessage, '');
   hideResendButton();
+  hideAccessAppealButton();
 
   const formData = new FormData(loginForm);
   const payload = Object.fromEntries(formData.entries());
@@ -238,6 +320,22 @@ async function handleLoginSubmit(event) {
         pendingVerificationEmail = currentLoginEmail();
         setMessage(loginMessage, data.message || 'Please verify your email before logging in.');
         showResendButton();
+        return;
+      }
+      if (data && data.reason === 'account_banned') {
+        pendingVerificationEmail = '';
+        setMessage(loginMessage, data.message || 'This account is banned.');
+        showAccessAppealButton('ban');
+        return;
+      }
+      if (
+        data &&
+        data.reason === 'id_verification_not_approved' &&
+        data.verificationStatus === 'rejected' &&
+        data.appealAvailable
+      ) {
+        setMessage(loginMessage, data.message || 'Your verification was rejected. You can submit an appeal.');
+        showAccessAppealButton('verification_rejection');
         return;
       }
       throw new Error((data && data.message) || 'Login failed.');
@@ -318,6 +416,45 @@ async function resendVerification() {
     }
   } catch (error) {
     setMessage(loginMessage, error.message || 'Unable to resend verification.');
+  }
+}
+
+async function submitAccessAppeal(event) {
+  event.preventDefault();
+  const email = String((appealEmailInput && appealEmailInput.value) || '').trim().toLowerCase();
+  const password = String((appealPasswordInput && appealPasswordInput.value) || '');
+  const message = String((appealMessageInput && appealMessageInput.value) || '').trim();
+  const type = pendingAccessAppealType || 'ban';
+  const endpoint = type === 'verification_rejection' ? '/api/appeals/id-verification' : '/api/appeals/ban';
+
+  if (!email || !password) {
+    setMessage(accessAppealMessage, 'Email and password are required.');
+    return;
+  }
+  if (!message || message.length < 10) {
+    setMessage(accessAppealMessage, 'Appeal message must be at least 10 characters.');
+    return;
+  }
+
+  setMessage(accessAppealMessage, 'Submitting appeal...', 'success');
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, message }),
+    });
+    const data = await parseApiResponse(response);
+    if (!response.ok || !data.ok) {
+      throw new Error((data && data.message) || 'Unable to submit appeal.');
+    }
+    setMessage(accessAppealMessage, data.message || 'Appeal submitted.', 'success');
+    setMessage(loginMessage, data.message || 'Appeal submitted.', 'success');
+    hideAccessAppealButton();
+    setTimeout(() => {
+      closeAccessAppealModal();
+    }, 700);
+  } catch (error) {
+    setMessage(accessAppealMessage, error.message || 'Unable to submit appeal.');
   }
 }
 
@@ -467,6 +604,43 @@ function showVerifyStatusFromQuery() {
   window.history.replaceState({}, '', cleanUrl);
 }
 
+function showSignupNoticeFromSession() {
+  let payload = null;
+  try {
+    const raw = sessionStorage.getItem('signup.notice');
+    if (raw) {
+      payload = JSON.parse(raw);
+    }
+  } catch (error) {
+    payload = null;
+  } finally {
+    try {
+      sessionStorage.removeItem('signup.notice');
+    } catch (error) {
+      // ignore storage cleanup failures
+    }
+  }
+
+  if (!payload || typeof payload !== 'object') return;
+
+  const message = String(payload.message || '').trim();
+  const email = String(payload.email || '').trim().toLowerCase();
+  if (!message) return;
+  setMessage(loginMessage, message, payload.type === 'success' ? 'success' : 'error');
+  if (email) {
+    pendingVerificationEmail = email;
+    if (loginForm) {
+      const loginEmailInput = loginForm.querySelector('input[name="email"]');
+      if (loginEmailInput && !String(loginEmailInput.value || '').trim()) {
+        loginEmailInput.value = email;
+      }
+    }
+    if (payload.showResend === true) {
+      showResendButton();
+    }
+  }
+}
+
 if (loginForm) {
   loginForm.addEventListener('submit', handleLoginSubmit);
 }
@@ -477,6 +651,10 @@ if (signupForm) {
 
 if (resendVerificationButton) {
   resendVerificationButton.addEventListener('click', resendVerification);
+}
+
+if (accessAppealForm) {
+  accessAppealForm.addEventListener('submit', submitAccessAppeal);
 }
 
 if (forgotPasswordForm) {
@@ -527,5 +705,6 @@ async function populateCourses() {
 }
 
 populateCourses();
+showSignupNoticeFromSession();
 showVerifyStatusFromQuery();
 setForgotStep('request');

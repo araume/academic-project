@@ -185,6 +185,38 @@ body {
   gap: 16px;
 }
 
+.feed-scope-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(15, 38, 57, 0.08);
+  border: 1px solid rgba(15, 38, 57, 0.12);
+}
+
+.feed-scope-chip {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #24455c;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.feed-scope-chip:hover {
+  background: rgba(15, 38, 57, 0.08);
+}
+
+.feed-scope-chip.is-active {
+  background: #173b58;
+  color: #fff;
+}
+
 .composer-avatar {
   width: 56px;
   height: 56px;

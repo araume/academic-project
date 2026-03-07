@@ -4,6 +4,7 @@ const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const { getSignedUrl } = require('../services/storage');
 const { hasAdminPrivileges } = require('../services/roleAccess');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 
 const router = express.Router();
 
@@ -108,11 +109,23 @@ function enforceRateLimit(req, res, action, limitPerWindow) {
 function buildVisibilityFilter(user) {
   const userCourse = user && user.course;
   const userUid = user && user.uid;
+  const includeCourseExclusive = isUnifiedVisibilityEnabled();
   const filter = {
-    $or: [{ visibility: 'public' }],
+    moderationStatus: { $ne: 'restricted' },
+    $or: [{ visibility: 'public' }, { visibility: null }, { visibility: { $exists: false } }],
   };
   if (userCourse) {
-    filter.$or.push({ visibility: 'private', course: userCourse });
+    if (includeCourseExclusive) {
+      filter.$or.push({
+        visibility: { $in: ['private', 'course_exclusive'] },
+        course: userCourse,
+      });
+    } else {
+      filter.$or.push({
+        visibility: 'private',
+        course: userCourse,
+      });
+    }
   }
   if (userUid) {
     filter.$or.push({ uploaderUid: userUid });
@@ -315,10 +328,13 @@ async function searchUsers({ viewer, query, limit }) {
 
 async function searchDocuments({ viewer, query, limit }) {
   const values = [];
-  const where = [];
+  const where = ['COALESCE(d.is_restricted, false) = false'];
   const userCourse = viewer && viewer.course ? String(viewer.course).trim() : '';
   const userUid = viewer && viewer.uid ? viewer.uid : '';
   const isPrivilegedViewer = hasAdminPrivileges(viewer);
+  const sharedVisibilityClause = isUnifiedVisibilityEnabled()
+    ? "d.visibility IN ('private', 'course_exclusive')"
+    : "d.visibility = 'private'";
 
   if (!isPrivilegedViewer) {
     if (userCourse && userUid) {
@@ -327,7 +343,7 @@ async function searchDocuments({ viewer, query, limit }) {
       values.push(userUid);
       const uidParam = values.length;
       where.push(
-        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+        `(d.visibility = 'public' OR (${sharedVisibilityClause} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
       );
     } else if (userUid) {
       values.push(userUid);

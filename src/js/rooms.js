@@ -55,6 +55,18 @@ const forwardRoomMessage = document.getElementById('forwardRoomMessage');
 const forwardRoomList = document.getElementById('forwardRoomList');
 const callPanelCard = document.getElementById('callPanelCard');
 const callPanelStatus = document.getElementById('callPanelStatus');
+const roomAiFeaturePill = document.getElementById('roomAiFeaturePill');
+const callAiPanel = document.getElementById('callAiPanel');
+const callAiFeaturePill = document.getElementById('callAiFeaturePill');
+const callAiConsentToggle = document.getElementById('callAiConsentToggle');
+const callAiTranscriptInput = document.getElementById('callAiTranscriptInput');
+const callAiSummaryButton = document.getElementById('callAiSummaryButton');
+const callAiSummaryClearButton = document.getElementById('callAiSummaryClearButton');
+const callAiSummaryMessage = document.getElementById('callAiSummaryMessage');
+const callAiResult = document.getElementById('callAiResult');
+const callAiSummaryText = document.getElementById('callAiSummaryText');
+const callAiKeyPoints = document.getElementById('callAiKeyPoints');
+const callAiActionItems = document.getElementById('callAiActionItems');
 const callFrameWrap = document.getElementById('callFrameWrap');
 const callFrame = document.getElementById('callFrame');
 const callPlaceholder = document.getElementById('callPlaceholder');
@@ -81,6 +93,7 @@ const state = {
   currentCall: null,
   callHeartbeatTimer: null,
   callHeartbeatInFlight: false,
+  roomAiSummaryEnabled: false,
 };
 
 function consumePrejoinedRoom() {
@@ -158,6 +171,109 @@ function showMessage(target, text, type = 'error') {
   if (!target) return;
   target.textContent = text || '';
   target.classList.toggle('success', type === 'success');
+}
+
+function setAiFeaturePills() {
+  const enabled = state.roomAiSummaryEnabled === true;
+  if (roomAiFeaturePill) {
+    roomAiFeaturePill.textContent = enabled ? 'AI summary: enabled' : 'AI summary: disabled';
+    roomAiFeaturePill.classList.toggle('is-active', enabled);
+    roomAiFeaturePill.classList.toggle('is-inactive', !enabled);
+  }
+  if (callAiFeaturePill) {
+    if (!enabled) {
+      callAiFeaturePill.textContent = 'Disabled';
+      callAiFeaturePill.classList.remove('is-active');
+      callAiFeaturePill.classList.add('is-inactive');
+      return;
+    }
+    const inCall = Boolean(state.currentCall && state.currentCall.roomId);
+    callAiFeaturePill.textContent = inCall ? 'Ready' : 'Inactive';
+    callAiFeaturePill.classList.toggle('is-active', inCall);
+    callAiFeaturePill.classList.toggle('is-inactive', !inCall);
+  }
+}
+
+function clearRoomAiSummaryResult() {
+  if (callAiResult) {
+    callAiResult.classList.add('is-hidden');
+  }
+  if (callAiSummaryText) {
+    callAiSummaryText.textContent = '';
+  }
+  if (callAiKeyPoints) {
+    callAiKeyPoints.innerHTML = '';
+  }
+  if (callAiActionItems) {
+    callAiActionItems.innerHTML = '';
+  }
+}
+
+function renderRoomAiSummaryResult(summary) {
+  if (!callAiResult || !summary) return;
+  if (callAiSummaryText) {
+    callAiSummaryText.textContent = summary.summary || 'No summary generated.';
+  }
+
+  const keyPoints = Array.isArray(summary.keyPoints) ? summary.keyPoints : [];
+  if (callAiKeyPoints) {
+    callAiKeyPoints.innerHTML = '';
+    if (!keyPoints.length) {
+      const item = document.createElement('li');
+      item.textContent = 'No key points generated.';
+      callAiKeyPoints.appendChild(item);
+    } else {
+      keyPoints.forEach((point) => {
+        const item = document.createElement('li');
+        item.textContent = String(point || '');
+        callAiKeyPoints.appendChild(item);
+      });
+    }
+  }
+
+  const actionItems = Array.isArray(summary.actionItems) ? summary.actionItems : [];
+  if (callAiActionItems) {
+    callAiActionItems.innerHTML = '';
+    if (!actionItems.length) {
+      const item = document.createElement('li');
+      item.textContent = 'No action items generated.';
+      callAiActionItems.appendChild(item);
+    } else {
+      actionItems.forEach((point) => {
+        const item = document.createElement('li');
+        item.textContent = String(point || '');
+        callAiActionItems.appendChild(item);
+      });
+    }
+  }
+  callAiResult.classList.remove('is-hidden');
+}
+
+function updateRoomAiControls() {
+  const enabled = state.roomAiSummaryEnabled === true;
+  const inCall = Boolean(state.currentCall && state.currentCall.roomId);
+  if (callAiPanel) {
+    callAiPanel.classList.toggle('is-hidden', !enabled);
+  }
+  if (callAiConsentToggle) {
+    callAiConsentToggle.disabled = !enabled || !inCall;
+  }
+  if (callAiTranscriptInput) {
+    callAiTranscriptInput.disabled = !enabled || !inCall;
+  }
+  if (callAiSummaryButton) {
+    callAiSummaryButton.disabled = !enabled || !inCall;
+  }
+  if (callAiSummaryClearButton) {
+    callAiSummaryClearButton.disabled = !enabled;
+  }
+  if (!enabled) {
+    showMessage(callAiSummaryMessage, 'AI meeting summary is disabled by configuration.');
+    clearRoomAiSummaryResult();
+  } else if (!inCall) {
+    showMessage(callAiSummaryMessage, 'Join a live call to enable AI summary.');
+  }
+  setAiFeaturePills();
 }
 
 function renderEmpty(target, text) {
@@ -346,6 +462,9 @@ function openCallPanel(joinUrl, room) {
     meetId: room && room.meetId ? String(room.meetId) : '',
     joinUrl: embedUrl,
   };
+  showMessage(callAiSummaryMessage, '');
+  clearRoomAiSummaryResult();
+  updateRoomAiControls();
   startCallHeartbeat();
   const roomLabel = room && room.meetName ? room.meetName : 'room';
   callPanelStatus.textContent = `Connected to ${roomLabel}.`;
@@ -385,6 +504,14 @@ async function closeCallPanel(options = {}) {
     callPanelStatus.textContent = 'Join a room to start the call on this page.';
   }
   state.currentCall = null;
+  clearRoomAiSummaryResult();
+  if (callAiConsentToggle) {
+    callAiConsentToggle.checked = false;
+  }
+  if (callAiTranscriptInput) {
+    callAiTranscriptInput.value = '';
+  }
+  updateRoomAiControls();
 
   if (notifyServer && previousCall && previousCall.roomId) {
     try {
@@ -465,7 +592,9 @@ async function apiRequest(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json().catch(() => ({ ok: false, message: 'Unexpected response.' }));
   if (!response.ok || !data.ok) {
-    throw new Error(data.message || 'Request failed.');
+    const error = new Error(data.message || 'Request failed.');
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -563,6 +692,7 @@ async function loadBootstrap() {
   state.viewer = data.viewer;
   state.availableCommunities = data.communities || [];
   state.requestHostCommunities = data.requestHostCommunities || [];
+  state.roomAiSummaryEnabled = Boolean(data.features && data.features.roomAiSummaryEnabled);
   setNavAvatar(data.viewer.photoLink, data.viewer.displayName);
 
   const contexts = [
@@ -612,6 +742,7 @@ async function loadBootstrap() {
   } else {
     requestsCard.classList.add('is-hidden');
   }
+  updateRoomAiControls();
 }
 
 function populateCommunitySelect(communities, options = {}) {
@@ -1199,6 +1330,59 @@ async function handleJoinRoom(room) {
   }
 }
 
+async function handleGenerateRoomAiSummary() {
+  if (!state.roomAiSummaryEnabled) {
+    showMessage(callAiSummaryMessage, 'AI meeting summary is disabled by configuration.');
+    return;
+  }
+  const roomId = state.currentCall && state.currentCall.roomId ? Number(state.currentCall.roomId) : 0;
+  if (!roomId) {
+    showMessage(callAiSummaryMessage, 'Join a room first.');
+    return;
+  }
+  const transcript = callAiTranscriptInput ? callAiTranscriptInput.value.trim() : '';
+  if (transcript.length < 40) {
+    showMessage(callAiSummaryMessage, 'Provide at least 40 characters of transcript or notes.');
+    return;
+  }
+  const consentConfirmed = Boolean(callAiConsentToggle && callAiConsentToggle.checked);
+  if (!consentConfirmed) {
+    showMessage(callAiSummaryMessage, 'Participant consent is required before summarization.');
+    return;
+  }
+
+  if (callAiSummaryButton) {
+    callAiSummaryButton.disabled = true;
+    callAiSummaryButton.textContent = 'Generating...';
+  }
+  showMessage(callAiSummaryMessage, 'Generating AI summary...');
+  clearRoomAiSummaryResult();
+
+  try {
+    const data = await apiRequest(`/api/rooms/${encodeURIComponent(roomId)}/ai-summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcript,
+        consentConfirmed: true,
+      }),
+    });
+    renderRoomAiSummaryResult(data.summary || null);
+    showMessage(callAiSummaryMessage, 'AI summary generated.', 'success');
+  } catch (error) {
+    if (Number(error && error.status) === 404) {
+      state.roomAiSummaryEnabled = false;
+      updateRoomAiControls();
+    }
+    showMessage(callAiSummaryMessage, error.message || 'Unable to generate AI summary.');
+  } finally {
+    if (callAiSummaryButton) {
+      callAiSummaryButton.disabled = false;
+      callAiSummaryButton.textContent = 'Generate summary';
+    }
+  }
+}
+
 async function handleApproveRequest(requestId) {
   try {
     const data = await apiRequest(`/api/rooms/requests/${requestId}/approve`, { method: 'POST' });
@@ -1388,6 +1572,27 @@ if (forwardRoomSearchInput) {
 
 if (roomForm) {
   roomForm.addEventListener('submit', handleRoomFormSubmit);
+}
+
+if (callAiSummaryButton) {
+  callAiSummaryButton.addEventListener('click', handleGenerateRoomAiSummary);
+}
+
+if (callAiSummaryClearButton) {
+  callAiSummaryClearButton.addEventListener('click', () => {
+    if (callAiTranscriptInput) {
+      callAiTranscriptInput.value = '';
+    }
+    if (callAiConsentToggle) {
+      callAiConsentToggle.checked = false;
+    }
+    clearRoomAiSummaryResult();
+    showMessage(
+      callAiSummaryMessage,
+      state.roomAiSummaryEnabled ? 'Cleared.' : 'AI meeting summary is disabled by configuration.',
+      state.roomAiSummaryEnabled ? 'success' : 'error'
+    );
+  });
 }
 
 if (leaveCallButton) {

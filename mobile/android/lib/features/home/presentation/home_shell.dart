@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/config/env.dart';
 import '../../../core/ui/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../../core/notifications/push_notifications_service.dart';
@@ -8,6 +10,7 @@ import '../../chat/data/chat_repository.dart';
 import '../../chat/presentation/chat_screen.dart';
 import '../../library/data/library_repository.dart';
 import '../../library/presentation/library_screen.dart';
+import '../../notifications/data/notifications_models.dart';
 import '../../notifications/data/notifications_repository.dart';
 import '../../notifications/presentation/notifications_screen.dart';
 import '../../personal/data/personal_repository.dart';
@@ -50,16 +53,113 @@ class _HomeShellState extends State<HomeShell> {
     HomeFeedScreen(repository: widget.homeRepository),
     LibraryScreen(repository: widget.libraryRepository),
     ChatScreen(repository: widget.chatRepository),
-    NotificationsScreen(repository: widget.notificationsRepository),
+    NotificationsScreen(
+      repository: widget.notificationsRepository,
+      onOpenSource: _openNotificationSource,
+    ),
     PersonalScreen(
       repository: widget.personalRepository,
       pushNotificationsService: widget.pushNotificationsService,
     ),
   ];
 
+  Future<void> _openNotificationSource(AppNotification notification) async {
+    final destinationIndex = _resolveNotificationTabIndex(notification);
+    if (destinationIndex != null) {
+      if (_selectedIndex != destinationIndex) {
+        setState(() {
+          _selectedIndex = destinationIndex;
+        });
+      }
+      return;
+    }
+
+    final externalUri = _resolveExternalUri(notification);
+    if (externalUri != null) {
+      final opened =
+          await launchUrl(externalUri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        showAppSnackBar(
+          context,
+          'Could not open the source of this notification.',
+          isError: true,
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    showAppSnackBar(
+      context,
+      'No source target is available for this notification.',
+      isError: true,
+    );
+  }
+
+  int? _resolveNotificationTabIndex(AppNotification notification) {
+    final entityType = (notification.entityType ?? '').trim().toLowerCase();
+    if (entityType == 'post') return 0;
+    if (entityType == 'document') return 1;
+    if (entityType == 'conversation' ||
+        entityType == 'chat' ||
+        entityType == 'thread') {
+      return 2;
+    }
+    if (entityType == 'profile' || entityType == 'user') {
+      return 4;
+    }
+
+    final targetUrl = (notification.targetUrl ?? '').trim().toLowerCase();
+    if (targetUrl.contains('/posts/') || targetUrl.startsWith('/home')) {
+      return 0;
+    }
+    if (targetUrl.contains('/open-library') ||
+        targetUrl.startsWith('/library')) {
+      return 1;
+    }
+    if (targetUrl.contains('/connections') || targetUrl.startsWith('/chat')) {
+      return 2;
+    }
+    if (targetUrl.contains('/profile') || targetUrl.startsWith('/personal')) {
+      return 4;
+    }
+
+    final type = notification.type.trim().toLowerCase();
+    if (type.contains('post')) return 0;
+    if (type.contains('document')) return 1;
+    if (type.contains('chat')) return 2;
+    return null;
+  }
+
+  Uri? _resolveExternalUri(AppNotification notification) {
+    final target = (notification.targetUrl ?? '').trim();
+    if (target.isEmpty) return null;
+
+    final parsedTarget = Uri.tryParse(target);
+    if (parsedTarget == null) return null;
+    if (parsedTarget.hasScheme) return parsedTarget;
+
+    final base = Uri.parse(Env.apiBaseUrl);
+    final baseSegments =
+        base.pathSegments.where((segment) => segment.isNotEmpty).toList();
+    if (baseSegments.isNotEmpty && baseSegments.last.toLowerCase() == 'api') {
+      baseSegments.removeLast();
+    }
+
+    final mergedSegments = <String>[
+      ...baseSegments,
+      ...parsedTarget.pathSegments.where((segment) => segment.isNotEmpty),
+    ];
+
+    return base.replace(
+      pathSegments: mergedSegments,
+      query: parsedTarget.hasQuery ? parsedTarget.query : null,
+      fragment: parsedTarget.hasFragment ? parsedTarget.fragment : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bodyBottomInset = MediaQuery.of(context).padding.bottom + 90;
     final titles = <String>[
       'Home',
       'Library',
@@ -154,12 +254,9 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ],
       ),
-      extendBody: true,
+      extendBody: false,
       body: AppPageBackground(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bodyBottomInset),
-          child: IndexedStack(index: _selectedIndex, children: _tabs),
-        ),
+        child: IndexedStack(index: _selectedIndex, children: _tabs),
       ),
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),

@@ -20,8 +20,23 @@ const PASSWORD_RESET_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.PASSWORD
 const PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = Math.max(30, Number(process.env.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS || 60));
 const PASSWORD_RESET_MAX_ATTEMPTS = Math.max(3, Number(process.env.PASSWORD_RESET_MAX_ATTEMPTS || 5));
 let ensureAuthSchemaPromise = null;
+let ensureProfessorCodeSeedsPromise = null;
 const LEGACY_BACKFILL_KEY = 'email_verification_legacy_backfill_done';
 const SKIP_SCHEMA_ENSURE = /^(1|true|yes)$/i.test(String(process.env.DB_SKIP_SCHEMA_ENSURE || '').trim());
+const PROFESSOR_SIGNUP_CODE_HASH_PREFIX = 'professor-signup-code:v1:';
+const PROFESSOR_SIGNUP_CODE_SEEDS = Array.from(
+  new Set(
+    String(
+      process.env.PROFESSOR_SIGNUP_CODE_LIST ||
+        process.env.PROFESSOR_SIGNUP_ONE_TIME_CODES ||
+        process.env.PROFESSOR_SIGNUP_CODE ||
+        ''
+    )
+      .split(/[\s,]+/)
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean)
+  )
+);
 
 function buildUid() {
   if (crypto.randomUUID) {
@@ -51,6 +66,44 @@ function normalizeEmail(value) {
 function normalizeUsername(value) {
   if (typeof value !== 'string') return '';
   return value.trim();
+}
+
+function normalizeGender(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return '';
+  const allowed = new Set(['male', 'female', 'non_binary', 'prefer_not_to_say', 'other']);
+  return allowed.has(normalized) ? normalized : '';
+}
+
+function normalizeStudentNumber(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, 80);
+}
+
+function normalizeContentPreference(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().slice(0, 80);
+}
+
+function normalizeProfessorSignupCode(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, '').trim().toUpperCase().slice(0, 80);
+}
+
+function digestProfessorSignupCode(value) {
+  return sha256Hex(`${PROFESSOR_SIGNUP_CODE_HASH_PREFIX}${value}`);
+}
+
+function normalizePlatformRole(value) {
+  if (typeof value !== 'string') return 'member';
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'administrator') return 'admin';
+  if (normalized === 'student') return 'member';
+  if (normalized === 'owner' || normalized === 'admin' || normalized === 'professor' || normalized === 'member') {
+    return normalized;
+  }
+  return 'member';
 }
 
 function normalizeResetCode(value) {
@@ -145,6 +198,34 @@ function authLog(level, event, payload = {}) {
 async function ensureAuthSchema() {
   const sql = `
     ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS gender TEXT;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS content_preference JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS student_number TEXT;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS id_verification_status TEXT NOT NULL DEFAULT 'pending';
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS id_verification_note TEXT;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS id_verified_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+
+    ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS id_verified_at TIMESTAMPTZ;
+
+    ALTER TABLE accounts
+      DROP CONSTRAINT IF EXISTS accounts_id_verification_status_check;
+
+    ALTER TABLE accounts
+      ADD CONSTRAINT accounts_id_verification_status_check
+        CHECK (id_verification_status IN ('pending', 'approved', 'rejected'));
+
+    ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
 
     ALTER TABLE accounts
@@ -206,8 +287,127 @@ async function ensureAuthSchema() {
 
     CREATE INDEX IF NOT EXISTS password_reset_codes_reset_token_expires_idx
       ON password_reset_codes(reset_token_expires_at);
+
+    CREATE TABLE IF NOT EXISTS professor_registration_codes (
+      id BIGSERIAL PRIMARY KEY,
+      code_digest TEXT NOT NULL UNIQUE,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      consumed_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      consumed_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS account_disciplinary_actions (
+      id BIGSERIAL PRIMARY KEY,
+      target_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      issued_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      action_type TEXT NOT NULL CHECK (action_type IN ('warn', 'suspend', 'ban')),
+      reason TEXT,
+      starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ends_at TIMESTAMPTZ,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revoked_at TIMESTAMPTZ,
+      revoked_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      revoked_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS account_appeals (
+      id BIGSERIAL PRIMARY KEY,
+      appellant_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+      disciplinary_action_id BIGINT REFERENCES account_disciplinary_actions(id) ON DELETE SET NULL,
+      appeal_type TEXT NOT NULL CHECK (appeal_type IN ('warning', 'suspension', 'ban', 'verification_rejection', 'other')),
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'under_review', 'accepted', 'denied', 'withdrawn')),
+      message TEXT NOT NULL,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      resolution_note TEXT,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS accounts_platform_role_idx
+      ON accounts(platform_role);
+
+    CREATE INDEX IF NOT EXISTS accounts_id_verification_status_idx
+      ON accounts(id_verification_status);
+
+    CREATE INDEX IF NOT EXISTS accounts_student_number_idx
+      ON accounts(student_number);
+
+    CREATE INDEX IF NOT EXISTS account_disciplinary_actions_target_active_idx
+      ON account_disciplinary_actions(target_uid, active, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS account_disciplinary_actions_target_type_idx
+      ON account_disciplinary_actions(target_uid, action_type, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS account_appeals_appellant_created_idx
+      ON account_appeals(appellant_uid, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS account_appeals_status_created_idx
+      ON account_appeals(status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS professor_registration_codes_active_idx
+      ON professor_registration_codes(is_active, consumed_at, expires_at);
   `;
   await pool.query(sql);
+}
+
+async function seedProfessorSignupCodes() {
+  if (!PROFESSOR_SIGNUP_CODE_SEEDS.length) {
+    return;
+  }
+
+  const client = await pool.connect();
+  let inTransaction = false;
+  try {
+    await client.query('BEGIN');
+    inTransaction = true;
+    for (const rawCode of PROFESSOR_SIGNUP_CODE_SEEDS) {
+      const normalizedCode = normalizeProfessorSignupCode(rawCode);
+      if (!normalizedCode) {
+        continue;
+      }
+      const codeDigest = digestProfessorSignupCode(normalizedCode);
+      await client.query(
+        `INSERT INTO professor_registration_codes (code_digest, source)
+         VALUES ($1, 'env')
+         ON CONFLICT (code_digest) DO NOTHING`,
+        [codeDigest]
+      );
+    }
+    await client.query('COMMIT');
+    inTransaction = false;
+  } catch (error) {
+    if (inTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function ensureProfessorCodeSeeds() {
+  if (!PROFESSOR_SIGNUP_CODE_SEEDS.length) {
+    return;
+  }
+  if (!ensureProfessorCodeSeedsPromise) {
+    ensureProfessorCodeSeedsPromise = seedProfessorSignupCodes().catch((error) => {
+      ensureProfessorCodeSeedsPromise = null;
+      // If schema auto-migration is disabled and table is missing, keep auth endpoints available.
+      if (error && error.code === '42P01') {
+        console.warn('Professor signup code seed skipped: professor_registration_codes table missing.');
+        return;
+      }
+      throw error;
+    });
+  }
+  await ensureProfessorCodeSeedsPromise;
 }
 
 async function backfillLegacyVerifiedAccounts() {
@@ -265,12 +465,14 @@ async function backfillLegacyVerifiedAccounts() {
 
 async function ensureAuthReady() {
   if (SKIP_SCHEMA_ENSURE) {
+    await ensureProfessorCodeSeeds();
     return;
   }
   if (!ensureAuthSchemaPromise) {
     ensureAuthSchemaPromise = (async () => {
       await ensureAuthSchema();
       await backfillLegacyVerifiedAccounts();
+      await ensureProfessorCodeSeeds();
     })().catch((error) => {
       ensureAuthSchemaPromise = null;
       throw error;
@@ -322,12 +524,36 @@ router.post('/api/signup', async (req, res) => {
     username,
     displayName,
     course,
+    gender,
+    contentPreference,
     recoveryEmail,
+    studentNumber,
+    professorCode,
   } = req.body || {};
 
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !password) {
     return res.status(400).json({ ok: false, message: 'Email and password are required.' });
+  }
+  const normalizedCourse = typeof course === 'string' ? course.trim() : '';
+  const normalizedGender = normalizeGender(gender);
+  const normalizedContentPreference = normalizeContentPreference(contentPreference);
+  const normalizedStudentNumber = normalizeStudentNumber(studentNumber);
+  const normalizedProfessorCode = normalizeProfessorSignupCode(professorCode);
+  if (!normalizedCourse) {
+    return res.status(400).json({ ok: false, message: 'Course is required.' });
+  }
+  if (!normalizedGender) {
+    return res.status(400).json({ ok: false, message: 'Gender is required.' });
+  }
+  if (!normalizedContentPreference) {
+    return res.status(400).json({ ok: false, message: 'Content preference is required.' });
+  }
+  if (!normalizedStudentNumber && !normalizedProfessorCode) {
+    return res.status(400).json({ ok: false, message: 'Student number is required.' });
+  }
+  if (password.length < 8 || password.length > 128) {
+    return res.status(400).json({ ok: false, message: 'Password must be 8 to 128 characters.' });
   }
 
   let createdUser = null;
@@ -353,13 +579,62 @@ router.post('/api/signup', async (req, res) => {
     const hashedPassword = hashPassword(password);
     const uid = buildUid();
     const now = new Date();
+    let platformRole = 'member';
+    let idVerificationStatus = 'pending';
+    let professorCodeRecordId = null;
+
+    if (normalizedProfessorCode) {
+      const codeDigest = digestProfessorSignupCode(normalizedProfessorCode);
+      const codeResult = await client.query(
+        `SELECT id, consumed_at, expires_at, is_active
+         FROM professor_registration_codes
+         WHERE code_digest = $1
+         FOR UPDATE`,
+        [codeDigest]
+      );
+      if (!codeResult.rows.length) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Invalid professor registration code.' });
+      }
+      const codeRecord = codeResult.rows[0];
+      if (!codeRecord.is_active || codeRecord.consumed_at) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Professor registration code already used.' });
+      }
+      if (codeRecord.expires_at && new Date(codeRecord.expires_at).getTime() <= Date.now()) {
+        await client.query('ROLLBACK');
+        inTransaction = false;
+        return res.status(400).json({ ok: false, message: 'Professor registration code expired.' });
+      }
+      platformRole = 'professor';
+      idVerificationStatus = 'approved';
+      professorCodeRecordId = codeRecord.id;
+    }
 
     const query = `
       INSERT INTO accounts
-        (email, uid, password, username, display_name, course, recovery_email, datecreated, email_verified, email_verified_at)
+        (
+          email,
+          uid,
+          password,
+          username,
+          display_name,
+          course,
+          gender,
+          content_preference,
+          student_number,
+          id_verification_status,
+          recovery_email,
+          datecreated,
+          email_verified,
+          email_verified_at,
+          platform_role
+        )
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, false, NULL)
-      RETURNING id, email, username, display_name, uid, course, email_verified
+        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, false, NULL, $13)
+      RETURNING id, email, username, display_name, uid, course, email_verified, id_verification_status, platform_role
     `;
     const values = [
       normalizedEmail,
@@ -367,13 +642,30 @@ router.post('/api/signup', async (req, res) => {
       hashedPassword,
       username || null,
       displayName || null,
-      course || null,
+      normalizedCourse,
+      normalizedGender,
+      JSON.stringify({ mode: normalizedContentPreference }),
+      normalizedStudentNumber || null,
+      idVerificationStatus,
       recoveryEmail || null,
       now,
+      platformRole,
     ];
 
     const result = await client.query(query, values);
     createdUser = result.rows[0];
+
+    if (professorCodeRecordId) {
+      await client.query(
+        `UPDATE professor_registration_codes
+         SET consumed_by_uid = $1,
+             consumed_at = NOW(),
+             is_active = false
+         WHERE id = $2`,
+        [uid, professorCodeRecordId]
+      );
+    }
+
     verificationToken = await issueVerificationToken(client, createdUser.uid);
     await client.query('COMMIT');
     inTransaction = false;
@@ -413,6 +705,8 @@ router.post('/api/signup', async (req, res) => {
         uid: createdUser.uid,
         email: createdUser.email,
         course: createdUser.course,
+        platformRole: normalizePlatformRole(createdUser.platform_role),
+        verificationStatus: createdUser.id_verification_status || 'pending',
       },
       devVerificationLink: emailResult.previewUrl || null,
     });
@@ -429,6 +723,8 @@ router.post('/api/signup', async (req, res) => {
         uid: createdUser.uid,
         email: createdUser.email,
         course: createdUser.course,
+        platformRole: normalizePlatformRole(createdUser.platform_role),
+        verificationStatus: createdUser.id_verification_status || 'pending',
       },
     });
   }
@@ -492,8 +788,11 @@ router.post('/api/login', async (req, res) => {
         display_name,
         course,
         email_verified,
+        id_verification_status,
+        id_verification_note,
         COALESCE(platform_role, 'member') AS platform_role,
-        COALESCE(is_banned, false) AS is_banned
+        COALESCE(is_banned, false) AS is_banned,
+        banned_reason
        FROM accounts
        WHERE lower(email) = lower($1)`,
       [normalizedEmail]
@@ -509,6 +808,8 @@ router.post('/api/login', async (req, res) => {
     }
 
     const user = result.rows[0];
+    const normalizedRole = normalizePlatformRole(user.platform_role);
+    const bypassVerification = normalizedRole === 'owner' || normalizedRole === 'admin';
     if (!verifyPassword(password, user.password)) {
       authLog('warn', 'login_rejected_invalid_password', {
         ...baseLog,
@@ -525,9 +826,37 @@ router.post('/api/login', async (req, res) => {
         reason: 'account_banned',
         uid: user.uid,
       });
-      return res.status(403).json({ ok: false, message: 'This account is banned.' });
+      return res.status(403).json({
+        ok: false,
+        reason: 'account_banned',
+        appealAvailable: true,
+        message: 'This account is banned.',
+        banReason: user.banned_reason || null,
+      });
     }
-    if (!user.email_verified) {
+    if (!bypassVerification && (user.id_verification_status || 'pending') !== 'approved') {
+      const verificationStatus = user.id_verification_status || 'pending';
+      const isRejected = verificationStatus === 'rejected';
+      authLog('warn', 'login_rejected_id_verification', {
+        ...baseLog,
+        statusCode: 403,
+        reason: 'id_verification_not_approved',
+        verificationStatus,
+        uid: user.uid,
+      });
+      return res.status(403).json({
+        ok: false,
+        reason: 'id_verification_not_approved',
+        requiresIdVerification: true,
+        verificationStatus,
+        appealAvailable: isRejected,
+        message: isRejected
+          ? 'Your student ID verification was rejected. You can submit an appeal.'
+          : 'Your account is pending student ID verification approval.',
+        verificationNote: user.id_verification_note || null,
+      });
+    }
+    if (!bypassVerification && !user.email_verified) {
       authLog('warn', 'login_rejected_unverified_email', {
         ...baseLog,
         statusCode: 403,
@@ -548,7 +877,8 @@ router.post('/api/login', async (req, res) => {
       username: user.username,
       displayName: user.display_name,
       course: user.course,
-      platformRole: user.platform_role || 'member',
+      platformRole: normalizedRole,
+      idVerificationStatus: user.id_verification_status || 'pending',
     });
 
     const cookieOptions = {
@@ -564,10 +894,22 @@ router.post('/api/login', async (req, res) => {
       statusCode: 200,
       uid: user.uid,
       course: user.course || null,
-      role: user.platform_role || 'member',
+      role: normalizedRole,
+      verificationStatus: user.id_verification_status || 'pending',
     });
 
-    return res.json({ ok: true, user: { id: user.id, uid: user.uid, email: user.email, course: user.course }, token: sessionId });
+    return res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        uid: user.uid,
+        email: user.email,
+        course: user.course,
+        platformRole: normalizedRole,
+        verificationStatus: user.id_verification_status || 'pending',
+      },
+      token: sessionId,
+    });
   } catch (error) {
     authLog('error', 'login_failed_exception', {
       ...baseLog,
@@ -949,7 +1291,17 @@ router.get('/api/account', async (req, res) => {
   try {
     await ensureAuthReady();
     const result = await pool.query(
-      `SELECT uid, email, username, recovery_email, email_verified
+      `SELECT
+        uid,
+        email,
+        username,
+        recovery_email,
+        email_verified,
+        course,
+        gender,
+        student_number,
+        id_verification_status,
+        id_verification_note
        FROM accounts
        WHERE uid = $1
        LIMIT 1`,
@@ -967,11 +1319,374 @@ router.get('/api/account', async (req, res) => {
         username: row.username || '',
         recoveryEmail: row.recovery_email || '',
         emailVerified: Boolean(row.email_verified),
+        course: row.course || '',
+        gender: row.gender || '',
+        studentNumber: row.student_number || '',
+        verificationStatus: row.id_verification_status || 'pending',
+        verificationNote: row.id_verification_note || '',
       },
     });
   } catch (error) {
     console.error('Account fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load account settings.' });
+  }
+});
+
+router.post('/api/id-verification/:uid/decision', requireAuthApi, async (req, res) => {
+  const targetUid = typeof req.params.uid === 'string' ? req.params.uid.trim() : '';
+  const status = typeof (req.body && req.body.status) === 'string' ? req.body.status.trim().toLowerCase() : '';
+  const note = typeof (req.body && req.body.note) === 'string' ? req.body.note.trim().slice(0, 600) : '';
+
+  if (!targetUid) {
+    return res.status(400).json({ ok: false, message: 'Invalid target user.' });
+  }
+  if (!['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ ok: false, message: 'Status must be approved or rejected.' });
+  }
+  if (targetUid === req.user.uid) {
+    return res.status(400).json({ ok: false, message: 'You cannot review your own verification.' });
+  }
+
+  const client = await pool.connect();
+  let inTransaction = false;
+  try {
+    await ensureAuthReady();
+    await client.query('BEGIN');
+    inTransaction = true;
+
+    const actorResult = await client.query(
+      `SELECT uid, COALESCE(platform_role, 'member') AS platform_role
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [req.user.uid]
+    );
+    if (!actorResult.rows.length) {
+      await client.query('ROLLBACK');
+      inTransaction = false;
+      return res.status(403).json({ ok: false, message: 'Reviewer account not found.' });
+    }
+    const actorRole = normalizePlatformRole(actorResult.rows[0].platform_role);
+    if (!['owner', 'admin', 'professor'].includes(actorRole)) {
+      await client.query('ROLLBACK');
+      inTransaction = false;
+      return res.status(403).json({ ok: false, message: 'Only owner/admin/professor can review verification.' });
+    }
+
+    const targetResult = await client.query(
+      `SELECT
+        uid,
+        COALESCE(platform_role, 'member') AS platform_role,
+        COALESCE(id_verification_status, 'pending') AS id_verification_status
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [targetUid]
+    );
+    if (!targetResult.rows.length) {
+      await client.query('ROLLBACK');
+      inTransaction = false;
+      return res.status(404).json({ ok: false, message: 'Target user not found.' });
+    }
+    const targetRole = normalizePlatformRole(targetResult.rows[0].platform_role);
+
+    if (actorRole === 'professor' && targetRole !== 'member') {
+      await client.query('ROLLBACK');
+      inTransaction = false;
+      return res.status(403).json({ ok: false, message: 'Professors can only review member accounts.' });
+    }
+    if (actorRole === 'admin' && targetRole === 'owner') {
+      await client.query('ROLLBACK');
+      inTransaction = false;
+      return res.status(403).json({ ok: false, message: 'Admins cannot review owner accounts.' });
+    }
+
+    const updateResult = await client.query(
+      `UPDATE accounts
+       SET
+         id_verification_status = $1,
+         id_verification_note = $2,
+         id_verified_by_uid = $3,
+         id_verified_at = NOW()
+       WHERE uid = $4
+       RETURNING uid, id_verification_status, id_verification_note, id_verified_at`,
+      [status, note || null, req.user.uid, targetUid]
+    );
+
+    await client.query('COMMIT');
+    inTransaction = false;
+
+    if (status === 'rejected') {
+      await deleteSessionsForUid(targetUid);
+    }
+
+    return res.json({
+      ok: true,
+      message: `Verification ${status}.`,
+      verification: {
+        uid: updateResult.rows[0].uid,
+        status: updateResult.rows[0].id_verification_status,
+        note: updateResult.rows[0].id_verification_note || '',
+        verifiedAt: updateResult.rows[0].id_verified_at,
+      },
+    });
+  } catch (error) {
+    if (inTransaction) {
+      await client.query('ROLLBACK');
+    }
+    console.error('ID verification decision failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update verification status.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/api/appeals', requireAuthApi, async (req, res) => {
+  const typeRaw = typeof (req.body && req.body.type) === 'string' ? req.body.type.trim().toLowerCase() : '';
+  const message = typeof (req.body && req.body.message) === 'string' ? req.body.message.trim() : '';
+  const actionId = Number(req.body && req.body.actionId);
+  const validTypes = new Set(['warning', 'suspension', 'ban', 'verification_rejection', 'other']);
+  const appealType = validTypes.has(typeRaw) ? typeRaw : 'other';
+
+  if (!message || message.length < 10) {
+    return res.status(400).json({ ok: false, message: 'Appeal message must be at least 10 characters.' });
+  }
+  if (message.length > 4000) {
+    return res.status(400).json({ ok: false, message: 'Appeal message must be 4000 characters or less.' });
+  }
+
+  try {
+    await ensureAuthReady();
+    const duplicateResult = await pool.query(
+      `SELECT id
+       FROM account_appeals
+       WHERE appellant_uid = $1
+         AND appeal_type = $2
+         AND status IN ('open', 'under_review')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [req.user.uid, appealType]
+    );
+    if (duplicateResult.rows.length) {
+      return res.status(409).json({ ok: false, message: 'An open appeal of this type already exists.' });
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO account_appeals
+        (appellant_uid, disciplinary_action_id, appeal_type, status, message, evidence, created_at, updated_at)
+       VALUES
+        ($1, $2, $3, 'open', $4, '{}'::jsonb, NOW(), NOW())
+       RETURNING id, appeal_type, status, created_at`,
+      [req.user.uid, Number.isInteger(actionId) && actionId > 0 ? actionId : null, appealType, message]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      message: 'Appeal submitted.',
+      appeal: {
+        id: Number(insertResult.rows[0].id),
+        type: insertResult.rows[0].appeal_type,
+        status: insertResult.rows[0].status,
+        createdAt: insertResult.rows[0].created_at,
+      },
+    });
+  } catch (error) {
+    console.error('Appeal submit failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to submit appeal.' });
+  }
+});
+
+router.get('/api/appeals/me', requireAuthApi, async (req, res) => {
+  try {
+    await ensureAuthReady();
+    const result = await pool.query(
+      `SELECT
+        id,
+        appeal_type,
+        status,
+        message,
+        resolution_note,
+        created_at,
+        updated_at,
+        resolved_at
+       FROM account_appeals
+       WHERE appellant_uid = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [req.user.uid]
+    );
+    return res.json({
+      ok: true,
+      appeals: result.rows.map((row) => ({
+        id: Number(row.id),
+        type: row.appeal_type,
+        status: row.status,
+        message: row.message || '',
+        resolutionNote: row.resolution_note || '',
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        resolvedAt: row.resolved_at || null,
+      })),
+    });
+  } catch (error) {
+    console.error('Appeals fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load appeals.' });
+  }
+});
+
+router.post('/api/appeals/ban', async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  const password = typeof (req.body && req.body.password) === 'string' ? req.body.password : '';
+  const message = typeof (req.body && req.body.message) === 'string' ? req.body.message.trim() : '';
+
+  if (!email || !password) {
+    return res.status(400).json({ ok: false, message: 'Email and password are required.' });
+  }
+  if (!message || message.length < 10) {
+    return res.status(400).json({ ok: false, message: 'Appeal message must be at least 10 characters.' });
+  }
+  if (message.length > 4000) {
+    return res.status(400).json({ ok: false, message: 'Appeal message must be 4000 characters or less.' });
+  }
+
+  try {
+    await ensureAuthReady();
+    const userResult = await pool.query(
+      `SELECT
+        uid,
+        password,
+        COALESCE(is_banned, false) AS is_banned
+       FROM accounts
+       WHERE lower(email) = lower($1)
+       LIMIT 1`,
+      [email]
+    );
+    if (!userResult.rows.length) {
+      return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
+    }
+    const user = userResult.rows[0];
+    if (!verifyPassword(password, user.password)) {
+      return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
+    }
+    if (user.is_banned !== true) {
+      return res.status(400).json({ ok: false, message: 'This account is not banned.' });
+    }
+
+    const duplicateResult = await pool.query(
+      `SELECT id
+       FROM account_appeals
+       WHERE appellant_uid = $1
+         AND appeal_type = 'ban'
+         AND status IN ('open', 'under_review')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [user.uid]
+    );
+    if (duplicateResult.rows.length) {
+      return res.status(409).json({ ok: false, message: 'A ban appeal is already open for this account.' });
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO account_appeals
+        (appellant_uid, disciplinary_action_id, appeal_type, status, message, evidence, created_at, updated_at)
+       VALUES
+        ($1, NULL, 'ban', 'open', $2, '{}'::jsonb, NOW(), NOW())
+       RETURNING id, created_at`,
+      [user.uid, message]
+    );
+    return res.status(201).json({
+      ok: true,
+      message: 'Ban appeal submitted.',
+      appeal: {
+        id: Number(insertResult.rows[0].id),
+        type: 'ban',
+        status: 'open',
+        createdAt: insertResult.rows[0].created_at,
+      },
+    });
+  } catch (error) {
+    console.error('Ban appeal submit failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to submit ban appeal.' });
+  }
+});
+
+router.post('/api/appeals/id-verification', async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  const password = typeof (req.body && req.body.password) === 'string' ? req.body.password : '';
+  const message = typeof (req.body && req.body.message) === 'string' ? req.body.message.trim() : '';
+
+  if (!email || !password) {
+    return res.status(400).json({ ok: false, message: 'Email and password are required.' });
+  }
+  if (!message || message.length < 10) {
+    return res.status(400).json({ ok: false, message: 'Appeal message must be at least 10 characters.' });
+  }
+  if (message.length > 4000) {
+    return res.status(400).json({ ok: false, message: 'Appeal message must be 4000 characters or less.' });
+  }
+
+  try {
+    await ensureAuthReady();
+    const userResult = await pool.query(
+      `SELECT
+        uid,
+        password,
+        COALESCE(id_verification_status, 'pending') AS id_verification_status
+       FROM accounts
+       WHERE lower(email) = lower($1)
+       LIMIT 1`,
+      [email]
+    );
+    if (!userResult.rows.length) {
+      return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
+    }
+    const user = userResult.rows[0];
+    if (!verifyPassword(password, user.password)) {
+      return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
+    }
+    if (user.id_verification_status !== 'rejected') {
+      return res.status(400).json({ ok: false, message: 'This account does not have a rejected verification status.' });
+    }
+
+    const duplicateResult = await pool.query(
+      `SELECT id
+       FROM account_appeals
+       WHERE appellant_uid = $1
+         AND appeal_type = 'verification_rejection'
+         AND status IN ('open', 'under_review')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [user.uid]
+    );
+    if (duplicateResult.rows.length) {
+      return res
+        .status(409)
+        .json({ ok: false, message: 'An ID verification appeal is already open for this account.' });
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO account_appeals
+        (appellant_uid, disciplinary_action_id, appeal_type, status, message, evidence, created_at, updated_at)
+       VALUES
+        ($1, NULL, 'verification_rejection', 'open', $2, '{}'::jsonb, NOW(), NOW())
+       RETURNING id, created_at`,
+      [user.uid, message]
+    );
+    return res.status(201).json({
+      ok: true,
+      message: 'Verification appeal submitted.',
+      appeal: {
+        id: Number(insertResult.rows[0].id),
+        type: 'verification_rejection',
+        status: 'open',
+        createdAt: insertResult.rows[0].created_at,
+      },
+    });
+  } catch (error) {
+    console.error('Verification appeal submit failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to submit verification appeal.' });
   }
 });
 

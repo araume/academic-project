@@ -16,6 +16,7 @@ const {
   normalizeStorageKey,
 } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 const { hasAdminPrivileges } = require('../services/roleAccess');
 const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
 const { parseReportPayload } = require('../services/reporting');
@@ -30,6 +31,11 @@ const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
 const AI_DOC_CONTEXT_MAX_BYTES = 8 * 1024 * 1024;
 const AI_DOC_CONTEXT_MAX_CHARS = 3800;
 const AI_DOC_PDF_OCR_MIN_TEXT_CHARS = 140;
+const UNIFIED_VISIBILITY_ENABLED = isUnifiedVisibilityEnabled();
+const COURSE_SHARED_VISIBILITY_SQL = UNIFIED_VISIBILITY_ENABLED
+  ? "d.visibility IN ('private', 'course_exclusive')"
+  : "d.visibility = 'private'";
+const DOCUMENT_NOT_RESTRICTED_SQL = 'COALESCE(d.is_restricted, false) = false';
 
 async function signIfNeeded(value, { ensureExists = false } = {}) {
   if (!value) return null;
@@ -380,7 +386,7 @@ async function loadAccessibleDocumentForUser(user, uuid) {
   const userCourse = user && user.course ? user.course : null;
   const userUid = user && user.uid ? user.uid : null;
   const isPrivilegedViewer = hasAdminPrivileges(user);
-  const filters = ['d.uuid = $1'];
+  const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL];
   const values = [uuid];
 
   if (!isPrivilegedViewer) {
@@ -390,7 +396,7 @@ async function loadAccessibleDocumentForUser(user, uuid) {
       values.push(userUid);
       const uidParam = values.length;
       filters.push(
-        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+        `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
       );
     } else if (userUid) {
       values.push(userUid);
@@ -436,7 +442,7 @@ router.get('/api/library/uploaders', async (req, res) => {
   const isPrivilegedViewer = hasAdminPrivileges(req.user);
 
   const values = [];
-  const filters = [];
+  const filters = [DOCUMENT_NOT_RESTRICTED_SQL];
 
   if (q) {
     values.push(`%${q}%`);
@@ -454,7 +460,7 @@ router.get('/api/library/uploaders', async (req, res) => {
       values.push(userUid);
       const uidParam = values.length;
       filters.push(
-        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+        `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
       );
     } else if (userUid) {
       values.push(userUid);
@@ -508,7 +514,7 @@ router.get('/api/library/documents', async (req, res) => {
   const userUid = req.user && req.user.uid ? req.user.uid : null;
   const isPrivilegedViewer = hasAdminPrivileges(req.user);
 
-  const filters = [];
+  const filters = [DOCUMENT_NOT_RESTRICTED_SQL];
   const countValues = [];
 
   if (q) {
@@ -549,7 +555,7 @@ router.get('/api/library/documents', async (req, res) => {
       countValues.push(userUid);
       const uidParam = countValues.length;
       filters.push(
-        `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+        `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
       );
     } else if (userUid) {
       countValues.push(userUid);
@@ -635,7 +641,7 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
     const userCourse = req.user && req.user.course ? req.user.course : null;
     const userUid = req.user && req.user.uid ? req.user.uid : null;
     const isPrivilegedViewer = hasAdminPrivileges(req.user);
-    const filters = ['d.uuid = $1'];
+    const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL];
     const values = [uuid];
 
     if (!isPrivilegedViewer) {
@@ -645,7 +651,7 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
         values.push(userUid);
         const uidParam = values.length;
         filters.push(
-          `(d.visibility = 'public' OR (d.visibility IN ('private', 'course_exclusive') AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+          `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
         );
       } else if (userUid) {
         values.push(userUid);
@@ -718,7 +724,18 @@ router.post(
 
     try {
       const uuid = crypto.randomUUID();
-      const visibilityValue = visibility === 'private' ? 'private' : 'public';
+      const visibilityRaw = typeof visibility === 'string' ? visibility.trim().toLowerCase() : '';
+      if (visibilityRaw === 'course_exclusive' && !UNIFIED_VISIBILITY_ENABLED) {
+        return res.status(400).json({
+          ok: false,
+          message: 'Course-exclusive visibility is currently unavailable.',
+        });
+      }
+      const visibilityValue = visibilityRaw === 'private'
+        ? 'private'
+        : visibilityRaw === 'course_exclusive'
+          ? 'course_exclusive'
+          : 'public';
 
       const uploadedFile = await uploadToStorage({
         buffer: file.buffer,
@@ -740,9 +757,9 @@ router.post(
 
       const insertQuery = `
         INSERT INTO documents
-          (uuid, title, description, filename, uploader_uid, course, subject, visibility, aiallowed, link, thumbnail_link)
+          (uuid, title, description, filename, uploader_uid, course, subject, visibility, source, aiallowed, link, thumbnail_link)
         VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING uuid, title, description, filename, uploader_uid, uploaddate, course, subject,
                   views, popularity, visibility, aiallowed, link, thumbnail_link
       `;
@@ -756,6 +773,7 @@ router.post(
         course.trim(),
         subject.trim(),
         visibilityValue,
+        'library',
         aiAllowedValue,
         uploadedFile.key,
         thumbnailLink,
@@ -909,6 +927,7 @@ router.post('/api/library/documents/:uuid/report', async (req, res) => {
       `SELECT uuid, title, uploader_uid
        FROM documents
        WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [uuid]
     );
@@ -965,7 +984,11 @@ router.post('/api/library/like', async (req, res) => {
 
   try {
     const docResult = await pool.query(
-      'SELECT uuid, uploader_uid, title FROM documents WHERE uuid = $1 LIMIT 1',
+      `SELECT uuid, uploader_uid, title
+       FROM documents
+       WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
       [documentUuid]
     );
     const doc = docResult.rows[0];
@@ -1000,7 +1023,10 @@ router.post('/api/library/like', async (req, res) => {
     }
 
     const popularity = await pool.query(
-      'SELECT popularity FROM documents WHERE uuid = $1',
+      `SELECT popularity
+       FROM documents
+       WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false`,
       [documentUuid]
     );
 
@@ -1264,6 +1290,18 @@ router.get('/api/library/comments', async (req, res) => {
   }
 
   try {
+    const docCheck = await pool.query(
+      `SELECT uuid
+       FROM documents
+       WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
+      [documentUuid]
+    );
+    if (!docCheck.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+
     const db = await getMongoDb();
     const comments = await db
       .collection('doccomment')
@@ -1289,7 +1327,11 @@ router.post('/api/library/comments', async (req, res) => {
 
   try {
     const docResult = await pool.query(
-      'SELECT uuid, uploader_uid, title FROM documents WHERE uuid = $1 LIMIT 1',
+      `SELECT uuid, uploader_uid, title
+       FROM documents
+       WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
       [documentUuid]
     );
     const doc = docResult.rows[0];

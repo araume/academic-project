@@ -73,10 +73,13 @@ class _JournalsTab extends StatefulWidget {
 }
 
 class _JournalsTabState extends State<_JournalsTab> {
+  static const String _ungroupedFilterKey = '__ungrouped__';
+
   bool _loading = true;
   String? _error;
   List<PersonalJournal> _entries = <PersonalJournal>[];
   List<PersonalFolder> _folders = <PersonalFolder>[];
+  String? _selectedFolderFilter;
 
   @override
   void initState() {
@@ -98,6 +101,14 @@ class _JournalsTabState extends State<_JournalsTab> {
       setState(() {
         _entries = results[0] as List<PersonalJournal>;
         _folders = results[1] as List<PersonalFolder>;
+        final selected = _selectedFolderFilter;
+        if (selected == null || selected == _ungroupedFilterKey) {
+          return;
+        }
+        final stillExists = _folders.any((folder) => folder.name == selected);
+        if (!stillExists) {
+          _selectedFolderFilter = null;
+        }
       });
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -348,6 +359,28 @@ class _JournalsTabState extends State<_JournalsTab> {
     );
   }
 
+  List<PersonalJournal> _filteredEntries() {
+    final selected = _selectedFolderFilter;
+    if (selected == null) {
+      return _entries;
+    }
+    if (selected == _ungroupedFilterKey) {
+      return _entries
+          .where((entry) => (entry.folder ?? '').trim().isEmpty)
+          .toList();
+    }
+    return _entries
+        .where((entry) => (entry.folder ?? '').trim() == selected)
+        .toList();
+  }
+
+  String _activeFilterLabel() {
+    final selected = _selectedFolderFilter;
+    if (selected == null) return 'All entries';
+    if (selected == _ungroupedFilterKey) return 'Ungrouped';
+    return selected;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -365,6 +398,8 @@ class _JournalsTabState extends State<_JournalsTab> {
         ),
       );
     }
+
+    final visibleEntries = _filteredEntries();
 
     return Column(
       children: [
@@ -395,29 +430,68 @@ class _JournalsTabState extends State<_JournalsTab> {
         if (_folders.isNotEmpty)
           ExpansionTile(
             title: const Text('Folders'),
-            children: _folders
-                .map(
-                  (folder) => ListTile(
-                    dense: true,
-                    title: Text(folder.name),
-                    trailing: IconButton(
-                      onPressed: () => _deleteFolder(folder),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
+            children: [
+              ListTile(
+                dense: true,
+                selected: _selectedFolderFilter == null,
+                leading: const Icon(Icons.layers_outlined, size: 18),
+                title: const Text('All entries'),
+                onTap: () {
+                  setState(() {
+                    _selectedFolderFilter = null;
+                  });
+                },
+              ),
+              ListTile(
+                dense: true,
+                selected: _selectedFolderFilter == _ungroupedFilterKey,
+                leading: const Icon(Icons.folder_off_outlined, size: 18),
+                title: const Text('Ungrouped'),
+                onTap: () {
+                  setState(() {
+                    _selectedFolderFilter = _ungroupedFilterKey;
+                  });
+                },
+              ),
+              ..._folders.map(
+                (folder) => ListTile(
+                  dense: true,
+                  selected: _selectedFolderFilter == folder.name,
+                  leading: const Icon(Icons.folder_outlined, size: 18),
+                  title: Text(folder.name),
+                  onTap: () {
+                    setState(() {
+                      _selectedFolderFilter = folder.name;
+                    });
+                  },
+                  trailing: IconButton(
+                    onPressed: () => _deleteFolder(folder),
+                    icon: const Icon(Icons.delete_outline),
                   ),
-                )
-                .toList(),
+                ),
+              ),
+            ],
           ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Chip(
+              avatar: const Icon(Icons.filter_alt_outlined, size: 16),
+              label: Text('Showing: ${_activeFilterLabel()}'),
+            ),
+          ),
+        ),
         Expanded(
-          child: _entries.isEmpty
-              ? const Center(child: Text('No journal entries yet.'))
+          child: visibleEntries.isEmpty
+              ? const Center(child: Text('No journal entries in this folder.'))
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-                    itemCount: _entries.length,
+                    itemCount: visibleEntries.length,
                     itemBuilder: (context, index) {
-                      final entry = _entries[index];
+                      final entry = visibleEntries[index];
                       return Card(
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(

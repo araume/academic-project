@@ -6,6 +6,9 @@ class AppNotification {
     required this.isRead,
     required this.createdAt,
     required this.actorName,
+    this.entityType,
+    this.entityId,
+    this.targetUrl,
   });
 
   final int id;
@@ -14,6 +17,9 @@ class AppNotification {
   final bool isRead;
   final DateTime? createdAt;
   final String actorName;
+  final String? entityType;
+  final String? entityId;
+  final String? targetUrl;
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     final actor =
@@ -21,6 +27,9 @@ class AppNotification {
     return AppNotification(
       id: (json['id'] as num? ?? 0).toInt(),
       type: (json['type'] as String? ?? '').trim(),
+      entityType: (json['entityType'] as String?)?.trim(),
+      entityId: (json['entityId'] as String?)?.trim(),
+      targetUrl: (json['targetUrl'] as String?)?.trim(),
       message: (json['message'] as String? ?? '').trim(),
       isRead: json['isRead'] == true,
       createdAt: _parseDate(json['createdAt']),

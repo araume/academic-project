@@ -5,6 +5,7 @@ const requireAuthApi = require('../middleware/requireAuthApi');
 const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 const { getMongoDb } = require('../db/mongo');
 const { hasAdminPrivileges } = require('../services/roleAccess');
+const { isUnifiedVisibilityEnabled, isSubjectsEnabled } = require('../services/featureFlags');
 
 const router = express.Router();
 const upload = multer({
@@ -76,9 +77,23 @@ async function signPostAttachment(attachment) {
 
 async function loadMainFeedPostsForProfile({ viewer, targetUid }) {
   const viewerCourse = viewer && viewer.course ? String(viewer.course).trim() : '';
-  const visibilityRules = [{ visibility: 'public' }];
+  const visibilityRules = [
+    { visibility: 'public' },
+    { visibility: null },
+    { visibility: { $exists: false } },
+  ];
   if (viewerCourse) {
-    visibilityRules.push({ visibility: 'private', course: viewerCourse });
+    if (isUnifiedVisibilityEnabled()) {
+      visibilityRules.push({
+        visibility: { $in: ['private', 'course_exclusive'] },
+        course: viewerCourse,
+      });
+    } else {
+      visibilityRules.push({
+        visibility: 'private',
+        course: viewerCourse,
+      });
+    }
   }
   if (viewer && viewer.uid === targetUid) {
     visibilityRules.push({ uploaderUid: targetUid });
@@ -89,6 +104,7 @@ async function loadMainFeedPostsForProfile({ viewer, targetUid }) {
   const posts = await postsCollection
     .find({
       uploaderUid: targetUid,
+      moderationStatus: { $ne: 'restricted' },
       $or: visibilityRules,
     })
     .sort({ uploadDate: -1 })
@@ -173,7 +189,9 @@ async function buildProfileFeedPayload(viewer, targetUid) {
   const targetCourse = target.course ? String(target.course).trim() : '';
   const sameCourse = normalizeCourse(viewer.course) !== '' &&
     normalizeCourse(viewer.course) === normalizeCourse(targetCourse);
-  const canViewCommunityPosts = viewer.uid === targetUid || sameCourse || hasAdminPrivileges(viewer);
+  const legacyCommunityPostsEnabled = !isSubjectsEnabled();
+  const canViewCommunityPosts = legacyCommunityPostsEnabled &&
+    (viewer.uid === targetUid || sameCourse || hasAdminPrivileges(viewer));
 
   if (suppressed && viewer.uid !== targetUid) {
     return {
@@ -183,6 +201,7 @@ async function buildProfileFeedPayload(viewer, targetUid) {
         username: target.username || '',
         course: targetCourse || null,
       },
+      legacyCommunityPostsEnabled,
       canViewCommunityPosts: false,
       sameCourse,
       mainFeedPosts: [],
@@ -204,6 +223,7 @@ async function buildProfileFeedPayload(viewer, targetUid) {
       username: target.username || '',
       course: targetCourse || null,
     },
+    legacyCommunityPostsEnabled,
     canViewCommunityPosts,
     sameCourse,
     mainFeedPosts,
@@ -237,14 +257,29 @@ async function ensureProfile(uid) {
 async function getProfileWithSignedPhoto(uid) {
   const [profile, accountResult] = await Promise.all([
     ensureProfile(uid),
-    pool.query('SELECT username FROM accounts WHERE uid = $1 LIMIT 1', [uid]),
+    pool.query(
+      `SELECT
+         username,
+         COALESCE(platform_role, 'member') AS platform_role
+       FROM accounts
+       WHERE uid = $1
+       LIMIT 1`,
+      [uid]
+    ),
   ]);
   const username = accountResult.rows[0] ? accountResult.rows[0].username || '' : '';
+  const platformRole = accountResult.rows[0] ? accountResult.rows[0].platform_role || 'member' : 'member';
   let photoLink = profile.photo_link;
   if (photoLink && !photoLink.startsWith('http')) {
     photoLink = await getSignedUrl(photoLink, Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60));
   }
-  return { ...profile, username, photo_link: photoLink };
+  return {
+    ...profile,
+    username,
+    platform_role: platformRole,
+    platformRole,
+    photo_link: photoLink,
+  };
 }
 
 router.get('/api/profile', async (req, res) => {
