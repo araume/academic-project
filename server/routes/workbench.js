@@ -81,14 +81,22 @@ function normalizeEdgeAnchor(value, fallback = 'right') {
 
 function canManageNodeEntity({ permissions, node, viewerUid }) {
   if (!node || !viewerUid) return false;
+  const visibility = node.visibility === 'members' ? 'members' : 'private';
+  if (visibility === 'private') {
+    return node.created_by_uid === viewerUid;
+  }
   if (permissions && permissions.canManageNodes) return true;
   return node.created_by_uid === viewerUid;
 }
 
 function canViewNodeEntity({ permissions, node, viewerUid }) {
   if (!node || !viewerUid) return false;
+  const visibility = node.visibility === 'members' ? 'members' : 'private';
+  if (visibility === 'private') {
+    return node.created_by_uid === viewerUid;
+  }
   if (permissions && permissions.canManageNodes) return true;
-  if (node.visibility === 'members') return true;
+  if (visibility === 'members') return true;
   return node.created_by_uid === viewerUid;
 }
 
@@ -2281,8 +2289,7 @@ router.get('/api/workbench/:id', async (req, res) => {
     }
 
     const roots = await ensureWorkbenchRootStructure(workbenchId, viewer.uid);
-    const canManageNodes = access.permissions && access.permissions.canManageNodes === true;
-    const commonParams = canManageNodes ? [workbenchId] : [workbenchId, viewer.uid];
+    const commonParams = [workbenchId, viewer.uid];
     const memberQuery = pool.query(
       `SELECT
         wm.user_uid,
@@ -2317,7 +2324,7 @@ router.get('/api/workbench/:id', async (req, res) => {
        WHERE wn.workbench_id = $1
          AND wn.node_type IN ('file', 'folder')
          AND COALESCE(wn.is_deleted, false) = false
-         ${canManageNodes ? '' : 'AND (wn.visibility = \'members\' OR wn.created_by_uid = $2)'}
+         AND (wn.visibility = 'members' OR wn.created_by_uid = $2)
        ORDER BY wn.sort_order ASC, wn.id ASC`,
       commonParams
     );
@@ -2343,7 +2350,8 @@ router.get('/api/workbench/:id', async (req, res) => {
          AND tn.node_type IN ('file', 'folder')
          AND COALESCE(tn.is_deleted, false) = false
        WHERE we.workbench_id = $1
-         ${canManageNodes ? '' : 'AND (fn.visibility = \'members\' OR fn.created_by_uid = $2) AND (tn.visibility = \'members\' OR tn.created_by_uid = $2)'}
+         AND (fn.visibility = 'members' OR fn.created_by_uid = $2)
+         AND (tn.visibility = 'members' OR tn.created_by_uid = $2)
        ORDER BY we.id ASC`,
       commonParams
     );
@@ -2377,7 +2385,7 @@ router.get('/api/workbench/:id', async (req, res) => {
              wnote.node_id IS NOT NULL
              AND nn.id IS NOT NULL
              AND COALESCE(nn.is_deleted, false) = false
-             ${canManageNodes ? '' : 'AND (nn.visibility = \'members\' OR nn.created_by_uid = $2)'}
+             AND (nn.visibility = 'members' OR nn.created_by_uid = $2)
            )
            OR
            (
@@ -2387,7 +2395,8 @@ router.get('/api/workbench/:id', async (req, res) => {
              AND tn.id IS NOT NULL
              AND COALESCE(fn.is_deleted, false) = false
              AND COALESCE(tn.is_deleted, false) = false
-             ${canManageNodes ? '' : 'AND (fn.visibility = \'members\' OR fn.created_by_uid = $2) AND (tn.visibility = \'members\' OR tn.created_by_uid = $2)'}
+             AND (fn.visibility = 'members' OR fn.created_by_uid = $2)
+             AND (tn.visibility = 'members' OR tn.created_by_uid = $2)
            )
          )
        ORDER BY wnote.created_at DESC, wnote.id DESC
@@ -2800,7 +2809,7 @@ router.get('/api/workbench/:id/directory', async (req, res) => {
     }
 
     const inRecycleBin = Number(parentNode.id) === Number(roots.recycleBinId);
-    const childParams = access.permissions.canManageNodes ? [workbenchId, parentId] : [workbenchId, parentId, viewer.uid];
+    const childParams = [workbenchId, parentId, viewer.uid];
     const childrenResult = await client.query(
       `SELECT
         wn.id,
@@ -2828,7 +2837,7 @@ router.get('/api/workbench/:id/directory', async (req, res) => {
        WHERE wn.workbench_id = $1
          AND wn.parent_node_id = $2
          AND COALESCE(wn.is_deleted, false) = ${inRecycleBin ? 'true' : 'false'}
-         ${access.permissions.canManageNodes ? '' : 'AND (wn.visibility = \'members\' OR wn.created_by_uid = $3)'}
+         AND (wn.visibility = 'members' OR wn.created_by_uid = $3)
        ORDER BY (CASE WHEN wn.node_type = 'folder' THEN 0 ELSE 1 END), wn.sort_order ASC, wn.title ASC, wn.id ASC`,
       childParams
     );
@@ -3538,6 +3547,9 @@ router.post('/api/workbench/:id/nodes', async (req, res) => {
     if (!parentNode || parentNode.node_type !== 'folder' || parentNode.is_deleted === true) {
       return res.status(400).json({ ok: false, message: 'Target parent folder is invalid.' });
     }
+    if (!isProtectedSystemFolder(parentNode, roots) && !canViewNodeEntity({ permissions: access.permissions, node: parentNode, viewerUid: viewer.uid })) {
+      return res.status(403).json({ ok: false, message: 'You cannot create nodes inside this private folder.' });
+    }
 
     const result = await pool.query(
       `INSERT INTO workbench_nodes
@@ -3599,7 +3611,6 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
     if (!access) {
       return res.status(404).json({ ok: false, message: 'Workbench not found.' });
     }
-    const canManageNodes = access.permissions && access.permissions.canManageNodes === true;
     const currentNodeResult = await pool.query(
       `SELECT *
        FROM workbench_nodes
@@ -3617,9 +3628,11 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
     const requestKeys = Object.keys(req.body || {}).filter(Boolean);
     const positionOnlyRequest =
       requestKeys.length > 0 && requestKeys.every((key) => key === 'positionX' || key === 'positionY');
-    if (!canManageNodes) {
-      if (!positionOnlyRequest || !canViewNodeEntity({ permissions: access.permissions, node: currentNode, viewerUid: viewer.uid })) {
-        return res.status(403).json({ ok: false, message: 'You cannot edit nodes in this workbench.' });
+    const canManageThisNode = canManageNodeEntity({ permissions: access.permissions, node: currentNode, viewerUid: viewer.uid });
+    if (!canManageThisNode) {
+      const canViewThisNode = canViewNodeEntity({ permissions: access.permissions, node: currentNode, viewerUid: viewer.uid });
+      if (!positionOnlyRequest || !canViewThisNode) {
+        return res.status(403).json({ ok: false, message: 'You cannot edit this node.' });
       }
     }
 
@@ -3643,6 +3656,10 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
         const parentNode = await getWorkbenchNodeById(workbenchId, parentId);
         if (!parentNode || parentNode.node_type !== 'folder' || parentNode.is_deleted === true) {
           return res.status(400).json({ ok: false, message: 'Invalid target parent folder.' });
+        }
+        const roots = await ensureWorkbenchRootStructure(workbenchId, viewer.uid);
+        if (!isProtectedSystemFolder(parentNode, roots) && !canViewNodeEntity({ permissions: access.permissions, node: parentNode, viewerUid: viewer.uid })) {
+          return res.status(403).json({ ok: false, message: 'You cannot move this node into a private folder.' });
         }
         params.push(parentId);
         updates.push(`parent_node_id = $${params.length}`);
@@ -3754,8 +3771,9 @@ router.post('/api/workbench/:id/edges', async (req, res) => {
        WHERE workbench_id = $1
          AND node_type IN ('file', 'folder')
          AND COALESCE(is_deleted, false) = false
+         AND (visibility = 'members' OR created_by_uid = $3)
          AND id = ANY($2::bigint[])`,
-      [workbenchId, [fromNodeId, toNodeId]]
+      [workbenchId, [fromNodeId, toNodeId], viewer.uid]
     );
     if (nodesCheck.rows.length !== 2) {
       return res.status(400).json({ ok: false, message: 'Both nodes must belong to this workbench.' });
@@ -3825,14 +3843,16 @@ router.patch('/api/workbench/:id/edges/:edgeId', async (req, res) => {
          AND fn.workbench_id = $1
          AND fn.node_type IN ('file', 'folder')
          AND COALESCE(fn.is_deleted, false) = false
+         AND (fn.visibility = 'members' OR fn.created_by_uid = $3)
        JOIN workbench_nodes tn ON tn.id = we.to_node_id
          AND tn.workbench_id = $1
          AND tn.node_type IN ('file', 'folder')
          AND COALESCE(tn.is_deleted, false) = false
+         AND (tn.visibility = 'members' OR tn.created_by_uid = $3)
        WHERE we.workbench_id = $1
          AND we.id = $2
        LIMIT 1`,
-      [workbenchId, edgeId]
+      [workbenchId, edgeId, viewer.uid]
     );
     if (!edgeExists.rows.length) {
       return res.status(404).json({ ok: false, message: 'Edge not found.' });
@@ -3887,6 +3907,28 @@ router.delete('/api/workbench/:id/edges/:edgeId', async (req, res) => {
     }
     if (!access.permissions.canManageNodes) {
       return res.status(403).json({ ok: false, message: 'You cannot delete edges in this workbench.' });
+    }
+
+    const edgeExists = await client.query(
+      `SELECT we.id
+       FROM workbench_edges we
+       JOIN workbench_nodes fn ON fn.id = we.from_node_id
+         AND fn.workbench_id = $1
+         AND fn.node_type IN ('file', 'folder')
+         AND COALESCE(fn.is_deleted, false) = false
+         AND (fn.visibility = 'members' OR fn.created_by_uid = $3)
+       JOIN workbench_nodes tn ON tn.id = we.to_node_id
+         AND tn.workbench_id = $1
+         AND tn.node_type IN ('file', 'folder')
+         AND COALESCE(tn.is_deleted, false) = false
+         AND (tn.visibility = 'members' OR tn.created_by_uid = $3)
+       WHERE we.workbench_id = $1
+         AND we.id = $2
+       LIMIT 1`,
+      [workbenchId, edgeId, viewer.uid]
+    );
+    if (!edgeExists.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Edge not found.' });
     }
 
     const result = await client.query(
@@ -3946,8 +3988,9 @@ router.post('/api/workbench/:id/notes', async (req, res) => {
            AND id = $2
            AND node_type IN ('file', 'folder')
            AND COALESCE(is_deleted, false) = false
+           AND (visibility = 'members' OR created_by_uid = $3)
          LIMIT 1`,
-        [workbenchId, nodeId]
+        [workbenchId, nodeId, viewer.uid]
       );
       if (!nodeCheck.rows.length) {
         return res.status(404).json({ ok: false, message: 'Node not found.' });
@@ -3960,14 +4003,16 @@ router.post('/api/workbench/:id/notes', async (req, res) => {
            AND fn.workbench_id = $1
            AND fn.node_type IN ('file', 'folder')
            AND COALESCE(fn.is_deleted, false) = false
+           AND (fn.visibility = 'members' OR fn.created_by_uid = $3)
          JOIN workbench_nodes tn ON tn.id = we.to_node_id
            AND tn.workbench_id = $1
            AND tn.node_type IN ('file', 'folder')
            AND COALESCE(tn.is_deleted, false) = false
+           AND (tn.visibility = 'members' OR tn.created_by_uid = $3)
          WHERE we.workbench_id = $1
            AND we.id = $2
          LIMIT 1`,
-        [workbenchId, edgeId]
+        [workbenchId, edgeId, viewer.uid]
       );
       if (!edgeCheck.rows.length) {
         return res.status(404).json({ ok: false, message: 'Edge not found.' });
@@ -4058,8 +4103,9 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
            AND id = $2
            AND node_type IN ('file', 'folder')
            AND COALESCE(is_deleted, false) = false
+           AND (visibility = 'members' OR created_by_uid = $3)
          LIMIT 1`,
-        [workbenchId, nodeId]
+        [workbenchId, nodeId, viewer.uid]
       );
       if (!nodeResult.rows.length) {
         return res.status(404).json({ ok: false, message: 'Node not found.' });
@@ -4082,14 +4128,16 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
            AND fn.workbench_id = $1
            AND fn.node_type IN ('file', 'folder')
            AND COALESCE(fn.is_deleted, false) = false
+           AND (fn.visibility = 'members' OR fn.created_by_uid = $3)
          JOIN workbench_nodes tn ON tn.id = we.to_node_id
            AND tn.workbench_id = $1
            AND tn.node_type IN ('file', 'folder')
            AND COALESCE(tn.is_deleted, false) = false
+           AND (tn.visibility = 'members' OR tn.created_by_uid = $3)
          WHERE we.workbench_id = $1
            AND we.id = $2
          LIMIT 1`,
-        [workbenchId, edgeId]
+        [workbenchId, edgeId, viewer.uid]
       );
       if (!edgeResult.rows.length) {
         return res.status(404).json({ ok: false, message: 'Edge not found.' });
@@ -4276,17 +4324,12 @@ router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
       });
     }
 
-    const canManageNodes = access.permissions.canManageNodes === true;
     const canCreateNodes = access.permissions.canCreateNodes === true;
-    const nodeParams = canManageNodes ? [workbenchId] : [workbenchId, viewer.uid];
-    const nodeVisibilityClause = canManageNodes
-      ? ''
-      : `AND (wn.visibility = 'members' OR wn.created_by_uid = $2)`;
+    const nodeParams = [workbenchId, viewer.uid];
+    const nodeVisibilityClause = `AND (wn.visibility = 'members' OR wn.created_by_uid = $2)`;
 
-    const edgeParams = canManageNodes ? [workbenchId] : [workbenchId, viewer.uid];
-    const edgeVisibilityClause = canManageNodes
-      ? ''
-      : `AND (fn.visibility = 'members' OR fn.created_by_uid = $2) AND (tn.visibility = 'members' OR tn.created_by_uid = $2)`;
+    const edgeParams = [workbenchId, viewer.uid];
+    const edgeVisibilityClause = `AND (fn.visibility = 'members' OR fn.created_by_uid = $2) AND (tn.visibility = 'members' OR tn.created_by_uid = $2)`;
 
     const [nodesResult, edgesResult] = await Promise.all([
       client.query(

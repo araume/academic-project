@@ -30,6 +30,14 @@ const openTaskModal = document.getElementById('openTaskModal');
 const taskModal = document.getElementById('taskModal');
 const taskModalClose = document.getElementById('taskModalClose');
 
+const openVaultModalButton = document.getElementById('openVaultModal');
+const vaultModal = document.getElementById('vaultModal');
+const vaultModalClose = document.getElementById('vaultModalClose');
+const vaultForm = document.getElementById('vaultForm');
+const vaultSubmitButton = document.getElementById('vaultSubmitButton');
+const vaultMessage = document.getElementById('vaultMessage');
+const vaultList = document.getElementById('vaultList');
+
 const conversationList = document.getElementById('conversationList');
 const newConversation = document.getElementById('newConversation');
 const messageList = document.getElementById('messageList');
@@ -58,6 +66,7 @@ const openFolders = new Set();
 let selectedContext = null;
 let isSendingMessage = false;
 let conversationCache = new Map();
+let vaultLoaded = false;
 
 function setConversationHeader(title, subtitle) {
   if (conversationTitle) {
@@ -405,6 +414,9 @@ tabButtons.forEach((button) => {
     tabPanels.forEach((panel) => {
       panel.classList.toggle('is-active', panel.id === `tab-${button.dataset.tab}`);
     });
+    if (button.dataset.tab === 'vault' && !vaultLoaded) {
+      loadVaultDocuments();
+    }
   });
 });
 
@@ -793,6 +805,190 @@ if (openTaskModal) {
 
 if (taskModalClose) {
   taskModalClose.addEventListener('click', () => closeModal(taskModal));
+}
+
+function visibilityLabel(value) {
+  if (value === 'course_exclusive') return 'Course-exclusive';
+  if (value === 'private') return 'Private';
+  return 'Public';
+}
+
+function formatVaultDate(value) {
+  if (!value) return 'Unknown date';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Unknown date';
+  return parsed.toLocaleString();
+}
+
+function createVaultItem(documentItem) {
+  const item = document.createElement('article');
+  item.className = 'vault-item';
+  const description = documentItem.description || 'No description provided.';
+  const filename = documentItem.filename || 'file';
+  const libraryState = documentItem.is_open_library_visible
+    ? 'Visible in Open Library'
+    : 'Hidden from Open Library';
+
+  item.innerHTML = `
+    <div class="vault-item-head">
+      <div>
+        <h3>${escapeHtml(documentItem.title || 'Untitled')}</h3>
+        <p class="vault-item-meta">${escapeHtml(documentItem.subject || 'No subject')} • ${formatVaultDate(documentItem.uploaddate)}</p>
+      </div>
+      <span class="vault-visibility-pill">${visibilityLabel(documentItem.visibility)}</span>
+    </div>
+    <p class="vault-item-description">${escapeHtml(description)}</p>
+    <p class="vault-item-filename">${escapeHtml(filename)}</p>
+    <p class="vault-item-library-state">${libraryState}</p>
+    <div class="vault-item-actions">
+      <label>
+        <span>Visibility</span>
+        <select data-action="visibility">
+          <option value="private" ${documentItem.visibility === 'private' ? 'selected' : ''}>Private</option>
+          <option value="course_exclusive" ${documentItem.visibility === 'course_exclusive' ? 'selected' : ''}>Course-exclusive</option>
+          <option value="public" ${documentItem.visibility === 'public' ? 'selected' : ''}>Public</option>
+        </select>
+      </label>
+      <button type="button" data-action="open" ${documentItem.link ? '' : 'disabled'}>Open file</button>
+      <button type="button" data-action="delete">Delete</button>
+    </div>
+  `;
+
+  const visibilitySelect = item.querySelector('[data-action="visibility"]');
+  visibilitySelect.addEventListener('change', async (event) => {
+    const nextVisibility = event.target.value;
+    event.target.disabled = true;
+    vaultMessage.textContent = '';
+    try {
+      const response = await fetch(`/api/personal/vault/documents/${documentItem.uuid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility: nextVisibility }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message || 'Unable to update visibility.');
+      }
+      vaultMessage.textContent = `Visibility updated to ${visibilityLabel(data.document.visibility)}.`;
+      await loadVaultDocuments();
+    } catch (error) {
+      vaultMessage.textContent = error.message || 'Unable to update visibility.';
+      event.target.value = documentItem.visibility;
+    } finally {
+      event.target.disabled = false;
+    }
+  });
+
+  item.querySelector('[data-action="open"]').addEventListener('click', () => {
+    if (!documentItem.link) return;
+    window.open(documentItem.link, '_blank', 'noopener');
+  });
+
+  item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+    const shouldDelete = window.confirm('Delete this document from your file vault?');
+    if (!shouldDelete) return;
+    vaultMessage.textContent = '';
+    try {
+      const response = await fetch(`/api/personal/vault/documents/${documentItem.uuid}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message || 'Unable to delete document.');
+      }
+      vaultMessage.textContent = 'Document deleted.';
+      await loadVaultDocuments();
+    } catch (error) {
+      vaultMessage.textContent = error.message || 'Unable to delete document.';
+    }
+  });
+
+  return item;
+}
+
+async function loadVaultDocuments() {
+  if (!vaultList) return;
+  vaultList.innerHTML = '<p class="hint">Loading vault documents...</p>';
+  try {
+    const response = await fetch('/api/personal/vault/documents');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to load vault documents.');
+    }
+    const documents = Array.isArray(data.documents) ? data.documents : [];
+    vaultList.innerHTML = '';
+    if (!documents.length) {
+      vaultList.innerHTML = '<p class="hint">No vault documents yet.</p>';
+      vaultLoaded = true;
+      return;
+    }
+    documents.forEach((documentItem) => {
+      vaultList.appendChild(createVaultItem(documentItem));
+    });
+    vaultLoaded = true;
+  } catch (error) {
+    vaultList.innerHTML = `<p class="form-message">${escapeHtml(error.message || 'Unable to load vault documents.')}</p>`;
+  }
+}
+
+async function uploadVaultDocument(event) {
+  event.preventDefault();
+  if (!vaultForm) return;
+  const formData = new FormData(vaultForm);
+  const file = vaultForm.elements.file && vaultForm.elements.file.files
+    ? vaultForm.elements.file.files[0]
+    : null;
+  if (!file) {
+    vaultMessage.textContent = 'Please choose a file to upload.';
+    return;
+  }
+
+  vaultMessage.textContent = '';
+  const originalLabel = vaultSubmitButton ? vaultSubmitButton.textContent : 'Upload';
+  if (vaultSubmitButton) {
+    vaultSubmitButton.disabled = true;
+    vaultSubmitButton.textContent = 'Uploading...';
+  }
+
+  try {
+    const response = await fetch('/api/personal/vault/documents', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Upload failed.');
+    }
+    vaultForm.reset();
+    closeModal(vaultModal);
+    vaultMessage.textContent = 'Document uploaded to your vault.';
+    vaultLoaded = false;
+    await loadVaultDocuments();
+  } catch (error) {
+    vaultMessage.textContent = error.message || 'Upload failed.';
+  } finally {
+    if (vaultSubmitButton) {
+      vaultSubmitButton.disabled = false;
+      vaultSubmitButton.textContent = originalLabel;
+    }
+  }
+}
+
+if (openVaultModalButton) {
+  openVaultModalButton.addEventListener('click', () => {
+    if (vaultForm) {
+      vaultForm.reset();
+    }
+    openModal(vaultModal);
+  });
+}
+
+if (vaultModalClose) {
+  vaultModalClose.addEventListener('click', () => closeModal(vaultModal));
+}
+
+if (vaultForm) {
+  vaultForm.addEventListener('submit', uploadVaultDocument);
 }
 
 async function loadConversations() {

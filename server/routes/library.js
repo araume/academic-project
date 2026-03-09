@@ -36,6 +36,10 @@ const COURSE_SHARED_VISIBILITY_SQL = UNIFIED_VISIBILITY_ENABLED
   ? "d.visibility IN ('private', 'course_exclusive')"
   : "d.visibility = 'private'";
 const DOCUMENT_NOT_RESTRICTED_SQL = 'COALESCE(d.is_restricted, false) = false';
+const LIBRARY_VISIBLE_DOCUMENT_SQL =
+  "(COALESCE(d.source, 'library') <> 'vault' OR d.visibility <> 'private')";
+const LIBRARY_VISIBLE_PLAIN_SQL =
+  "(COALESCE(source, 'library') <> 'vault' OR visibility <> 'private')";
 
 async function signIfNeeded(value, { ensureExists = false } = {}) {
   if (!value) return null;
@@ -386,7 +390,7 @@ async function loadAccessibleDocumentForUser(user, uuid) {
   const userCourse = user && user.course ? user.course : null;
   const userUid = user && user.uid ? user.uid : null;
   const isPrivilegedViewer = hasAdminPrivileges(user);
-  const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL];
+  const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
   const values = [uuid];
 
   if (!isPrivilegedViewer) {
@@ -442,7 +446,7 @@ router.get('/api/library/uploaders', async (req, res) => {
   const isPrivilegedViewer = hasAdminPrivileges(req.user);
 
   const values = [];
-  const filters = [DOCUMENT_NOT_RESTRICTED_SQL];
+  const filters = [DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
 
   if (q) {
     values.push(`%${q}%`);
@@ -514,7 +518,7 @@ router.get('/api/library/documents', async (req, res) => {
   const userUid = req.user && req.user.uid ? req.user.uid : null;
   const isPrivilegedViewer = hasAdminPrivileges(req.user);
 
-  const filters = [DOCUMENT_NOT_RESTRICTED_SQL];
+  const filters = [DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
   const countValues = [];
 
   if (q) {
@@ -641,7 +645,7 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
     const userCourse = req.user && req.user.course ? req.user.course : null;
     const userUid = req.user && req.user.uid ? req.user.uid : null;
     const isPrivilegedViewer = hasAdminPrivileges(req.user);
-    const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL];
+    const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
     const values = [uuid];
 
     if (!isPrivilegedViewer) {
@@ -795,7 +799,11 @@ router.post('/api/library/documents/:uuid/view', async (req, res) => {
   }
   try {
     const result = await pool.query(
-      'UPDATE documents SET views = views + 1 WHERE uuid = $1 RETURNING views',
+      `UPDATE documents
+       SET views = views + 1
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+       RETURNING views`,
       [uuid]
     );
     return res.json({ ok: true, views: result.rows[0] ? result.rows[0].views : 0 });
@@ -841,7 +849,10 @@ router.patch('/api/library/documents/:uuid', async (req, res) => {
 
   try {
     const ownerCheck = await pool.query(
-      'SELECT uploader_uid FROM documents WHERE uuid = $1',
+      `SELECT uploader_uid
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
       [uuid]
     );
     if (!ownerCheck.rows[0] || ownerCheck.rows[0].uploader_uid !== req.user.uid) {
@@ -874,7 +885,10 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
 
   try {
     const docResult = await pool.query(
-      'SELECT link, thumbnail_link, uploader_uid FROM documents WHERE uuid = $1',
+      `SELECT link, thumbnail_link, uploader_uid
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
       [uuid]
     );
     const doc = docResult.rows[0];
@@ -883,7 +897,11 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
     }
 
     const deleteResult = await pool.query(
-      'DELETE FROM documents WHERE uuid = $1 AND uploader_uid = $2 RETURNING uuid',
+      `DELETE FROM documents
+       WHERE uuid = $1
+         AND uploader_uid = $2
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+       RETURNING uuid`,
       [uuid, req.user.uid]
     );
     if (!deleteResult.rowCount) {
@@ -927,6 +945,7 @@ router.post('/api/library/documents/:uuid/report', async (req, res) => {
       `SELECT uuid, title, uploader_uid
        FROM documents
        WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
          AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [uuid]
@@ -987,6 +1006,7 @@ router.post('/api/library/like', async (req, res) => {
       `SELECT uuid, uploader_uid, title
        FROM documents
        WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
          AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [documentUuid]
@@ -1004,7 +1024,10 @@ router.post('/api/library/like', async (req, res) => {
       );
       if (del.rowCount) {
         await pool.query(
-          'UPDATE documents SET popularity = GREATEST(popularity - 1, 0) WHERE uuid = $1',
+          `UPDATE documents
+           SET popularity = GREATEST(popularity - 1, 0)
+           WHERE uuid = $1
+             AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
           [documentUuid]
         );
       }
@@ -1016,7 +1039,10 @@ router.post('/api/library/like', async (req, res) => {
       if (ins.rowCount) {
         shouldNotifyLike = true;
         await pool.query(
-          'UPDATE documents SET popularity = popularity + 1 WHERE uuid = $1',
+          `UPDATE documents
+           SET popularity = popularity + 1
+           WHERE uuid = $1
+             AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
           [documentUuid]
         );
       }
@@ -1026,6 +1052,7 @@ router.post('/api/library/like', async (req, res) => {
       `SELECT popularity
        FROM documents
        WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
          AND COALESCE(is_restricted, false) = false`,
       [documentUuid]
     );
@@ -1294,6 +1321,7 @@ router.get('/api/library/comments', async (req, res) => {
       `SELECT uuid
        FROM documents
        WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
          AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [documentUuid]
@@ -1330,6 +1358,7 @@ router.post('/api/library/comments', async (req, res) => {
       `SELECT uuid, uploader_uid, title
        FROM documents
        WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
          AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [documentUuid]

@@ -613,6 +613,144 @@ body {
   color: var(--accent);
 }
 
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.vault-list {
+  display: grid;
+  gap: 12px;
+}
+
+.vault-item {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2ded8;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.vault-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.vault-item-head h3 {
+  margin: 0;
+}
+
+.vault-item-meta,
+.vault-item-description,
+.vault-item-filename,
+.vault-item-library-state {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.vault-item-filename {
+  font-size: 0.83rem;
+  word-break: break-word;
+}
+
+.vault-item-library-state {
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.vault-visibility-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f1eeea;
+  border: 1px solid #ddd6ce;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.vault-item-actions {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.vault-item-actions label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.vault-item-actions button {
+  border: 1px solid #d7d0c8;
+  background: #fff;
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vault-item-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vault-modal-card {
+  max-width: 680px;
+}
+
+.vault-form {
+  box-shadow: none;
+  padding: 0;
+  background: transparent;
+  margin-top: 14px;
+}
+
+.vault-form input[type="file"] {
+  padding: 8px;
+}
+
+body.theme-dark .vault-item {
+  background: var(--app-dark-surface-alt);
+  border-color: var(--app-dark-border);
+}
+
+body.theme-dark .vault-item-meta,
+body.theme-dark .vault-item-description,
+body.theme-dark .vault-item-filename,
+body.theme-dark .vault-item-library-state,
+body.theme-dark .vault-item-actions label {
+  color: var(--app-dark-text-soft);
+}
+
+body.theme-dark .vault-item-head h3 {
+  color: var(--app-dark-text);
+}
+
+body.theme-dark .vault-visibility-pill,
+body.theme-dark .vault-item-actions button {
+  background: var(--app-dark-surface);
+  border-color: var(--app-dark-border);
+  color: var(--app-dark-text);
+}
+
 .ai-shell {
   display: grid;
   grid-template-columns: clamp(280px, 24vw, 340px) minmax(0, 1fr);
@@ -1042,7 +1180,7 @@ body {
   }
 
   .personal-tabs {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     position: static;
   }
 
@@ -1092,6 +1230,11 @@ body {
 
   .task-board {
     grid-template-columns: 1fr;
+  }
+
+  .vault-item-actions {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 }
 

@@ -48,6 +48,16 @@ body {
   gap: 10px;
 }
 
+.subjects-search-wrap input {
+  width: 100%;
+  border: 1px solid var(--subjects-border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-family: inherit;
+  color: inherit;
+  background: #fff;
+}
+
 .eyebrow {
   margin: 0;
   text-transform: uppercase;
@@ -324,6 +334,7 @@ body.theme-dark .subject-post,
 body.theme-dark .subject-comment,
 body.theme-dark .subject-post-actions button,
 body.theme-dark .subject-post-attachment,
+body.theme-dark .subjects-search-wrap input,
 body.theme-dark .subject-comment-form input,
 body.theme-dark .subject-form input,
 body.theme-dark .subject-form textarea,

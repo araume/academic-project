@@ -4,6 +4,7 @@ const logoutButton = document.getElementById('logoutButton');
 const navAvatarLabel = document.getElementById('navAvatarLabel');
 
 const subjectsList = document.getElementById('subjectsList');
+const subjectSearchInput = document.getElementById('subjectSearchInput');
 const subjectCourseLabel = document.getElementById('subjectCourseLabel');
 const subjectTitle = document.getElementById('subjectTitle');
 const subjectDescription = document.getElementById('subjectDescription');
@@ -26,6 +27,7 @@ const state = {
   selectedSubjectId: null,
   canCreate: false,
   loadingFeed: false,
+  subjectSearchQuery: '',
 };
 
 function initialsFromName(name) {
@@ -108,6 +110,21 @@ function setSubjectFeedHeader(subject) {
   if (openCreateSubjectPostModal) openCreateSubjectPostModal.disabled = false;
 }
 
+function getFilteredSubjects() {
+  const query = String(state.subjectSearchQuery || '').trim().toLowerCase();
+  if (!query) return state.subjects;
+  return state.subjects.filter((subject) => {
+    const subjectName = String(subject.subjectName || '').toLowerCase();
+    const subjectCode = String(subject.subjectCode || '').toLowerCase();
+    const courseName = String(subject.courseName || '').toLowerCase();
+    return (
+      subjectName.includes(query) ||
+      subjectCode.includes(query) ||
+      courseName.includes(query)
+    );
+  });
+}
+
 function renderSubjects() {
   if (!subjectsList) return;
   subjectsList.innerHTML = '';
@@ -117,7 +134,13 @@ function renderSubjects() {
     return;
   }
 
-  state.subjects.forEach((subject) => {
+  const visibleSubjects = getFilteredSubjects();
+  if (!visibleSubjects.length) {
+    subjectsList.innerHTML = '<p class="subject-empty">No units match your search.</p>';
+    return;
+  }
+
+  visibleSubjects.forEach((subject) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `subject-item${subject.id === state.selectedSubjectId ? ' is-active' : ''}`;
@@ -133,6 +156,31 @@ function renderSubjects() {
     });
     subjectsList.appendChild(button);
   });
+}
+
+async function applySubjectSearch() {
+  const visibleSubjects = getFilteredSubjects();
+  const hasSelectedVisible = visibleSubjects.some((subject) => subject.id === state.selectedSubjectId);
+  const shouldReloadFeed = !hasSelectedVisible;
+
+  if (!visibleSubjects.length) {
+    state.selectedSubjectId = null;
+    renderSubjects();
+    setSubjectFeedHeader(null);
+    subjectPosts.innerHTML = '<p class="subject-empty">No units match your search.</p>';
+    return;
+  }
+
+  if (!hasSelectedVisible) {
+    state.selectedSubjectId = visibleSubjects[0].id;
+  }
+
+  renderSubjects();
+  const selectedSubject = visibleSubjects.find((subject) => subject.id === state.selectedSubjectId);
+  setSubjectFeedHeader(selectedSubject || null);
+  if (selectedSubject && shouldReloadFeed) {
+    await fetchAndRenderSubjectFeed(selectedSubject.id);
+  }
 }
 
 function renderPostList(posts) {
@@ -317,22 +365,25 @@ async function loadSubjectsBootstrap() {
       openCreateSubjectModal.classList.toggle('is-hidden', !state.canCreate);
     }
 
-    if (!state.selectedSubjectId && state.subjects.length) {
-      state.selectedSubjectId = state.subjects[0].id;
+    const visibleSubjects = getFilteredSubjects();
+    if (!state.selectedSubjectId && visibleSubjects.length) {
+      state.selectedSubjectId = visibleSubjects[0].id;
     } else if (
       state.selectedSubjectId &&
-      !state.subjects.some((subject) => subject.id === state.selectedSubjectId)
+      !visibleSubjects.some((subject) => subject.id === state.selectedSubjectId)
     ) {
-      state.selectedSubjectId = state.subjects.length ? state.subjects[0].id : null;
+      state.selectedSubjectId = visibleSubjects.length ? visibleSubjects[0].id : null;
     }
 
     renderSubjects();
-    const selected = state.subjects.find((subject) => subject.id === state.selectedSubjectId);
+    const selected = visibleSubjects.find((subject) => subject.id === state.selectedSubjectId);
     setSubjectFeedHeader(selected || null);
     if (selected) {
       await fetchAndRenderSubjectFeed(selected.id);
     } else {
-      subjectPosts.innerHTML = '<p class="subject-empty">No units available yet.</p>';
+      subjectPosts.innerHTML = state.subjects.length
+        ? '<p class="subject-empty">No units match your search.</p>'
+        : '<p class="subject-empty">No units available yet.</p>';
     }
   } catch (error) {
     subjectsList.innerHTML = `<p class="subject-empty">${error.message}</p>`;
@@ -452,6 +503,13 @@ if (createSubjectPostModal) {
     if (event.target === createSubjectPostModal) {
       closeModal(createSubjectPostModal);
     }
+  });
+}
+
+if (subjectSearchInput) {
+  subjectSearchInput.addEventListener('input', async () => {
+    state.subjectSearchQuery = subjectSearchInput.value || '';
+    await applySubjectSearch();
   });
 }
 
