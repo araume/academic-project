@@ -1142,7 +1142,8 @@ async function createPost(event) {
   createPostMessage.textContent = '';
 
   const formData = new FormData(createPostForm);
-  formData.set('visibility', 'public');
+  const targetFeedScope = state.feedScopeEnabled ? state.feedScope : 'global';
+  formData.set('feedScope', targetFeedScope === 'course' ? 'course' : 'global');
   formData.delete('course');
 
   const file = attachmentFile && attachmentFile.files ? attachmentFile.files[0] : null;
@@ -1204,7 +1205,6 @@ async function savePost(event) {
   const payload = {
     title: editPostForm.elements.title.value,
     content: editPostForm.elements.content.value,
-    visibility: 'public',
   };
 
   try {
@@ -1219,8 +1219,6 @@ async function savePost(event) {
     }
     currentEditPost.title = payload.title;
     currentEditPost.content = payload.content;
-    currentEditPost.course = null;
-    currentEditPost.visibility = 'public';
     replacePostCard(currentEditPost);
     closeModal(editPostModal);
   } catch (error) {

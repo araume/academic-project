@@ -44,22 +44,22 @@ const FEATURE_DEFINITIONS = Object.freeze({
   workbench: {
     envVar: 'FEATURE_WORKBENCH',
     defaultValue: true,
-    label: 'Workbench',
+    label: 'Repository',
   },
   taskboard: {
     envVar: 'FEATURE_TASKBOARD',
     defaultValue: true,
-    label: 'Workbench taskboard',
+    label: 'Repository taskboard',
   },
   workbench_transfer: {
     envVar: 'FEATURE_WORKBENCH_TRANSFER',
     defaultValue: true,
-    label: 'Workbench ownership transfer',
+    label: 'Repository ownership transfer',
   },
   ai_scan: {
     envVar: 'FEATURE_AI_SCAN',
     defaultValue: true,
-    label: 'AI scan and workbench AI notes',
+    label: 'AI scan and repository AI notes',
   },
   room_ai_summary: {
     envVar: 'FEATURE_ROOM_AI_SUMMARY',

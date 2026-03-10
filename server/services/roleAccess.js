@@ -20,7 +20,13 @@ function getPlatformRole(user) {
   ];
   for (const candidate of candidates) {
     const normalized = normalizeRole(candidate);
-    if (normalized === 'owner' || normalized === 'admin' || normalized === 'professor' || normalized === 'member') {
+    if (
+      normalized === 'owner' ||
+      normalized === 'admin' ||
+      normalized === 'depadmin' ||
+      normalized === 'professor' ||
+      normalized === 'member'
+    ) {
       return normalized;
     }
   }
@@ -38,7 +44,12 @@ function hasOwnerPrivileges(user) {
 
 function hasProfessorPrivileges(user) {
   const role = getPlatformRole(user);
-  return role === 'owner' || role === 'admin' || role === 'professor';
+  return role === 'owner' || role === 'admin' || role === 'depadmin' || role === 'professor';
+}
+
+function hasDepAdminPrivileges(user) {
+  const role = getPlatformRole(user);
+  return role === 'owner' || role === 'admin' || role === 'depadmin';
 }
 
 module.exports = {
@@ -46,4 +57,5 @@ module.exports = {
   hasAdminPrivileges,
   hasOwnerPrivileges,
   hasProfessorPrivileges,
+  hasDepAdminPrivileges,
 };

@@ -20,6 +20,10 @@ const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 const { hasAdminPrivileges } = require('../services/roleAccess');
 const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
 const { parseReportPayload } = require('../services/reporting');
+const {
+  autoScanIncomingContent,
+  extractDocumentExcerptForScan,
+} = require('../services/aiContentScanService');
 
 const router = express.Router();
 const upload = multer({
@@ -784,7 +788,47 @@ router.post(
       ];
 
       const result = await pool.query(insertQuery, insertValues);
-      return res.json({ ok: true, document: result.rows[0] });
+      const createdDocument = result.rows[0];
+
+      setImmediate(async () => {
+        try {
+          const excerpt = await extractDocumentExcerptForScan({
+            buffer: file.buffer,
+            filename: file.originalname,
+            mimeType: file.mimetype,
+          });
+          const contentScanText = [
+            `Title: ${createdDocument && createdDocument.title ? createdDocument.title : title.trim()}`,
+            `Description: ${createdDocument && createdDocument.description ? createdDocument.description : description ? description.trim() : ''}`,
+            `Course: ${createdDocument && createdDocument.course ? createdDocument.course : course.trim()}`,
+            `Subject: ${createdDocument && createdDocument.subject ? createdDocument.subject : subject.trim()}`,
+            `Visibility: ${visibilityValue}`,
+            `Filename: ${file.originalname || ''}`,
+            excerpt ? `Document excerpt:\n${excerpt}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n');
+
+          await autoScanIncomingContent({
+            targetType: 'document',
+            targetId: String(uuid),
+            requestedByUid: req.user.uid,
+            content: contentScanText,
+            metadata: {
+              source: 'open_library_upload',
+              visibility: visibilityValue,
+              course: createdDocument && createdDocument.course ? createdDocument.course : course.trim(),
+              subject: createdDocument && createdDocument.subject ? createdDocument.subject : subject.trim(),
+              filename: file.originalname || '',
+              mimeType: file.mimetype || '',
+            },
+          });
+        } catch (error) {
+          console.error('Open Library auto content scan failed:', error);
+        }
+      });
+
+      return res.json({ ok: true, document: createdDocument });
     } catch (error) {
       console.error('Document upload failed:', error);
       return res.status(500).json({ ok: false, message: 'Upload failed.' });

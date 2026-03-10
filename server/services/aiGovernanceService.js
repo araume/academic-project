@@ -51,7 +51,7 @@ async function ensureAiGovernanceTables() {
 
     CREATE TABLE IF NOT EXISTS ai_content_scans (
       id BIGSERIAL PRIMARY KEY,
-      target_type TEXT NOT NULL CHECK (target_type IN ('post', 'document')),
+      target_type TEXT NOT NULL CHECK (target_type IN ('post', 'subject_post', 'document')),
       target_id TEXT NOT NULL,
       requested_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
       provider TEXT NOT NULL DEFAULT 'openai' CHECK (provider IN ('openai')),
@@ -66,6 +66,12 @@ async function ensureAiGovernanceTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE ai_content_scans
+      DROP CONSTRAINT IF EXISTS ai_content_scans_target_type_check;
+    ALTER TABLE ai_content_scans
+      ADD CONSTRAINT ai_content_scans_target_type_check
+      CHECK (target_type IN ('post', 'subject_post', 'document'));
 
     CREATE TABLE IF NOT EXISTS room_ai_summaries (
       id BIGSERIAL PRIMARY KEY,

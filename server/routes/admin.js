@@ -93,6 +93,7 @@ const RESTRICTED_QUEUE_SOURCES = new Set([
 const RESTRICTED_QUEUE_STATUSES = new Set(['restricted', 'restored', 'purged']);
 let ensureGovernanceReadyPromise = null;
 let ensureProfessorCodeManagerReadyPromise = null;
+let ensureDepAdminManagerReadyPromise = null;
 const PROFESSOR_SIGNUP_CODE_HASH_PREFIX = 'professor-signup-code:v1:';
 const PROFESSOR_SIGNUP_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PROFESSOR_SIGNUP_CODE_MIN_LENGTH = 6;
@@ -261,6 +262,33 @@ async function ensureProfessorCodeManagerReady() {
     });
   }
   await ensureProfessorCodeManagerReadyPromise;
+}
+
+async function ensureDepAdminManagerReady() {
+  if (!ensureDepAdminManagerReadyPromise) {
+    ensureDepAdminManagerReadyPromise = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS course_dep_admin_assignments (
+          id BIGSERIAL PRIMARY KEY,
+          course_code TEXT,
+          course_name TEXT NOT NULL UNIQUE,
+          depadmin_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          assigned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_depadmin_uid_idx
+          ON course_dep_admin_assignments(depadmin_uid, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_course_code_idx
+          ON course_dep_admin_assignments(course_code);
+      `);
+    })().catch((error) => {
+      ensureDepAdminManagerReadyPromise = null;
+      throw error;
+    });
+  }
+  await ensureDepAdminManagerReadyPromise;
 }
 
 async function recordDisciplinaryAction({
@@ -904,6 +932,131 @@ function normalizeUidList(values = [], maxCount = CUSTOM_NOTIFICATION_MAX_RECIPI
   return deduped;
 }
 
+function mapDepAdminAccountRow(row) {
+  if (!row) return null;
+  return {
+    uid: row.uid,
+    email: row.email || '',
+    username: row.username || '',
+    displayName: row.display_name || '',
+    course: row.course || '',
+    role: row.platform_role || 'member',
+    isBanned: row.is_banned === true,
+  };
+}
+
+async function resolveCanonicalCourse(value, client = pool) {
+  const courseQuery = sanitizeText(value, 160);
+  if (!courseQuery) return null;
+  const result = await client.query(
+    `SELECT course_code, course_name
+     FROM courses
+     WHERE lower(course_name) = lower($1)
+        OR lower(course_code) = lower($1)
+     ORDER BY CASE WHEN lower(course_name) = lower($1) THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [courseQuery]
+  );
+  if (!result.rows.length) return null;
+  return {
+    courseCode: result.rows[0].course_code || null,
+    courseName: result.rows[0].course_name || '',
+  };
+}
+
+async function resolveDepAdminAccount(accountQuery, client = pool) {
+  const query = sanitizeText(accountQuery, 200);
+  if (!query) {
+    return { account: null, ambiguous: false, candidates: [] };
+  }
+
+  const exactResult = await client.query(
+    `SELECT
+       a.uid,
+       a.email,
+       a.username,
+       COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+       a.course,
+       COALESCE(a.platform_role, 'member') AS platform_role,
+       COALESCE(a.is_banned, false) AS is_banned
+     FROM accounts a
+     LEFT JOIN profiles p ON p.uid = a.uid
+     WHERE lower(a.uid) = lower($1)
+        OR lower(a.email) = lower($1)
+        OR lower(COALESCE(a.username, '')) = lower($1)
+     ORDER BY a.datecreated DESC
+     LIMIT 6`,
+    [query]
+  );
+  if (exactResult.rows.length === 1) {
+    return { account: mapDepAdminAccountRow(exactResult.rows[0]), ambiguous: false, candidates: [] };
+  }
+  if (exactResult.rows.length > 1) {
+    return {
+      account: null,
+      ambiguous: true,
+      candidates: exactResult.rows.map(mapDepAdminAccountRow).filter(Boolean),
+    };
+  }
+
+  const fuzzyResult = await client.query(
+    `SELECT
+       a.uid,
+       a.email,
+       a.username,
+       COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+       a.course,
+       COALESCE(a.platform_role, 'member') AS platform_role,
+       COALESCE(a.is_banned, false) AS is_banned
+     FROM accounts a
+     LEFT JOIN profiles p ON p.uid = a.uid
+     WHERE (
+       a.uid ILIKE $1
+       OR a.email ILIKE $1
+       OR COALESCE(a.username, '') ILIKE $1
+       OR COALESCE(p.display_name, a.display_name, '') ILIKE $1
+     )
+     ORDER BY a.datecreated DESC
+     LIMIT 6`,
+    [`%${query}%`]
+  );
+
+  if (fuzzyResult.rows.length === 1) {
+    return { account: mapDepAdminAccountRow(fuzzyResult.rows[0]), ambiguous: false, candidates: [] };
+  }
+  if (fuzzyResult.rows.length > 1) {
+    return {
+      account: null,
+      ambiguous: true,
+      candidates: fuzzyResult.rows.map(mapDepAdminAccountRow).filter(Boolean),
+    };
+  }
+
+  return { account: null, ambiguous: false, candidates: [] };
+}
+
+async function maybeDowngradeDepAdminAfterUnassign(uid, client = pool) {
+  const targetUid = sanitizeText(uid, 120);
+  if (!targetUid) return;
+
+  const assignmentCountResult = await client.query(
+    `SELECT COUNT(*)::int AS total
+     FROM course_dep_admin_assignments
+     WHERE depadmin_uid = $1`,
+    [targetUid]
+  );
+  const total = Number(assignmentCountResult.rows[0] ? assignmentCountResult.rows[0].total : 0);
+  if (total > 0) return;
+
+  await client.query(
+    `UPDATE accounts
+     SET platform_role = 'professor'
+     WHERE uid = $1
+       AND COALESCE(platform_role, 'member') = 'depadmin'`,
+    [targetUid]
+  );
+}
+
 async function resolveCustomNotificationRecipients({
   mode,
   uids = [],
@@ -1493,6 +1646,7 @@ router.use('/api/admin', async (req, res, next) => {
     await ensureAuditReady();
     await ensureGovernanceReady();
     await ensureProfessorCodeManagerReady();
+    await ensureDepAdminManagerReady();
     const viewer = await getViewer(req.user.uid);
     if (!viewer) {
       return res.status(401).json({ ok: false, message: 'Unauthorized.' });
@@ -3196,6 +3350,372 @@ router.post('/api/admin/professor-codes/:id/reactivate', async (req, res) => {
   }
 });
 
+router.get('/api/admin/dep-admin/assignments', async (req, res) => {
+  const query = sanitizeText(req.query.q, 200);
+  const courseFilter = sanitizeText(req.query.course, 160);
+
+  try {
+    const coursesResult = await pool.query(
+      `SELECT course_code, course_name
+       FROM courses
+       ORDER BY lower(course_name) ASC, id ASC`
+    );
+
+    const where = [];
+    const params = [];
+    if (courseFilter) {
+      params.push(courseFilter);
+      where.push(
+        `(lower(cda.course_name) = lower($${params.length})
+          OR lower(COALESCE(cda.course_code, '')) = lower($${params.length}))`
+      );
+    }
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(cda.course_name ILIKE $${params.length}
+          OR COALESCE(cda.course_code, '') ILIKE $${params.length}
+          OR cda.depadmin_uid ILIKE $${params.length}
+          OR COALESCE(da.username, '') ILIKE $${params.length}
+          OR da.email ILIKE $${params.length}
+          OR COALESCE(dp.display_name, da.display_name, '') ILIKE $${params.length})`
+      );
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const assignmentsResult = await pool.query(
+      `SELECT
+         cda.id,
+         cda.course_code,
+         cda.course_name,
+         cda.depadmin_uid,
+         cda.assigned_by_uid,
+         cda.created_at,
+         cda.updated_at,
+         COALESCE(dp.display_name, da.display_name, da.username, da.email) AS depadmin_name,
+         da.email AS depadmin_email,
+         da.username AS depadmin_username,
+         COALESCE(da.platform_role, 'member') AS depadmin_role,
+         COALESCE(da.course, '') AS depadmin_course,
+         COALESCE(da.is_banned, false) AS depadmin_is_banned,
+         COALESCE(ap.display_name, aa.display_name, aa.username, aa.email) AS assigned_by_name
+       FROM course_dep_admin_assignments cda
+       JOIN accounts da ON da.uid = cda.depadmin_uid
+       LEFT JOIN profiles dp ON dp.uid = da.uid
+       LEFT JOIN accounts aa ON aa.uid = cda.assigned_by_uid
+       LEFT JOIN profiles ap ON ap.uid = aa.uid
+       ${whereClause}
+       ORDER BY lower(cda.course_name) ASC, cda.id ASC`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      courses: coursesResult.rows.map((row) => ({
+        courseCode: row.course_code || null,
+        courseName: row.course_name || '',
+      })),
+      assignments: assignmentsResult.rows.map((row) => ({
+        id: Number(row.id),
+        courseCode: row.course_code || null,
+        courseName: row.course_name || '',
+        depAdminUid: row.depadmin_uid || '',
+        depAdminName: row.depadmin_name || row.depadmin_uid || '',
+        depAdminEmail: row.depadmin_email || '',
+        depAdminUsername: row.depadmin_username || '',
+        depAdminRole: row.depadmin_role || 'member',
+        depAdminCourse: row.depadmin_course || '',
+        depAdminIsBanned: row.depadmin_is_banned === true,
+        assignedByUid: row.assigned_by_uid || null,
+        assignedByName: row.assigned_by_name || null,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+      })),
+    });
+  } catch (error) {
+    console.error('DepAdmin assignments fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load DepAdmin assignments.' });
+  }
+});
+
+router.get('/api/admin/dep-admin/candidates', async (req, res) => {
+  const query = sanitizeText(req.query.q, 200);
+  const courseFilter = sanitizeText(req.query.course, 160);
+
+  if (!query || query.length < 2) {
+    return res.json({ ok: true, candidates: [] });
+  }
+
+  try {
+    let canonicalCourse = null;
+    if (courseFilter) {
+      canonicalCourse = await resolveCanonicalCourse(courseFilter);
+      if (!canonicalCourse) {
+        return res.status(400).json({ ok: false, message: 'Course filter does not match an existing course.' });
+      }
+    }
+
+    const params = [`%${query}%`];
+    const where = [
+      `COALESCE(a.platform_role, 'member') <> 'owner'`,
+      `COALESCE(a.platform_role, 'member') <> 'admin'`,
+      `(
+        a.uid ILIKE $1
+        OR a.email ILIKE $1
+        OR COALESCE(a.username, '') ILIKE $1
+        OR COALESCE(p.display_name, a.display_name, '') ILIKE $1
+      )`,
+    ];
+    if (canonicalCourse && canonicalCourse.courseName) {
+      params.push(canonicalCourse.courseName);
+      where.push(`lower(COALESCE(a.course, '')) = lower($${params.length})`);
+    }
+
+    const result = await pool.query(
+      `SELECT
+         a.uid,
+         a.email,
+         a.username,
+         COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+         COALESCE(a.course, '') AS course,
+         COALESCE(a.platform_role, 'member') AS platform_role,
+         COALESCE(a.is_banned, false) AS is_banned,
+         COALESCE((
+           SELECT array_agg(cda.course_name ORDER BY cda.course_name)
+           FROM course_dep_admin_assignments cda
+           WHERE cda.depadmin_uid = a.uid
+         ), ARRAY[]::text[]) AS assigned_courses
+       FROM accounts a
+       LEFT JOIN profiles p ON p.uid = a.uid
+       WHERE ${where.join(' AND ')}
+       ORDER BY
+         CASE WHEN COALESCE(a.platform_role, 'member') = 'depadmin' THEN 0 ELSE 1 END,
+         lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) ASC
+       LIMIT 30`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      candidates: result.rows.map((row) => ({
+        uid: row.uid,
+        email: row.email || '',
+        username: row.username || '',
+        displayName: row.display_name || '',
+        course: row.course || '',
+        role: row.platform_role || 'member',
+        isBanned: row.is_banned === true,
+        assignedCourses: Array.isArray(row.assigned_courses) ? row.assigned_courses : [],
+      })),
+    });
+  } catch (error) {
+    console.error('DepAdmin candidate search failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to search DepAdmin candidates.' });
+  }
+});
+
+router.post('/api/admin/dep-admin/assignments', async (req, res) => {
+  const courseInput = sanitizeText(req.body && req.body.courseName, 160);
+  const accountQueryInput = sanitizeText(req.body && req.body.accountQuery, 200);
+  const targetUidInput = sanitizeText(req.body && req.body.targetUid, 120);
+
+  if (!courseInput) {
+    return res.status(400).json({ ok: false, message: 'Course is required.' });
+  }
+  if (!accountQueryInput && !targetUidInput) {
+    return res.status(400).json({ ok: false, message: 'Target account is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const course = await resolveCanonicalCourse(courseInput, client);
+    if (!course) {
+      return res.status(400).json({ ok: false, message: 'Course does not exist.' });
+    }
+
+    let targetAccount = null;
+    if (targetUidInput) {
+      const targetResult = await client.query(
+        `SELECT
+           a.uid,
+           a.email,
+           a.username,
+           COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+           a.course,
+           COALESCE(a.platform_role, 'member') AS platform_role,
+           COALESCE(a.is_banned, false) AS is_banned
+         FROM accounts a
+         LEFT JOIN profiles p ON p.uid = a.uid
+         WHERE a.uid = $1
+         LIMIT 1`,
+        [targetUidInput]
+      );
+      targetAccount = targetResult.rows[0] ? mapDepAdminAccountRow(targetResult.rows[0]) : null;
+      if (!targetAccount) {
+        return res.status(404).json({ ok: false, message: 'Target account not found.' });
+      }
+    } else {
+      const resolved = await resolveDepAdminAccount(accountQueryInput, client);
+      if (resolved.ambiguous) {
+        return res.status(409).json({
+          ok: false,
+          message: 'Multiple accounts match this query. Use a more specific UID/username/email.',
+          candidates: resolved.candidates || [],
+        });
+      }
+      targetAccount = resolved.account;
+      if (!targetAccount) {
+        return res.status(404).json({ ok: false, message: 'Target account not found.' });
+      }
+    }
+
+    if (targetAccount.isBanned) {
+      return res.status(400).json({ ok: false, message: 'Cannot assign a banned account as DepAdmin.' });
+    }
+    if (targetAccount.role === 'owner' || targetAccount.role === 'admin') {
+      return res.status(400).json({ ok: false, message: 'Owner/Admin accounts do not need DepAdmin assignment.' });
+    }
+    const targetAccountCourseRaw = sanitizeText(targetAccount.course, 160);
+    const targetCanonicalCourse = targetAccountCourseRaw
+      ? await resolveCanonicalCourse(targetAccountCourseRaw, client)
+      : null;
+    const courseMatches = targetCanonicalCourse
+      ? targetCanonicalCourse.courseName.toLowerCase() === course.courseName.toLowerCase()
+      : (
+        targetAccountCourseRaw &&
+        (
+          targetAccountCourseRaw.toLowerCase() === course.courseName.toLowerCase() ||
+          (course.courseCode && targetAccountCourseRaw.toLowerCase() === String(course.courseCode).toLowerCase())
+        )
+      );
+    if (!courseMatches) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Target account must belong to the selected course.',
+      });
+    }
+
+    await client.query('BEGIN');
+    const previousAssignmentResult = await client.query(
+      `SELECT id, depadmin_uid
+       FROM course_dep_admin_assignments
+       WHERE course_name = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [course.courseName]
+    );
+    const previousDepAdminUid = previousAssignmentResult.rows[0]
+      ? previousAssignmentResult.rows[0].depadmin_uid
+      : null;
+
+    await client.query(
+      `UPDATE accounts
+       SET platform_role = 'depadmin'
+       WHERE uid = $1
+         AND COALESCE(platform_role, 'member') NOT IN ('owner', 'admin')`,
+      [targetAccount.uid]
+    );
+
+    const upsertResult = await client.query(
+      `INSERT INTO course_dep_admin_assignments
+         (course_code, course_name, depadmin_uid, assigned_by_uid, created_at, updated_at)
+       VALUES
+         ($1, $2, $3, $4, NOW(), NOW())
+       ON CONFLICT (course_name)
+       DO UPDATE
+         SET course_code = EXCLUDED.course_code,
+             depadmin_uid = EXCLUDED.depadmin_uid,
+             assigned_by_uid = EXCLUDED.assigned_by_uid,
+             updated_at = NOW()
+       RETURNING id, course_code, course_name, depadmin_uid, assigned_by_uid, created_at, updated_at`,
+      [course.courseCode || null, course.courseName, targetAccount.uid, req.adminViewer.uid]
+    );
+
+    if (previousDepAdminUid && previousDepAdminUid !== targetAccount.uid) {
+      await maybeDowngradeDepAdminAfterUnassign(previousDepAdminUid, client);
+    }
+
+    await client.query('COMMIT');
+
+    const assignment = upsertResult.rows[0];
+    return res.status(201).json({
+      ok: true,
+      message: `DepAdmin assigned for ${course.courseName}.`,
+      assignment: {
+        id: Number(assignment.id),
+        courseCode: assignment.course_code || null,
+        courseName: assignment.course_name || '',
+        depAdminUid: assignment.depadmin_uid || '',
+        depAdminName: targetAccount.displayName || targetAccount.uid,
+        depAdminEmail: targetAccount.email || '',
+        depAdminUsername: targetAccount.username || '',
+        assignedByUid: assignment.assigned_by_uid || null,
+        createdAt: assignment.created_at || null,
+        updatedAt: assignment.updated_at || null,
+      },
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // ignore rollback error, original error is more useful
+    }
+    console.error('DepAdmin assignment failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to assign DepAdmin.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/api/admin/dep-admin/assignments/:id', async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ ok: false, message: 'Invalid assignment id.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existingResult = await client.query(
+      `SELECT id, course_name, depadmin_uid
+       FROM course_dep_admin_assignments
+       WHERE id = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [id]
+    );
+    if (!existingResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'DepAdmin assignment not found.' });
+    }
+    const existing = existingResult.rows[0];
+
+    await client.query(
+      `DELETE FROM course_dep_admin_assignments
+       WHERE id = $1`,
+      [id]
+    );
+
+    await maybeDowngradeDepAdminAfterUnassign(existing.depadmin_uid, client);
+    await client.query('COMMIT');
+
+    return res.json({
+      ok: true,
+      message: `DepAdmin assignment removed for ${existing.course_name || 'course'}.`,
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // ignore rollback error
+    }
+    console.error('DepAdmin assignment delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to remove DepAdmin assignment.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.get('/api/admin/accounts', async (req, res) => {
   const { page, pageSize, offset } = parsePagination(req, 30, 120);
   const requestedRole = sanitizeText(req.query.role, 30).toLowerCase();
@@ -3208,7 +3728,7 @@ router.get('/api/admin/accounts', async (req, res) => {
     const where = [];
     const params = [];
 
-    if (role && ['owner', 'admin', 'professor', 'member'].includes(role)) {
+    if (role && ['owner', 'admin', 'depadmin', 'professor', 'member'].includes(role)) {
       params.push(role);
       where.push(`COALESCE(a.platform_role, 'member') = $${params.length}`);
     }
@@ -3342,8 +3862,8 @@ router.patch('/api/admin/accounts/:uid/role', async (req, res) => {
   if (!targetUid) {
     return res.status(400).json({ ok: false, message: 'Invalid target user.' });
   }
-  if (!['member', 'admin', 'professor'].includes(role)) {
-    return res.status(400).json({ ok: false, message: 'Role must be member, professor, or admin.' });
+  if (!['member', 'admin', 'depadmin', 'professor'].includes(role)) {
+    return res.status(400).json({ ok: false, message: 'Role must be member, professor, depadmin, or admin.' });
   }
   if (req.adminViewer.platform_role !== 'owner') {
     return res.status(403).json({ ok: false, message: 'Only owner can change platform roles.' });
@@ -3373,6 +3893,13 @@ router.patch('/api/admin/accounts/:uid/role', async (req, res) => {
        WHERE uid = $2`,
       [role, targetUid]
     );
+    if (role !== 'depadmin') {
+      await pool.query(
+        `DELETE FROM course_dep_admin_assignments
+         WHERE depadmin_uid = $1`,
+        [targetUid]
+      );
+    }
 
     return res.json({ ok: true, message: `Role updated to ${role}.` });
   } catch (error) {

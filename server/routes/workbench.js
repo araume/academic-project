@@ -274,7 +274,7 @@ function deriveBoardAiActionsFromMessage({ message, canCreateNodes }) {
   if (wantsCreate) {
     const title = extractBoardCreateTitleFromMessage(text);
     if (title) {
-      const visibility = /\b(members?|shared|team|everyone|all members|workbench members)\b/i.test(text)
+      const visibility = /\b(members?|shared|team|everyone|all members|repository members)\b/i.test(text)
         ? 'members'
         : 'private';
       actions.push({
@@ -570,7 +570,7 @@ async function executeBoardAiActions({
   const list = Array.isArray(nodes) ? nodes.map((node) => ({ ...node })) : [];
 
   if (!canCreateNodes) {
-    skippedActions.push({ reason: 'You do not have permission to create or place nodes in this workbench.' });
+    skippedActions.push({ reason: 'You do not have permission to create or place nodes in this repository.' });
     return { executedActions, skippedActions };
   }
 
@@ -737,7 +737,7 @@ async function planBoardAiActions({
     .join('\n');
 
   const plannerPrompt = [
-    'You are the Workbench MCP action planner.',
+    'You are the Repository MCP action planner.',
     'Decide if the user is requesting board mutations.',
     'Allowed actions:',
     '1) create_markdown_file',
@@ -748,7 +748,7 @@ async function planBoardAiActions({
     'Return JSON only with this shape:',
     '{"assistantMessage":"...","actions":[...]}',
     '',
-    `Workbench title: ${workbench && workbench.title ? workbench.title : 'Untitled workbench'}`,
+    `Repository title: ${workbench && workbench.title ? workbench.title : 'Untitled repository'}`,
     `Course: ${workbench && workbench.course ? workbench.course : 'Unknown course'}`,
     `Can mutate nodes: ${canCreateNodes ? 'yes' : 'no'}`,
     '',
@@ -1259,7 +1259,7 @@ function computeWorkbenchPermissions({
   const canCreateTasks = canEditWorkbench || isMember || isProfessorScoped;
   const canManageTasks = canEditWorkbench || isProfessorScoped;
   const canTransferOwnership = isGlobalAdmin || isOwner;
-  const canReviewRequests = isGlobalAdmin || role === 'professor';
+  const canReviewRequests = isGlobalAdmin || role === 'professor' || role === 'depadmin';
 
   return {
     role,
@@ -1509,11 +1509,11 @@ async function ensureWorkbenchDirectoryAccess(req, res, workbenchId, client = po
   if (!viewer) return null;
   const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
   if (!access) {
-    res.status(404).json({ ok: false, message: 'Workbench not found.' });
+    res.status(404).json({ ok: false, message: 'Repository not found.' });
     return null;
   }
   if (!access.permissions.canView) {
-    res.status(403).json({ ok: false, message: 'You do not have access to this workbench.' });
+    res.status(403).json({ ok: false, message: 'You do not have access to this repository.' });
     return null;
   }
   const roots = await ensureWorkbenchRootStructure(workbenchId, viewer.uid, client);
@@ -1801,14 +1801,14 @@ router.use(['/api/workbench', '/api/tasks'], async (req, res, next) => {
     await ensureWorkbenchReady();
     return next();
   } catch (error) {
-    console.error('Workbench bootstrap failed:', error);
+    console.error('Repository bootstrap failed:', error);
     return res.status(500).json({ ok: false, message: 'Collaboration service not available.' });
   }
 });
 
 router.use('/api/workbench', (req, res, next) => {
   if (!isWorkbenchEnabled()) {
-    return res.status(404).json({ ok: false, message: 'Workbench feature is disabled.' });
+    return res.status(404).json({ ok: false, message: 'Repository feature is disabled.' });
   }
   return next();
 });
@@ -1919,8 +1919,8 @@ router.get('/api/workbench', async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error('Workbench list failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to load workbenches.' });
+    console.error('Repository list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load repositories.' });
   }
 });
 
@@ -1977,8 +1977,8 @@ router.post('/api/workbench/requests', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench request create failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to create workbench request.' });
+    console.error('Repository request create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to create repository request.' });
   }
 });
 
@@ -1987,8 +1987,8 @@ router.get('/api/workbench/requests', async (req, res) => {
     const viewer = await ensureViewerOrReject(req, res);
     if (!viewer) return;
     const role = getPlatformRole(viewer);
-    if (!(role === 'owner' || role === 'admin' || role === 'professor')) {
-      return res.status(403).json({ ok: false, message: 'Only owner/admin/professor can review requests.' });
+    if (!(role === 'owner' || role === 'admin' || role === 'professor' || role === 'depadmin')) {
+      return res.status(403).json({ ok: false, message: 'Only owner/admin/depadmin/professor can review requests.' });
     }
 
     const status = sanitizeText(req.query.status, 30).toLowerCase();
@@ -2004,7 +2004,7 @@ router.get('/api/workbench/requests', async (req, res) => {
       params.push(course);
       where.push(`wr.course = $${params.length}`);
     }
-    if (role === 'professor') {
+    if (role === 'professor' || role === 'depadmin') {
       params.push(viewer.course || '');
       where.push(`lower(wr.course) = lower($${params.length})`);
     }
@@ -2058,8 +2058,8 @@ router.get('/api/workbench/requests', async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error('Workbench requests list failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to load workbench requests.' });
+    console.error('Repository requests list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load repository requests.' });
   }
 });
 
@@ -2079,8 +2079,8 @@ router.post('/api/workbench/requests/:id/review', async (req, res) => {
     const viewer = await ensureViewerOrReject(req, res, client);
     if (!viewer) return;
     const role = getPlatformRole(viewer);
-    if (!(role === 'owner' || role === 'admin' || role === 'professor')) {
-      return res.status(403).json({ ok: false, message: 'Only owner/admin/professor can review requests.' });
+    if (!(role === 'owner' || role === 'admin' || role === 'professor' || role === 'depadmin')) {
+      return res.status(403).json({ ok: false, message: 'Only owner/admin/depadmin/professor can review requests.' });
     }
 
     await client.query('BEGIN');
@@ -2101,9 +2101,9 @@ router.post('/api/workbench/requests/:id/review', async (req, res) => {
       return res.status(409).json({ ok: false, message: 'Request is already reviewed.' });
     }
 
-    if (role === 'professor' && !sameCourse(viewer.course, requestRow.course)) {
+    if ((role === 'professor' || role === 'depadmin') && !sameCourse(viewer.course, requestRow.course)) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ ok: false, message: 'Professors can only review requests in their own course.' });
+      return res.status(403).json({ ok: false, message: 'Professors and DepAdmins can only review requests in their own course.' });
     }
 
     let createdWorkbenchId = null;
@@ -2157,8 +2157,8 @@ router.post('/api/workbench/requests/:id/review', async (req, res) => {
     } catch (_rollbackError) {
       // ignore rollback errors
     }
-    console.error('Workbench request review failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to review workbench request.' });
+    console.error('Repository request review failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to review repository request.' });
   } finally {
     client.release();
   }
@@ -2169,7 +2169,7 @@ router.post('/api/workbench', async (req, res) => {
     const viewer = await ensureViewerOrReject(req, res);
     if (!viewer) return;
     if (!hasProfessorPrivileges(viewer)) {
-      return res.status(403).json({ ok: false, message: 'Members must request workbench creation for approval.' });
+      return res.status(403).json({ ok: false, message: 'Members must request repository creation for approval.' });
     }
 
     const title = sanitizeText(req.body && req.body.title, 200);
@@ -2230,15 +2230,15 @@ router.post('/api/workbench', async (req, res) => {
       client.release();
     }
   } catch (error) {
-    console.error('Workbench create failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to create workbench.' });
+    console.error('Repository create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to create repository.' });
   }
 });
 
 router.post('/api/workbench/:id/join', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
 
   const client = await pool.connect();
@@ -2247,10 +2247,10 @@ router.post('/api/workbench/:id/join', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canJoin) {
-      return res.status(403).json({ ok: false, message: 'Only open workbench in your course can be joined directly.' });
+      return res.status(403).json({ ok: false, message: 'Only open repository in your course can be joined directly.' });
     }
 
     await client.query(
@@ -2262,10 +2262,10 @@ router.post('/api/workbench/:id/join', async (req, res) => {
        DO UPDATE SET state = 'active', role = CASE WHEN workbench_members.role = 'owner' THEN 'owner' ELSE 'member' END, joined_at = NOW(), updated_at = NOW()`,
       [workbenchId, viewer.uid]
     );
-    return res.json({ ok: true, message: 'Joined workbench.' });
+    return res.json({ ok: true, message: 'Joined repository.' });
   } catch (error) {
-    console.error('Workbench join failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to join workbench.' });
+    console.error('Repository join failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to join repository.' });
   } finally {
     client.release();
   }
@@ -2274,7 +2274,7 @@ router.post('/api/workbench/:id/join', async (req, res) => {
 router.get('/api/workbench/:id', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
 
   try {
@@ -2282,10 +2282,10 @@ router.get('/api/workbench/:id', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canView) {
-      return res.status(403).json({ ok: false, message: 'You do not have access to this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You do not have access to this repository.' });
     }
 
     const roots = await ensureWorkbenchRootStructure(workbenchId, viewer.uid);
@@ -2512,25 +2512,25 @@ router.get('/api/workbench/:id', async (req, res) => {
         : null,
     });
   } catch (error) {
-    console.error('Workbench details failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to load workbench details.' });
+    console.error('Repository details failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load repository details.' });
   }
 });
 
 router.patch('/api/workbench/:id', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   try {
     const viewer = await ensureViewerOrReject(req, res);
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canEditWorkbench) {
-      return res.status(403).json({ ok: false, message: 'You cannot edit this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot edit this repository.' });
     }
 
     const title = sanitizeText(req.body && req.body.title, 200);
@@ -2583,8 +2583,8 @@ router.patch('/api/workbench/:id', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench patch failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to update workbench.' });
+    console.error('Repository patch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update repository.' });
   }
 });
 
@@ -2592,7 +2592,7 @@ router.get('/api/workbench/:id/member-candidates', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   const query = sanitizeText(req.query && req.query.q, 160);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   if (query.length < 2) {
     return res.json({ ok: true, candidates: [] });
@@ -2604,10 +2604,10 @@ router.get('/api/workbench/:id/member-candidates', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canManageMembers) {
-      return res.status(403).json({ ok: false, message: 'You cannot manage members in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot manage members in this repository.' });
     }
 
     const workbenchCourse = sanitizeText(access.workbench && access.workbench.course, 160);
@@ -2665,7 +2665,7 @@ router.get('/api/workbench/:id/member-candidates', async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error('Workbench member candidate search failed:', error);
+    console.error('Repository member candidate search failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to search users.' });
   } finally {
     client.release();
@@ -2677,7 +2677,7 @@ router.post('/api/workbench/:id/members', async (req, res) => {
   const targetUid = sanitizeText(req.body && req.body.uid, 120);
   const role = sanitizeText(req.body && req.body.role, 20).toLowerCase();
   if (!workbenchId || !targetUid) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench or target user.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository or target user.' });
   }
   if (!['manager', 'member', 'viewer'].includes(role)) {
     return res.status(400).json({ ok: false, message: 'Role must be manager, member, or viewer.' });
@@ -2689,10 +2689,10 @@ router.post('/api/workbench/:id/members', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canManageMembers) {
-      return res.status(403).json({ ok: false, message: 'You cannot manage members in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot manage members in this repository.' });
     }
 
     const targetResult = await client.query(
@@ -2706,10 +2706,10 @@ router.post('/api/workbench/:id/members', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Target account not found.' });
     }
     if (targetResult.rows[0].is_banned === true) {
-      return res.status(400).json({ ok: false, message: 'Banned accounts cannot be added to workbench.' });
+      return res.status(400).json({ ok: false, message: 'Banned accounts cannot be added to repository.' });
     }
     if (!sameCourse(targetResult.rows[0].course, access.workbench.course) && !access.permissions.isGlobalAdmin) {
-      return res.status(403).json({ ok: false, message: 'Target user must be in the same course as the workbench.' });
+      return res.status(403).json({ ok: false, message: 'Target user must be in the same course as the repository.' });
     }
 
     await client.query(
@@ -2721,10 +2721,10 @@ router.post('/api/workbench/:id/members', async (req, res) => {
        DO UPDATE SET role = EXCLUDED.role, state = 'active', invited_by_uid = EXCLUDED.invited_by_uid, updated_at = NOW()`,
       [workbenchId, targetUid, role, viewer.uid]
     );
-    return res.json({ ok: true, message: 'Workbench member updated.' });
+    return res.json({ ok: true, message: 'Repository member updated.' });
   } catch (error) {
-    console.error('Workbench add member failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to update workbench member.' });
+    console.error('Repository add member failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update repository member.' });
   } finally {
     client.release();
   }
@@ -2736,7 +2736,7 @@ router.patch('/api/workbench/:id/members/:uid', async (req, res) => {
   const state = sanitizeText(req.body && req.body.state, 20).toLowerCase();
   const role = sanitizeText(req.body && req.body.role, 20).toLowerCase();
   if (!workbenchId || !targetUid) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench/member.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository/member.' });
   }
 
   try {
@@ -2744,10 +2744,10 @@ router.patch('/api/workbench/:id/members/:uid', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canManageMembers) {
-      return res.status(403).json({ ok: false, message: 'You cannot manage members in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot manage members in this repository.' });
     }
     if (targetUid === access.workbench.owner_uid && state === 'removed') {
       return res.status(400).json({ ok: false, message: 'Owner cannot be removed via member patch.' });
@@ -2777,19 +2777,19 @@ router.patch('/api/workbench/:id/members/:uid', async (req, res) => {
       params
     );
     if (!result.rows.length) {
-      return res.status(404).json({ ok: false, message: 'Member not found in this workbench.' });
+      return res.status(404).json({ ok: false, message: 'Member not found in this repository.' });
     }
-    return res.json({ ok: true, message: 'Workbench member updated.' });
+    return res.json({ ok: true, message: 'Repository member updated.' });
   } catch (error) {
-    console.error('Workbench patch member failed:', error);
-    return res.status(500).json({ ok: false, message: 'Unable to update workbench member.' });
+    console.error('Repository patch member failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update repository member.' });
   }
 });
 
 router.get('/api/workbench/:id/directory', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
 
   const client = await pool.connect();
@@ -2856,7 +2856,7 @@ router.get('/api/workbench/:id/directory', async (req, res) => {
       children: childrenResult.rows.map((row) => mapDirectoryNodePayload(row)),
     });
   } catch (error) {
-    console.error('Workbench directory list failed:', error);
+    console.error('Repository directory list failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load directory.' });
   } finally {
     client.release();
@@ -2866,7 +2866,7 @@ router.get('/api/workbench/:id/directory', async (req, res) => {
 router.post('/api/workbench/:id/directory', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
 
   const client = await pool.connect();
@@ -2875,7 +2875,7 @@ router.post('/api/workbench/:id/directory', async (req, res) => {
     if (!auth) return;
     const { viewer, access, roots } = auth;
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot create files or folders in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot create files or folders in this repository.' });
     }
 
     const nodeType = normalizeWorkbenchNodeType(req.body && req.body.type);
@@ -2916,7 +2916,7 @@ router.post('/api/workbench/:id/directory', async (req, res) => {
       node: mapDirectoryNodePayload(result.rows[0]),
     });
   } catch (error) {
-    console.error('Workbench directory create failed:', error);
+    console.error('Repository directory create failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to create directory item.' });
   } finally {
     client.release();
@@ -2937,7 +2937,7 @@ router.post('/api/workbench/:id/directory/:nodeId/move', async (req, res) => {
     if (!auth) return;
     const { viewer, access, roots } = auth;
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot move items in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot move items in this repository.' });
     }
 
     const node = await getWorkbenchNodeById(workbenchId, nodeId, client);
@@ -2992,7 +2992,7 @@ router.post('/api/workbench/:id/directory/:nodeId/move', async (req, res) => {
     );
     return res.json({ ok: true, message: 'Item moved.' });
   } catch (error) {
-    console.error('Workbench directory move failed:', error);
+    console.error('Repository directory move failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to move item.' });
   } finally {
     client.release();
@@ -3013,7 +3013,7 @@ router.post('/api/workbench/:id/directory/:nodeId/copy', async (req, res) => {
     if (!auth) return;
     const { viewer, access, roots } = auth;
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot copy items in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot copy items in this repository.' });
     }
 
     const sourceNode = await getWorkbenchNodeById(workbenchId, nodeId, client);
@@ -3104,7 +3104,7 @@ router.post('/api/workbench/:id/directory/:nodeId/copy', async (req, res) => {
       message: 'Item copied.',
     });
   } catch (error) {
-    console.error('Workbench directory copy failed:', error);
+    console.error('Repository directory copy failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to copy item.' });
   } finally {
     client.release();
@@ -3124,7 +3124,7 @@ router.post('/api/workbench/:id/directory/:nodeId/trash', async (req, res) => {
     if (!auth) return;
     const { viewer, access, roots } = auth;
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot delete items in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot delete items in this repository.' });
     }
 
     const node = await getWorkbenchNodeById(workbenchId, nodeId, client);
@@ -3161,7 +3161,7 @@ router.post('/api/workbench/:id/directory/:nodeId/trash', async (req, res) => {
     );
     return res.json({ ok: true, message: 'Item moved to recycle-bin.' });
   } catch (error) {
-    console.error('Workbench directory trash failed:', error);
+    console.error('Repository directory trash failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to move item to recycle-bin.' });
   } finally {
     client.release();
@@ -3181,7 +3181,7 @@ router.post('/api/workbench/:id/directory/:nodeId/restore', async (req, res) => 
     if (!auth) return;
     const { viewer, access, roots } = auth;
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot restore items in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot restore items in this repository.' });
     }
 
     const node = await getWorkbenchNodeById(workbenchId, nodeId, client);
@@ -3230,7 +3230,7 @@ router.post('/api/workbench/:id/directory/:nodeId/restore', async (req, res) => 
 
     return res.json({ ok: true, message: 'Item restored.' });
   } catch (error) {
-    console.error('Workbench directory restore failed:', error);
+    console.error('Repository directory restore failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to restore item.' });
   } finally {
     client.release();
@@ -3289,7 +3289,7 @@ router.delete('/api/workbench/:id/directory/:nodeId/permanent', async (req, res)
       message: 'Item permanently deleted.',
     });
   } catch (error) {
-    console.error('Workbench directory permanent delete failed:', error);
+    console.error('Repository directory permanent delete failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to permanently delete item.' });
   } finally {
     client.release();
@@ -3348,7 +3348,7 @@ router.get('/api/workbench/:id/directory/:nodeId/properties', async (req, res) =
       },
     });
   } catch (error) {
-    console.error('Workbench directory properties failed:', error);
+    console.error('Repository directory properties failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load item properties.' });
   } finally {
     client.release();
@@ -3419,7 +3419,7 @@ router.patch('/api/workbench/:id/directory/:nodeId/visibility', async (req, res)
       message: 'Visibility updated.',
     });
   } catch (error) {
-    console.error('Workbench directory visibility failed:', error);
+    console.error('Repository directory visibility failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to update visibility.' });
   } finally {
     client.release();
@@ -3468,7 +3468,7 @@ router.post('/api/workbench/:id/directory/:nodeId/share', async (req, res) => {
       shareLink,
     });
   } catch (error) {
-    console.error('Workbench directory share failed:', error);
+    console.error('Repository directory share failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to generate share link.' });
   } finally {
     client.release();
@@ -3506,7 +3506,7 @@ router.get('/api/workbench/:id/directory/shared/:token', async (req, res) => {
       path,
     });
   } catch (error) {
-    console.error('Workbench shared file fetch failed:', error);
+    console.error('Repository shared file fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load shared file.' });
   } finally {
     client.release();
@@ -3516,17 +3516,17 @@ router.get('/api/workbench/:id/directory/shared/:token', async (req, res) => {
 router.post('/api/workbench/:id/nodes', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   try {
     const viewer = await ensureViewerOrReject(req, res);
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot create nodes in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot create nodes in this repository.' });
     }
     const roots = await ensureWorkbenchRootStructure(workbenchId, viewer.uid);
 
@@ -3592,7 +3592,7 @@ router.post('/api/workbench/:id/nodes', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench node create failed:', error);
+    console.error('Repository node create failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to create node.' });
   }
 });
@@ -3601,7 +3601,7 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   const nodeId = parsePositiveInt(req.params.nodeId);
   if (!workbenchId || !nodeId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench or node id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository or node id.' });
   }
 
   try {
@@ -3609,7 +3609,7 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     const currentNodeResult = await pool.query(
       `SELECT *
@@ -3734,7 +3734,7 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench node patch failed:', error);
+    console.error('Repository node patch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to update node.' });
   }
 });
@@ -3742,7 +3742,7 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
 router.post('/api/workbench/:id/edges', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   const fromNodeId = parsePositiveInt(req.body && req.body.fromNodeId);
   const toNodeId = parsePositiveInt(req.body && req.body.toNodeId);
@@ -3759,10 +3759,10 @@ router.post('/api/workbench/:id/edges', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canManageNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot create edges in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot create edges in this repository.' });
     }
 
     const nodesCheck = await client.query(
@@ -3776,7 +3776,7 @@ router.post('/api/workbench/:id/edges', async (req, res) => {
       [workbenchId, [fromNodeId, toNodeId], viewer.uid]
     );
     if (nodesCheck.rows.length !== 2) {
-      return res.status(400).json({ ok: false, message: 'Both nodes must belong to this workbench.' });
+      return res.status(400).json({ ok: false, message: 'Both nodes must belong to this repository.' });
     }
 
     const result = await client.query(
@@ -3809,7 +3809,7 @@ router.post('/api/workbench/:id/edges', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench edge create failed:', error);
+    console.error('Repository edge create failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to create edge.' });
   } finally {
     client.release();
@@ -3820,7 +3820,7 @@ router.patch('/api/workbench/:id/edges/:edgeId', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   const edgeId = parsePositiveInt(req.params.edgeId);
   if (!workbenchId || !edgeId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench or edge id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository or edge id.' });
   }
   const description = sanitizeText(req.body && req.body.description, 4000);
 
@@ -3830,10 +3830,10 @@ router.patch('/api/workbench/:id/edges/:edgeId', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canManageNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot edit edges in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot edit edges in this repository.' });
     }
 
     const edgeExists = await client.query(
@@ -3883,7 +3883,7 @@ router.patch('/api/workbench/:id/edges/:edgeId', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench edge patch failed:', error);
+    console.error('Repository edge patch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to update edge.' });
   } finally {
     client.release();
@@ -3894,7 +3894,7 @@ router.delete('/api/workbench/:id/edges/:edgeId', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   const edgeId = parsePositiveInt(req.params.edgeId);
   if (!workbenchId || !edgeId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench or edge id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository or edge id.' });
   }
 
   const client = await pool.connect();
@@ -3903,10 +3903,10 @@ router.delete('/api/workbench/:id/edges/:edgeId', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canManageNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot delete edges in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot delete edges in this repository.' });
     }
 
     const edgeExists = await client.query(
@@ -3944,7 +3944,7 @@ router.delete('/api/workbench/:id/edges/:edgeId', async (req, res) => {
 
     return res.json({ ok: true, deletedEdgeId: Number(result.rows[0].id) });
   } catch (error) {
-    console.error('Workbench edge delete failed:', error);
+    console.error('Repository edge delete failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to delete edge.' });
   } finally {
     client.release();
@@ -3954,7 +3954,7 @@ router.delete('/api/workbench/:id/edges/:edgeId', async (req, res) => {
 router.post('/api/workbench/:id/notes', async (req, res) => {
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   const nodeId = parsePositiveInt(req.body && req.body.nodeId);
   const edgeId = parsePositiveInt(req.body && req.body.edgeId);
@@ -3974,10 +3974,10 @@ router.post('/api/workbench/:id/notes', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot add notes in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot add notes in this repository.' });
     }
 
     if (nodeId) {
@@ -4043,18 +4043,18 @@ router.post('/api/workbench/:id/notes', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench note create failed:', error);
+    console.error('Repository note create failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to create note.' });
   }
 });
 
 router.post('/api/workbench/:id/ai-note', async (req, res) => {
   if (!isAiScanEnabled()) {
-    return res.status(404).json({ ok: false, message: 'Workbench AI notes feature is disabled.' });
+    return res.status(404).json({ ok: false, message: 'Repository AI notes feature is disabled.' });
   }
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   const nodeId = parsePositiveInt(req.body && req.body.nodeId);
   const edgeId = parsePositiveInt(req.body && req.body.edgeId);
@@ -4071,10 +4071,10 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canCreateNodes) {
-      return res.status(403).json({ ok: false, message: 'You cannot create AI notes in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot create AI notes in this repository.' });
     }
 
     const quota = await checkAiDailyQuota(
@@ -4089,7 +4089,7 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
     if (!quota.allowed) {
       return res.status(429).json({
         ok: false,
-        message: `Daily workbench AI note limit reached (${quota.limit}).`,
+        message: `Daily repository AI note limit reached (${quota.limit}).`,
       });
     }
 
@@ -4153,12 +4153,12 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
     if (!openAiClient) {
       return res.status(503).json({
         ok: false,
-        message: 'AI is not configured. Add OPENAI_API_KEY to enable Workbench AI notes.',
+        message: 'AI is not configured. Add OPENAI_API_KEY to enable Repository AI notes.',
       });
     }
     const aiModel = getOpenAIModel();
     const prompt = [
-      'You are assisting a collaborative workbench.',
+      'You are assisting a collaborative repository.',
       'Generate a concise, actionable note from the context below.',
       'Keep it factual and practical (max 8 bullets or a short paragraph).',
       instruction ? `User instruction: ${instruction}` : '',
@@ -4239,7 +4239,7 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench AI note create failed:', error);
+    console.error('Repository AI note create failed:', error);
     try {
       await logAiAuditEvent(
         {
@@ -4269,11 +4269,11 @@ router.post('/api/workbench/:id/ai-note', async (req, res) => {
 
 router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
   if (!isAiScanEnabled()) {
-    return res.status(404).json({ ok: false, message: 'Workbench AI feature is disabled.' });
+    return res.status(404).json({ ok: false, message: 'Repository AI feature is disabled.' });
   }
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   const message = sanitizeText(req.body && req.body.message, 4000);
   if (!message) {
@@ -4302,10 +4302,10 @@ router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions || access.permissions.canView !== true) {
-      return res.status(403).json({ ok: false, message: 'You do not have access to this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You do not have access to this repository.' });
     }
 
     const quota = await checkAiDailyQuota(
@@ -4320,7 +4320,7 @@ router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
     if (!quota.allowed) {
       return res.status(429).json({
         ok: false,
-        message: `Daily workbench AI chat limit reached (${quota.limit}).`,
+        message: `Daily repository AI chat limit reached (${quota.limit}).`,
       });
     }
 
@@ -4589,12 +4589,12 @@ router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
     });
 
     const prompt = [
-      'You are an academic workbench graph assistant.',
+      'You are an academic repository graph assistant.',
       'Answer using ONLY the provided node-board context and conversation.',
       'If data is missing, state what is missing instead of inventing details.',
       'Keep responses concise, structured, and actionable.',
       '',
-      `Workbench title: ${access.workbench.title || 'Untitled workbench'}`,
+      `Repository title: ${access.workbench.title || 'Untitled repository'}`,
       `Course: ${access.workbench.course || 'Unknown course'}`,
       `Visible nodes count: ${nodes.length}`,
       `Visible edges count: ${edges.length}`,
@@ -4662,7 +4662,7 @@ router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
       reply,
     });
   } catch (error) {
-    console.error('Workbench board AI chat failed:', error);
+    console.error('Repository board AI chat failed:', error);
     try {
       await logAiAuditEvent(
         {
@@ -4690,7 +4690,7 @@ router.post('/api/workbench/:id/board-ai/chat', async (req, res) => {
 
 router.post('/api/workbench/:id/ownership-transfer', async (req, res) => {
   if (!isWorkbenchTransferEnabled()) {
-    return res.status(404).json({ ok: false, message: 'Workbench transfer feature is disabled.' });
+    return res.status(404).json({ ok: false, message: 'Repository transfer feature is disabled.' });
   }
   const workbenchId = parsePositiveInt(req.params.id);
   const toUid = sanitizeText(req.body && req.body.toUid, 120);
@@ -4698,7 +4698,7 @@ router.post('/api/workbench/:id/ownership-transfer', async (req, res) => {
   const requestedHours = parsePositiveInt(req.body && req.body.tempPrivilegeHours);
   const tempPrivilegeHours = Math.min(requestedHours || DEFAULT_TRANSFER_EXPIRY_HOURS, MAX_SCOPED_PRIVILEGE_HOURS);
   if (!workbenchId || !toUid) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id or target user.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id or target user.' });
   }
 
   const client = await pool.connect();
@@ -4707,7 +4707,7 @@ router.post('/api/workbench/:id/ownership-transfer', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canTransferOwnership) {
       return res.status(403).json({ ok: false, message: 'Only owner/admin can request ownership transfer.' });
@@ -4769,7 +4769,7 @@ router.post('/api/workbench/:id/ownership-transfer', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Workbench ownership transfer request failed:', error);
+    console.error('Repository ownership transfer request failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to create ownership transfer request.' });
   } finally {
     client.release();
@@ -4778,7 +4778,7 @@ router.post('/api/workbench/:id/ownership-transfer', async (req, res) => {
 
 router.post('/api/workbench/:id/ownership-transfer/respond', async (req, res) => {
   if (!isWorkbenchTransferEnabled()) {
-    return res.status(404).json({ ok: false, message: 'Workbench transfer feature is disabled.' });
+    return res.status(404).json({ ok: false, message: 'Repository transfer feature is disabled.' });
   }
   const workbenchId = parsePositiveInt(req.params.id);
   const transferId = parsePositiveInt(req.body && req.body.transferId);
@@ -4854,7 +4854,7 @@ router.post('/api/workbench/:id/ownership-transfer/respond', async (req, res) =>
     );
     if (!workbenchResult.rows.length) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     const currentOwnerUid = workbenchResult.rows[0].owner_uid;
     if (currentOwnerUid !== transfer.from_uid) {
@@ -4953,7 +4953,7 @@ router.post('/api/workbench/:id/ownership-transfer/respond', async (req, res) =>
     } catch (_rollbackError) {
       // ignore rollback errors
     }
-    console.error('Workbench ownership transfer respond failed:', error);
+    console.error('Repository ownership transfer respond failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to process ownership transfer response.' });
   } finally {
     client.release();
@@ -4966,7 +4966,7 @@ router.get('/api/workbench/:id/tasks', async (req, res) => {
   }
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
 
   try {
@@ -4974,10 +4974,10 @@ router.get('/api/workbench/:id/tasks', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canView) {
-      return res.status(403).json({ ok: false, message: 'You do not have access to this workbench tasks.' });
+      return res.status(403).json({ ok: false, message: 'You do not have access to this repository tasks.' });
     }
 
     const rowsResult = await pool.query(
@@ -5004,7 +5004,7 @@ router.get('/api/workbench/:id/tasks', async (req, res) => {
     const tasks = await mapTaskRowsWithAssignees(rowsResult.rows, viewer.uid);
     return res.json({ ok: true, tasks });
   } catch (error) {
-    console.error('Workbench tasks list failed:', error);
+    console.error('Repository tasks list failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load tasks.' });
   }
 });
@@ -5015,14 +5015,14 @@ router.get('/api/workbench/:id/task-assignee-candidates', async (req, res) => {
   }
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
   try {
     const viewer = await ensureViewerOrReject(req, res);
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canCreateTasks && !access.permissions.canManageTasks) {
       return res.status(403).json({ ok: false, message: 'You do not have access to assign task users.' });
@@ -5045,7 +5045,7 @@ router.post('/api/workbench/:id/tasks', async (req, res) => {
   }
   const workbenchId = parsePositiveInt(req.params.id);
   if (!workbenchId) {
-    return res.status(400).json({ ok: false, message: 'Invalid workbench id.' });
+    return res.status(400).json({ ok: false, message: 'Invalid repository id.' });
   }
 
   const client = await pool.connect();
@@ -5054,10 +5054,10 @@ router.post('/api/workbench/:id/tasks', async (req, res) => {
     if (!viewer) return;
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
     if (!access) {
-      return res.status(404).json({ ok: false, message: 'Workbench not found.' });
+      return res.status(404).json({ ok: false, message: 'Repository not found.' });
     }
     if (!access.permissions.canCreateTasks) {
-      return res.status(403).json({ ok: false, message: 'You cannot create tasks in this workbench.' });
+      return res.status(403).json({ ok: false, message: 'You cannot create tasks in this repository.' });
     }
 
     const title = sanitizeText(req.body && req.body.title, 220);
@@ -5169,7 +5169,7 @@ router.post('/api/workbench/:id/tasks', async (req, res) => {
     } catch (_rollbackError) {
       // ignore rollback errors
     }
-    console.error('Workbench task create failed:', error);
+    console.error('Repository task create failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to create task.' });
   } finally {
     client.release();
@@ -5214,7 +5214,7 @@ router.patch('/api/tasks/:taskId', async (req, res) => {
     }
     const task = taskResult.rows[0];
     if (!task.workbench_id) {
-      return res.status(400).json({ ok: false, message: 'Task is not linked to a workbench.' });
+      return res.status(400).json({ ok: false, message: 'Task is not linked to a repository.' });
     }
 
     const access = await resolveWorkbenchAccess(Number(task.workbench_id), viewer, client);
@@ -5371,7 +5371,7 @@ router.post('/api/tasks/:taskId/assign', async (req, res) => {
     }
     const workbenchId = taskResult.rows[0].workbench_id ? Number(taskResult.rows[0].workbench_id) : null;
     if (!workbenchId) {
-      return res.status(400).json({ ok: false, message: 'Task is not linked to a workbench.' });
+      return res.status(400).json({ ok: false, message: 'Task is not linked to a repository.' });
     }
 
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);
@@ -5382,7 +5382,7 @@ router.post('/api/tasks/:taskId/assign', async (req, res) => {
     const resolvedUids = await resolveTaskAssigneeUids(workbenchId, [assigneeId], client);
     const targetUid = resolvedUids[0] || '';
     if (!targetUid) {
-      return res.status(404).json({ ok: false, message: 'Assignee ID not found in this workbench.' });
+      return res.status(404).json({ ok: false, message: 'Assignee ID not found in this repository.' });
     }
 
     await client.query(
@@ -5433,7 +5433,7 @@ router.post('/api/tasks/:taskId/submit', upload.single('file'), async (req, res)
     }
     const workbenchId = taskResult.rows[0].workbench_id ? Number(taskResult.rows[0].workbench_id) : null;
     if (!workbenchId) {
-      return res.status(400).json({ ok: false, message: 'Task is not linked to a workbench.' });
+      return res.status(400).json({ ok: false, message: 'Task is not linked to a repository.' });
     }
 
     const access = await resolveWorkbenchAccess(workbenchId, viewer, client);

@@ -18,7 +18,7 @@
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
-        <a href="/workbench" aria-label="Workbench"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Workbench</span></a>
+        <a href="/workbench" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
         <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
@@ -62,6 +62,7 @@
       <button class="tab-button" data-tab="ai">AI</button>
       <button class="tab-button" data-tab="accounts">Accounts</button>
       <button class="tab-button" data-tab="professor-codes">Professor codes</button>
+      <button class="tab-button" data-tab="dep-admin">DepAdmin</button>
       <button class="tab-button" data-tab="content">Content</button>
       <button class="tab-button" data-tab="spaces">Spaces</button>
       <button class="tab-button" data-tab="site-pages">Site pages</button>
@@ -309,7 +310,7 @@
           <div class="site-editor-body">
             <label class="checkline">
               <input type="checkbox" id="aiFeatureToggleScan" />
-              <span>Enable AI scan and Workbench AI</span>
+              <span>Enable AI scan and Repository AI</span>
             </label>
             <p class="meta-note" id="aiFeatureToggleScanMeta"></p>
 
@@ -380,6 +381,57 @@
             <tbody id="aiEventsTableBody"></tbody>
           </table>
         </div>
+
+        <div class="site-editor-card ai-features-card">
+          <div class="site-editor-head">
+            <h3>AI content reports</h3>
+            <div class="filters">
+              <input type="text" id="aiReportsQuery" placeholder="Search target, actor, summary..." />
+              <select id="aiReportsRisk">
+                <option value="">All risks</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <select id="aiReportsTargetType">
+                <option value="">All targets</option>
+                <option value="post">Main feed post</option>
+                <option value="subject_post">Unit post</option>
+                <option value="document">Open Library document</option>
+              </select>
+              <select id="aiReportsStatus">
+                <option value="">All statuses</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="skipped">Skipped</option>
+              </select>
+              <label class="checkline">
+                <input type="checkbox" id="aiReportsFlaggedOnly" checked />
+                <span>Flagged only</span>
+              </label>
+              <button class="primary-button" id="refreshAiReports">Refresh</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Target</th>
+                  <th>Risk</th>
+                  <th>Action</th>
+                  <th>Flags</th>
+                  <th>Summary</th>
+                  <th>Requested by</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="aiReportsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -395,6 +447,7 @@
               <option value="">All user types</option>
               <option value="owner">Owner</option>
               <option value="admin">Admin</option>
+              <option value="depadmin">DepAdmin</option>
               <option value="professor">Professor</option>
               <option value="member">Student</option>
             </select>
@@ -505,6 +558,71 @@
               </tr>
             </thead>
             <tbody id="professorCodesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-dep-admin">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Department Admin assignment</h2>
+          <p class="subcopy">Assign one DepAdmin per course. DepAdmins can create Units in their assigned course.</p>
+          <div class="filters">
+            <input type="text" id="depAdminAssignmentsQuery" placeholder="Search course, uid, name, email..." />
+            <select id="depAdminCourseFilter">
+              <option value="">All courses</option>
+            </select>
+            <button class="primary-button" id="refreshDepAdminAssignments">Refresh</button>
+          </div>
+        </div>
+
+        <div class="site-editor-body">
+          <div class="row-actions">
+            <label>
+              <span>Course</span>
+              <select id="depAdminAssignCourse">
+                <option value="">Select course</option>
+              </select>
+            </label>
+            <label>
+              <span>Account lookup</span>
+              <input type="text" id="depAdminAccountQuery" placeholder="UID, username, or email" />
+            </label>
+            <button type="button" class="secondary-button" id="searchDepAdminCandidates">Search accounts</button>
+          </div>
+          <p class="inline-message" id="depAdminMessage"></p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Candidate</th>
+                <th>UID</th>
+                <th>Course</th>
+                <th>Current role</th>
+                <th>Assigned courses</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="depAdminCandidatesTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Course</th>
+                <th>DepAdmin</th>
+                <th>Account role</th>
+                <th>Assigned by</th>
+                <th>Updated at</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="depAdminAssignmentsTableBody"></tbody>
           </table>
         </div>
       </div>

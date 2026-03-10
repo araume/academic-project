@@ -16,8 +16,12 @@ const {
   recordRoomSummary,
   listAiUsageSummary,
 } = require('../services/aiGovernanceService');
-const { getPlatformRole } = require('../services/roleAccess');
+const { getPlatformRole, hasProfessorPrivileges } = require('../services/roleAccess');
 const { invokeGcloudMcp, isAllowedMcpAction, ALLOWED_MCP_ACTIONS } = require('../services/mcpService');
+const {
+  runContentScanWithOpenAi: runContentScanWithOpenAiService,
+  isInappropriateScan,
+} = require('../services/aiContentScanService');
 const {
   isAiScanEnabled,
   isRoomAiSummaryEnabled,
@@ -38,8 +42,9 @@ const MAX_ROOM_TRANSCRIPT_CHARS = 24000;
 router.use('/api/ai', requireAuthApi);
 router.use('/api/admin/ai-usage', requireAuthApi);
 router.use('/api/admin/ai-features', requireAuthApi);
+router.use('/api/admin/ai-reports', requireAuthApi);
 
-router.use(['/api/ai', '/api/admin/ai-usage'], async (req, res, next) => {
+router.use(['/api/ai', '/api/admin/ai-usage', '/api/admin/ai-reports'], async (req, res, next) => {
   try {
     await ensureAiGovernanceReady();
     return next();
@@ -313,53 +318,70 @@ async function loadPostForScan(viewer, targetId) {
   };
 }
 
-async function runContentScanWithOpenAi(content) {
-  const openAiClient = await getOpenAIClient();
-  if (!openAiClient) {
-    const error = new Error('AI is not configured. Set OPENAI_API_KEY.');
-    error.code = 'OPENAI_NOT_CONFIGURED';
-    throw error;
+async function loadSubjectPostForScan(viewer, targetId, client = pool) {
+  const parsedId = Number(targetId);
+  if (!Number.isInteger(parsedId) || parsedId < 1) {
+    return { allowed: false, reason: 'Invalid subject post id.', code: 400 };
   }
-  const model = getOpenAIModel();
-  const prompt = [
-    'Analyze the following user-generated content for irregularities and safety risk.',
-    'Return STRICT JSON with this shape:',
-    '{"riskLevel":"low|medium|high|critical","riskScore":0-100,"flags":["..."],"summary":"...","recommendedAction":"none|review|restrict"}',
-    'Do not include markdown fences.',
-    '',
-    content,
-  ].join('\n');
 
-  const response = await openAiClient.responses.create({
-    model,
-    input: prompt,
-    max_output_tokens: 900,
-  });
-  const text = extractOpenAiText(response);
-  const parsed = extractJsonFromText(text) || {};
-  const riskLevel = normalizeRiskLevel(parsed.riskLevel || parsed.level || parsed.risk || '');
-  const scoreRaw = Number(parsed.riskScore);
-  const riskScore = Number.isFinite(scoreRaw) ? Math.max(0, Math.min(100, scoreRaw)) : null;
-  const flags = Array.isArray(parsed.flags)
-    ? parsed.flags.map((flag) => sanitizeText(String(flag), 120)).filter(Boolean)
-    : [];
-  const summary = sanitizeText(parsed.summary || text, 2000);
-  const recommendedAction = sanitizeText(parsed.recommendedAction || 'review', 40).toLowerCase();
+  const result = await client.query(
+    `SELECT
+       sp.id,
+       sp.subject_id,
+       sp.author_uid,
+       sp.title,
+       sp.content,
+       sp.status,
+       s.course_name,
+       s.subject_name
+     FROM subject_posts sp
+     JOIN subjects s ON s.id = sp.subject_id
+     WHERE sp.id = $1
+     LIMIT 1`,
+    [parsedId]
+  );
+  const row = result.rows[0] || null;
+  if (!row) {
+    return { allowed: false, reason: 'Subject post not found.', code: 404 };
+  }
+  if (sanitizeText(row.status, 20).toLowerCase() !== 'active') {
+    return { allowed: false, reason: 'Subject post is unavailable.', code: 403 };
+  }
+
+  const role = getPlatformRole(viewer);
+  const isPrivileged = isOwnerOrAdminRole(role);
+  const sameCourse =
+    normalizeCourseName(viewer.course) &&
+    normalizeCourseName(viewer.course) === normalizeCourseName(row.course_name);
+  const isOwner = sanitizeText(row.author_uid, 120) === sanitizeText(viewer.uid, 120);
+  if (!isPrivileged && !sameCourse && !isOwner) {
+    return { allowed: false, reason: 'You do not have access to this subject post.', code: 403 };
+  }
+
+  const combined = [
+    `Title: ${row.title || ''}`,
+    `Content: ${row.content || ''}`,
+    `Course: ${row.course_name || ''}`,
+    `Subject: ${row.subject_name || ''}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   return {
-    model,
-    requestId: response && response.id ? response.id : null,
-    rawText: text,
-    parsed: {
-      riskLevel,
-      riskScore,
-      flags,
-      summary,
-      recommendedAction: ['none', 'review', 'restrict'].includes(recommendedAction)
-        ? recommendedAction
-        : 'review',
+    allowed: true,
+    targetType: 'subject_post',
+    targetId: String(row.id),
+    content: truncateText(combined, MAX_SCAN_TEXT_CHARS),
+    metadata: {
+      subjectId: Number(row.subject_id),
+      course: row.course_name || '',
+      subjectName: row.subject_name || '',
     },
   };
+}
+
+async function runContentScanWithOpenAi(content) {
+  return runContentScanWithOpenAiService(content);
 }
 
 async function runRoomSummaryWithOpenAi(transcript) {
@@ -447,6 +469,16 @@ async function loadRoomSummaryAccess(roomId, viewer, client = pool) {
   };
 }
 
+function buildAiReportTargetUrl(targetType, targetId) {
+  const type = sanitizeText(targetType, 40).toLowerCase();
+  const id = sanitizeText(targetId, 240);
+  if (!id) return '';
+  if (type === 'post') return `/posts/${encodeURIComponent(id)}`;
+  if (type === 'subject_post') return `/community?subjectPostId=${encodeURIComponent(id)}`;
+  if (type === 'document') return `/open-library?document=${encodeURIComponent(id)}`;
+  return '';
+}
+
 router.post('/api/ai/scan-content', async (req, res) => {
   if (!isAiScanEnabled()) {
     return res.status(404).json({ ok: false, message: 'AI scan feature is disabled.' });
@@ -454,7 +486,7 @@ router.post('/api/ai/scan-content', async (req, res) => {
   const startedAt = Date.now();
   const targetType = sanitizeText(req.body && req.body.targetType, 40).toLowerCase();
   const targetId = sanitizeText(req.body && req.body.targetId, 240);
-  if (!['post', 'document'].includes(targetType) || !targetId) {
+  if (!['post', 'subject_post', 'document'].includes(targetType) || !targetId) {
     return res.status(400).json({ ok: false, message: 'targetType and targetId are required.' });
   }
 
@@ -479,9 +511,14 @@ router.post('/api/ai/scan-content', async (req, res) => {
       });
     }
 
-    const context = targetType === 'document'
-      ? await loadDocumentForScan(viewer, targetId, client)
-      : await loadPostForScan(viewer, targetId);
+    let context = null;
+    if (targetType === 'document') {
+      context = await loadDocumentForScan(viewer, targetId, client);
+    } else if (targetType === 'subject_post') {
+      context = await loadSubjectPostForScan(viewer, targetId, client);
+    } else {
+      context = await loadPostForScan(viewer, targetId);
+    }
     if (!context.allowed) {
       return res.status(context.code || 403).json({ ok: false, message: context.reason || 'Access denied.' });
     }
@@ -492,6 +529,7 @@ router.post('/api/ai/scan-content', async (req, res) => {
     const scanResult = await runContentScanWithOpenAi(context.content);
     const durationMs = Date.now() - startedAt;
 
+    const flagged = isInappropriateScan(scanResult);
     const record = await recordContentScan(
       {
         targetType: context.targetType,
@@ -505,6 +543,7 @@ router.post('/api/ai/scan-content', async (req, res) => {
           ...scanResult.parsed,
           rawText: scanResult.rawText,
           context: context.metadata || {},
+          flagged,
         },
         excerpt: context.content,
         status: 'completed',
@@ -541,6 +580,8 @@ router.post('/api/ai/scan-content', async (req, res) => {
             riskLevel: scanResult.parsed.riskLevel,
             riskScore: scanResult.parsed.riskScore,
             flags: scanResult.parsed.flags,
+            recommendedAction: scanResult.parsed.recommendedAction,
+            flagged,
           },
         },
         client
@@ -558,6 +599,7 @@ router.post('/api/ai/scan-content', async (req, res) => {
         flags: scanResult.parsed.flags,
         summary: scanResult.parsed.summary,
         recommendedAction: scanResult.parsed.recommendedAction,
+        flagged,
         createdAt: record ? record.created_at : new Date().toISOString(),
       },
     });
@@ -751,9 +793,8 @@ router.post('/api/ai/mcp/run', async (req, res) => {
   try {
     const viewer = await ensureViewerOrReject(req, res, client);
     if (!viewer) return;
-    const role = getPlatformRole(viewer);
-    if (!(isOwnerOrAdminRole(role) || role === 'professor')) {
-      return res.status(403).json({ ok: false, message: 'Only owner/admin/professor can invoke MCP actions.' });
+    if (!hasProfessorPrivileges(viewer)) {
+      return res.status(403).json({ ok: false, message: 'Only owner/admin/depadmin/professor can invoke MCP actions.' });
     }
 
     const quota = await checkAiDailyQuota(
@@ -876,6 +917,258 @@ router.post('/api/ai/mcp/run', async (req, res) => {
       message: error && error.message ? error.message : 'MCP invocation failed.',
       fallback: 'manual',
     });
+  } finally {
+    client.release();
+  }
+});
+
+router.get('/api/admin/ai-reports', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const viewer = await ensureViewerOrReject(req, res, client);
+    if (!viewer) return;
+    const role = getPlatformRole(viewer);
+    if (!isOwnerOrAdminRole(role)) {
+      return res.status(403).json({ ok: false, message: 'Only owner/admin can access AI reports.' });
+    }
+
+    const page = Math.max(1, parsePositiveInt(req.query.page) || 1);
+    const pageSize = Math.min(120, Math.max(1, parsePositiveInt(req.query.pageSize) || 50));
+    const offset = (page - 1) * pageSize;
+    const query = sanitizeText(req.query.q, 200);
+    const risk = sanitizeText(req.query.risk, 30).toLowerCase();
+    const targetType = sanitizeText(req.query.targetType, 40).toLowerCase();
+    const status = sanitizeText(req.query.status, 20).toLowerCase();
+    const flaggedOnly = parseBoolean(req.query.flaggedOnly === undefined ? true : req.query.flaggedOnly);
+
+    const where = [];
+    const params = [];
+    if (risk && ['low', 'medium', 'high', 'critical', 'unknown'].includes(risk)) {
+      params.push(risk);
+      where.push(`s.risk_level = $${params.length}`);
+    }
+    if (targetType && ['post', 'subject_post', 'document'].includes(targetType)) {
+      params.push(targetType);
+      where.push(`s.target_type = $${params.length}`);
+    }
+    if (status && ['completed', 'failed', 'skipped'].includes(status)) {
+      params.push(status);
+      where.push(`s.status = $${params.length}`);
+    }
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(s.target_id ILIKE $${params.length}
+          OR COALESCE(rp.display_name, ra.display_name, ra.username, ra.email, '') ILIKE $${params.length}
+          OR COALESCE(s.result->>'summary', '') ILIKE $${params.length}
+          OR COALESCE(s.result->>'recommendedAction', '') ILIKE $${params.length})`
+      );
+    }
+    if (flaggedOnly) {
+      where.push(
+        `(
+          s.risk_level IN ('high', 'critical')
+          OR COALESCE(s.result->>'recommendedAction', '') IN ('review', 'restrict')
+          OR COALESCE((s.result->>'flagged')::boolean, false) = true
+          OR COALESCE(s.risk_score, 0) >= 70
+        )`
+      );
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countResult = await client.query(
+      `SELECT COUNT(*)::int AS total
+       FROM ai_content_scans s
+       LEFT JOIN accounts ra ON ra.uid = s.requested_by_uid
+       LEFT JOIN profiles rp ON rp.uid = ra.uid
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0] ? countResult.rows[0].total : 0);
+
+    const pagedParams = params.slice();
+    pagedParams.push(pageSize, offset);
+    const rowsResult = await client.query(
+      `SELECT
+         s.id,
+         s.target_type,
+         s.target_id,
+         s.requested_by_uid,
+         s.provider,
+         s.model,
+         s.risk_level,
+         s.risk_score,
+         s.result,
+         s.excerpt,
+         s.status,
+         s.created_at,
+         COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS requested_by_name
+       FROM ai_content_scans s
+       LEFT JOIN accounts ra ON ra.uid = s.requested_by_uid
+       LEFT JOIN profiles rp ON rp.uid = ra.uid
+       ${whereClause}
+       ORDER BY s.created_at DESC, s.id DESC
+       LIMIT $${pagedParams.length - 1} OFFSET $${pagedParams.length}`,
+      pagedParams
+    );
+
+    const rows = rowsResult.rows || [];
+    const postObjectIds = [];
+    const postIdSet = new Set();
+    const subjectPostIds = [];
+    const subjectPostSet = new Set();
+    const documentIds = [];
+    const documentSet = new Set();
+
+    rows.forEach((row) => {
+      const type = sanitizeText(row.target_type, 40).toLowerCase();
+      const id = sanitizeText(row.target_id, 240);
+      if (!id) return;
+      if (type === 'post' && ObjectId.isValid(id) && !postIdSet.has(id)) {
+        postIdSet.add(id);
+        postObjectIds.push(new ObjectId(id));
+      } else if (type === 'subject_post') {
+        const numId = Number(id);
+        if (Number.isInteger(numId) && numId > 0 && !subjectPostSet.has(numId)) {
+          subjectPostSet.add(numId);
+          subjectPostIds.push(numId);
+        }
+      } else if (type === 'document' && !documentSet.has(id)) {
+        documentSet.add(id);
+        documentIds.push(id);
+      }
+    });
+
+    const [postMap, subjectPostMap, documentMap] = await Promise.all([
+      (async () => {
+        if (!postObjectIds.length) return new Map();
+        const db = await getMongoDb();
+        const posts = await db
+          .collection('posts')
+          .find(
+            { _id: { $in: postObjectIds } },
+            { projection: { title: 1, course: 1, uploaderUid: 1, moderationStatus: 1 } }
+          )
+          .toArray();
+        return new Map(posts.map((post) => [String(post._id), post]));
+      })(),
+      (async () => {
+        if (!subjectPostIds.length) return new Map();
+        const result = await client.query(
+          `SELECT
+             sp.id,
+             sp.title,
+             sp.author_uid,
+             sp.status,
+             s.course_name,
+             s.subject_name
+           FROM subject_posts sp
+           JOIN subjects s ON s.id = sp.subject_id
+           WHERE sp.id = ANY($1::bigint[])`,
+          [subjectPostIds]
+        );
+        return new Map(result.rows.map((row) => [String(row.id), row]));
+      })(),
+      (async () => {
+        if (!documentIds.length) return new Map();
+        const result = await client.query(
+          `SELECT
+             uuid::text AS uuid,
+             title,
+             course,
+             subject,
+             uploader_uid,
+             COALESCE(is_restricted, false) AS is_restricted
+           FROM documents
+           WHERE uuid::text = ANY($1::text[])`,
+          [documentIds]
+        );
+        return new Map(result.rows.map((row) => [row.uuid, row]));
+      })(),
+    ]);
+
+    return res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      reports: rows.map((row) => {
+        const type = sanitizeText(row.target_type, 40).toLowerCase();
+        const id = sanitizeText(row.target_id, 240);
+        const resultPayload = row.result && typeof row.result === 'object' ? row.result : {};
+        const flags = Array.isArray(resultPayload.flags)
+          ? resultPayload.flags.map((item) => sanitizeText(String(item), 120)).filter(Boolean)
+          : [];
+        const recommendedAction = sanitizeText(resultPayload.recommendedAction, 40).toLowerCase() || '';
+        const summary = sanitizeText(resultPayload.summary || '', 2400);
+        const flagged =
+          isInappropriateScan({
+            parsed: {
+              riskLevel: row.risk_level,
+              riskScore: row.risk_score,
+              recommendedAction,
+            },
+          }) ||
+          (resultPayload && resultPayload.flagged === true);
+
+        let targetTitle = '';
+        let targetCourse = '';
+        let targetOwnerUid = '';
+        let targetState = '';
+        if (type === 'post') {
+          const post = postMap.get(id);
+          if (post) {
+            targetTitle = sanitizeText(post.title || '', 300);
+            targetCourse = sanitizeText(post.course || '', 160);
+            targetOwnerUid = sanitizeText(post.uploaderUid || '', 120);
+            targetState = sanitizeText(post.moderationStatus || '', 40) || 'active';
+          }
+        } else if (type === 'subject_post') {
+          const subjectPost = subjectPostMap.get(id);
+          if (subjectPost) {
+            targetTitle = sanitizeText(subjectPost.title || '', 300);
+            targetCourse = sanitizeText(subjectPost.course_name || '', 160);
+            targetOwnerUid = sanitizeText(subjectPost.author_uid || '', 120);
+            targetState = sanitizeText(subjectPost.status || '', 40) || 'active';
+          }
+        } else if (type === 'document') {
+          const document = documentMap.get(id);
+          if (document) {
+            targetTitle = sanitizeText(document.title || '', 300);
+            targetCourse = sanitizeText(document.course || '', 160);
+            targetOwnerUid = sanitizeText(document.uploader_uid || '', 120);
+            targetState = document.is_restricted === true ? 'restricted' : 'active';
+          }
+        }
+
+        return {
+          id: Number(row.id),
+          targetType: type || row.target_type || '',
+          targetId: id || row.target_id || '',
+          targetTitle: targetTitle || null,
+          targetCourse: targetCourse || null,
+          targetOwnerUid: targetOwnerUid || null,
+          targetState: targetState || null,
+          targetUrl: buildAiReportTargetUrl(type, id),
+          requestedByUid: row.requested_by_uid || null,
+          requestedByName: row.requested_by_name || row.requested_by_uid || null,
+          provider: row.provider || 'openai',
+          model: row.model || null,
+          riskLevel: row.risk_level || 'unknown',
+          riskScore: row.risk_score == null ? null : Number(row.risk_score),
+          status: row.status || 'completed',
+          flagged: flagged === true,
+          recommendedAction: recommendedAction || null,
+          flags,
+          summary: summary || null,
+          excerpt: sanitizeText(row.excerpt || '', 8000) || null,
+          createdAt: row.created_at,
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Admin AI reports fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load AI reports.' });
   } finally {
     client.release();
   }

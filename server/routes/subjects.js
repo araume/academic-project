@@ -2,8 +2,9 @@ const express = require('express');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getSignedUrl } = require('../services/storage');
-const { hasAdminPrivileges, hasProfessorPrivileges } = require('../services/roleAccess');
+const { hasAdminPrivileges, getPlatformRole } = require('../services/roleAccess');
 const { isSubjectsEnabled, isUnifiedVisibilityEnabled } = require('../services/featureFlags');
+const { autoScanIncomingContent } = require('../services/aiContentScanService');
 
 const router = express.Router();
 
@@ -33,6 +34,7 @@ const COURSE_SUBJECT_SOURCES = [
     aliases: ['civil engineering', 'ce', 'bsce', 'bs civil engineering'],
   },
 ];
+let ensureDepAdminAssignmentsReadyPromise = null;
 
 router.use('/api/subjects', requireAuthApi);
 
@@ -74,6 +76,54 @@ function canonicalCourseNameForSubjects(courseValue) {
     return source.canonicalCourseName;
   }
   return normalizeCourse(courseValue);
+}
+
+async function ensureDepAdminAssignmentsReady(client = pool) {
+  if (!ensureDepAdminAssignmentsReadyPromise) {
+    ensureDepAdminAssignmentsReadyPromise = (async () => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS course_dep_admin_assignments (
+          id BIGSERIAL PRIMARY KEY,
+          course_code TEXT,
+          course_name TEXT NOT NULL UNIQUE,
+          depadmin_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          assigned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_depadmin_uid_idx
+          ON course_dep_admin_assignments(depadmin_uid, updated_at DESC);
+      `);
+    })().catch((error) => {
+      ensureDepAdminAssignmentsReadyPromise = null;
+      throw error;
+    });
+  }
+  await ensureDepAdminAssignmentsReadyPromise;
+}
+
+async function hasDepAdminAssignmentForCourse(uid, courseName, client = pool) {
+  if (!uid || !courseName) return false;
+  await ensureDepAdminAssignmentsReady(client);
+  const result = await client.query(
+    `SELECT 1
+     FROM course_dep_admin_assignments
+     WHERE depadmin_uid = $1
+       AND lower(course_name) = lower($2)
+     LIMIT 1`,
+    [uid, courseName]
+  );
+  return result.rows.length > 0;
+}
+
+async function canViewerCreateSubjects(user, client = pool) {
+  const role = getPlatformRole(user);
+  if (role === 'owner' || role === 'admin') return true;
+  if (role !== 'depadmin') return false;
+  const viewerCourse = canonicalCourseNameForSubjects(normalizeCourse(user && user.course));
+  if (!viewerCourse) return false;
+  return hasDepAdminAssignmentForCourse(user.uid, viewerCourse, client);
 }
 
 function parsePositiveInt(value, fallback = 1, max = 1000) {
@@ -274,11 +324,11 @@ router.get('/api/subjects/bootstrap', async (req, res) => {
   const viewerCourse = normalizeCourse(req.user.course);
   const requestedCourse = normalizeCourse(req.query.course);
   const canViewAll = hasAdminPrivileges(req.user);
-  const canCreate = hasProfessorPrivileges(req.user);
   let effectiveViewerCourse = canonicalCourseNameForSubjects(viewerCourse);
   let effectiveRequestedCourse = canonicalCourseNameForSubjects(requestedCourse);
 
   try {
+    const canCreate = await canViewerCreateSubjects(req.user);
     if (!canViewAll && !effectiveViewerCourse) {
       return res.json({
         ok: true,
@@ -362,8 +412,9 @@ router.post('/api/subjects', async (req, res) => {
   if (!enforceRateLimit(req, res, 'subjects:create', 12)) {
     return;
   }
-  if (!hasProfessorPrivileges(req.user)) {
-    return res.status(403).json({ ok: false, message: 'Not allowed.' });
+  const role = getPlatformRole(req.user);
+  if (!(role === 'owner' || role === 'admin' || role === 'depadmin')) {
+    return res.status(403).json({ ok: false, message: 'Only owner/admin/depadmin can create units.' });
   }
 
   const subjectName = normalizeText(req.body && req.body.subjectName, 180);
@@ -381,6 +432,16 @@ router.post('/api/subjects', async (req, res) => {
   }
 
   try {
+    if (role === 'depadmin') {
+      const canCreateForCourse = await hasDepAdminAssignmentForCourse(req.user.uid, courseName);
+      if (!canCreateForCourse) {
+        return res.status(403).json({
+          ok: false,
+          message: 'You are not assigned as DepAdmin for this course.',
+        });
+      }
+    }
+
     const courseCodeResult = await pool.query(
       `SELECT course_code, course_name
        FROM courses
@@ -735,6 +796,38 @@ router.post('/api/subjects/:id/posts', async (req, res) => {
     await client.query('COMMIT');
 
     const row = insertResult.rows[0];
+
+    setImmediate(() => {
+      const subject = subjectAccess && subjectAccess.subject ? subjectAccess.subject : {};
+      const contentScanText = [
+        `Title: ${row.title || ''}`,
+        `Content: ${row.content || ''}`,
+        `Course: ${subject.course_name || ''}`,
+        `Subject: ${subject.subject_name || ''}`,
+        row.attachment_library_document_uuid
+          ? `Attached Open Library document UUID: ${row.attachment_library_document_uuid}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      autoScanIncomingContent({
+        targetType: 'subject_post',
+        targetId: String(row.id),
+        requestedByUid: req.user.uid,
+        content: contentScanText,
+        metadata: {
+          subjectId: Number(row.subject_id),
+          course: subject.course_name || '',
+          subjectName: subject.subject_name || '',
+          attachmentLibraryDocumentUuid: row.attachment_library_document_uuid || null,
+          source: 'units_create_post',
+        },
+      }).catch((error) => {
+        console.error('Subject post auto content scan failed:', error);
+      });
+    });
+
     return res.json({
       ok: true,
       post: {

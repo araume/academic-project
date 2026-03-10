@@ -206,6 +206,16 @@ CREATE TABLE IF NOT EXISTS professor_registration_codes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS course_dep_admin_assignments (
+  id BIGSERIAL PRIMARY KEY,
+  course_code TEXT,
+  course_name TEXT NOT NULL UNIQUE,
+  depadmin_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  assigned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   session_id TEXT PRIMARY KEY,
   uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
@@ -293,6 +303,10 @@ CREATE INDEX IF NOT EXISTS password_reset_codes_code_expires_idx ON password_res
 CREATE INDEX IF NOT EXISTS password_reset_codes_reset_token_expires_idx ON password_reset_codes(reset_token_expires_at);
 CREATE INDEX IF NOT EXISTS professor_registration_codes_active_idx
   ON professor_registration_codes(is_active, consumed_at, expires_at);
+CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_depadmin_uid_idx
+  ON course_dep_admin_assignments(depadmin_uid, updated_at DESC);
+CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_course_code_idx
+  ON course_dep_admin_assignments(course_code);
 CREATE INDEX IF NOT EXISTS auth_sessions_uid_idx ON auth_sessions(uid);
 CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS accounts_platform_role_idx ON accounts(platform_role);
@@ -1318,7 +1332,7 @@ CREATE TABLE IF NOT EXISTS ai_usage_daily (
 
 CREATE TABLE IF NOT EXISTS ai_content_scans (
   id BIGSERIAL PRIMARY KEY,
-  target_type TEXT NOT NULL CHECK (target_type IN ('post', 'document')),
+  target_type TEXT NOT NULL CHECK (target_type IN ('post', 'subject_post', 'document')),
   target_id TEXT NOT NULL,
   requested_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
   provider TEXT NOT NULL DEFAULT 'openai' CHECK (provider IN ('openai')),
@@ -1333,6 +1347,12 @@ CREATE TABLE IF NOT EXISTS ai_content_scans (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ai_content_scans
+  DROP CONSTRAINT IF EXISTS ai_content_scans_target_type_check;
+ALTER TABLE ai_content_scans
+  ADD CONSTRAINT ai_content_scans_target_type_check
+  CHECK (target_type IN ('post', 'subject_post', 'document'));
 
 CREATE TABLE IF NOT EXISTS room_ai_summaries (
   id BIGSERIAL PRIMARY KEY,

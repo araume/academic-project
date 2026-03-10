@@ -313,7 +313,7 @@ function viewerCanCreateWorkbenchDirect(profile) {
   const role = normalizePlatformRole(
     (profile && (profile.platformRole || profile.platform_role || profile.role || profile.userType || profile.user_type)) || ''
   );
-  return role === 'owner' || role === 'admin' || role === 'professor';
+  return role === 'owner' || role === 'admin' || role === 'depadmin' || role === 'professor';
 }
 
 function applyCreateWorkbenchVisibility() {
@@ -669,7 +669,7 @@ async function placeNodeOnBoard(nodeId, options = {}) {
   const node = getBoardNodeById(nodeId);
   const workbenchId = parsePositiveInt(state.selectedWorkbenchId);
   if (!node || !workbenchId) {
-    setMessage(graphCanvasMessage, 'Select a workbench node first.');
+    setMessage(graphCanvasMessage, 'Select a repository node first.');
     return;
   }
   if (isNodePlacedOnGraph(node)) {
@@ -1345,7 +1345,7 @@ function renderDirectoryPath() {
   const segments = Array.isArray(state.directory.currentPath) ? state.directory.currentPath : [];
   directoryPath.innerHTML = '';
   if (!segments.length) {
-    directoryPath.textContent = 'Select a workbench to load directory.';
+    directoryPath.textContent = 'Select a repository to load directory.';
     return;
   }
   const fragment = document.createDocumentFragment();
@@ -1727,7 +1727,7 @@ function renderWorkbenchList() {
     workbenchCount.textContent = String(items.length);
   }
   if (!items.length) {
-    workbenchList.appendChild(buildEmptyState('No workbenches found.'));
+    workbenchList.appendChild(buildEmptyState('No repositories found.'));
     return;
   }
 
@@ -1739,7 +1739,7 @@ function renderWorkbenchList() {
       button.classList.add('is-active');
     }
     button.innerHTML = `
-      <h3>${workbench.title || 'Untitled workbench'}</h3>
+      <h3>${workbench.title || 'Untitled repository'}</h3>
       <p class="item-meta">${workbench.course || 'No course'} • ${workbench.visibility || 'invite_only'} • ${workbench.status || 'active'}</p>
       <p class="item-meta">Owner: ${workbench.ownerName || workbench.ownerUid || 'Member'}</p>
     `;
@@ -1781,7 +1781,7 @@ async function loadWorkbenchList(options = {}) {
   } catch (error) {
     state.workbenches = [];
     renderWorkbenchList();
-    setMessage(workbenchListMessage, error.message || 'Unable to load workbench list.');
+    setMessage(workbenchListMessage, error.message || 'Unable to load repository list.');
   }
 }
 
@@ -2338,9 +2338,9 @@ function renderCollaborativeTaskModal() {
 
   const selectedId = parsePositiveInt(state.selectedWorkbenchId);
   if (!selectedId) {
-    collaborativeTasksPending.appendChild(buildEmptyState('Select a workbench to view collaborative tasks.'));
-    collaborativeTasksOngoing.appendChild(buildEmptyState('Select a workbench to view collaborative tasks.'));
-    collaborativeTasksComplete.appendChild(buildEmptyState('Select a workbench to view collaborative tasks.'));
+    collaborativeTasksPending.appendChild(buildEmptyState('Select a repository to view collaborative tasks.'));
+    collaborativeTasksOngoing.appendChild(buildEmptyState('Select a repository to view collaborative tasks.'));
+    collaborativeTasksComplete.appendChild(buildEmptyState('Select a repository to view collaborative tasks.'));
     return;
   }
 
@@ -2430,7 +2430,7 @@ function renderInlineFileCreateRow(canCreateNodes) {
     const parentId = parsePositiveInt(state.directory.currentParentId);
     const title = String(input.value || '').trim();
     if (!id || !parentId) {
-      setMessage(nodeCreateMessage, 'Select a workbench and directory first.');
+      setMessage(nodeCreateMessage, 'Select a repository and directory first.');
       return;
     }
     if (!title) {
@@ -2499,7 +2499,7 @@ function renderNodeList() {
   updateFileViewLayout();
 
   if (!state.selectedWorkbenchId) {
-    workbenchNodesList.appendChild(buildEmptyState('Select a workbench to load directory.'));
+    workbenchNodesList.appendChild(buildEmptyState('Select a repository to load directory.'));
     return;
   }
 
@@ -2768,7 +2768,7 @@ function renderTaskList() {
   }
   renderCollaborativeTaskModal();
   if (!selectedId) {
-    workbenchTasksList.appendChild(buildEmptyState('Select a workbench to load tasks.'));
+    workbenchTasksList.appendChild(buildEmptyState('Select a repository to load tasks.'));
     return;
   }
   if (state.taskboardAvailable !== true) {
@@ -2946,13 +2946,13 @@ function renderTaskList() {
 function renderWorkbenchDetail() {
   const detail = state.workbenchDetail;
   if (!detail || !detail.workbench) {
-    if (activeWorkbenchTitle) activeWorkbenchTitle.textContent = 'Select a workbench';
-    if (activeWorkbenchDescription) activeWorkbenchDescription.textContent = 'Choose a workbench from the left panel to load nodes, notes, and tasks.';
-    if (activeWorkbenchMeta) activeWorkbenchMeta.textContent = 'No workbench selected';
+    if (activeWorkbenchTitle) activeWorkbenchTitle.textContent = 'Select a repository';
+    if (activeWorkbenchDescription) activeWorkbenchDescription.textContent = 'Choose a repository from the left panel to load nodes, notes, and tasks.';
+    if (activeWorkbenchMeta) activeWorkbenchMeta.textContent = 'No repository selected';
     if (activeWorkbenchVisibility) activeWorkbenchVisibility.textContent = 'Visibility: -';
     if (activeWorkbenchStatus) activeWorkbenchStatus.textContent = 'Status: -';
     if (activeWorkbenchOwner) activeWorkbenchOwner.textContent = 'Owner: -';
-    updateWorkbenchAiUi(true, 'AI notes: select a workbench');
+    updateWorkbenchAiUi(true, 'AI notes: select a repository');
     toggleHidden(joinWorkbenchButton, true);
     toggleHidden(memberManageForm, true);
     toggleHidden(ownershipTransferForm, true);
@@ -3010,7 +3010,7 @@ function renderWorkbenchDetail() {
 
   const wb = detail.workbench;
   const permissions = detail.permissions || {};
-  if (activeWorkbenchTitle) activeWorkbenchTitle.textContent = wb.title || 'Untitled workbench';
+  if (activeWorkbenchTitle) activeWorkbenchTitle.textContent = wb.title || 'Untitled repository';
   if (activeWorkbenchDescription) activeWorkbenchDescription.textContent = wb.description || 'No description yet.';
   if (activeWorkbenchMeta) activeWorkbenchMeta.textContent = `${wb.course || 'No course'} • Updated ${formatDateTime(wb.updatedAt)}`;
   if (activeWorkbenchVisibility) activeWorkbenchVisibility.textContent = `Visibility: ${wb.visibility || 'invite_only'}`;
@@ -3230,7 +3230,7 @@ async function loadWorkbenchDetail(workbenchId) {
     resetGraphConnectionState();
     renderWorkbenchDetail();
     renderTaskList();
-    setMessage(workbenchDetailMessage, error.message || 'Unable to load workbench details.');
+    setMessage(workbenchDetailMessage, error.message || 'Unable to load repository details.');
   }
 }
 
@@ -3424,7 +3424,7 @@ function bindEvents() {
       const id = parsePositiveInt(state.selectedWorkbenchId);
       const parentId = parsePositiveInt(state.directory.currentParentId);
       if (!id || !parentId) {
-        setMessage(nodeCreateMessage, 'Select a workbench and directory first.');
+        setMessage(nodeCreateMessage, 'Select a repository and directory first.');
         return;
       }
       if (state.directory.inRecycleBin) {
@@ -3442,7 +3442,7 @@ function bindEvents() {
       const id = parsePositiveInt(state.selectedWorkbenchId);
       const parentId = parsePositiveInt(state.directory.currentParentId);
       if (!id || !parentId) {
-        setMessage(nodeCreateMessage, 'Select a workbench and directory first.');
+        setMessage(nodeCreateMessage, 'Select a repository and directory first.');
         return;
       }
       const title = window.prompt('Folder name');
@@ -3486,7 +3486,7 @@ function bindEvents() {
       const roots = state.directory.roots;
       if (!roots) return;
       loadDirectory({ parentId: parsePositiveInt(roots.workspaceFolderId) }).catch((error) => {
-        setMessage(nodeCreateMessage, error.message || 'Unable to open workbench folder.');
+        setMessage(nodeCreateMessage, error.message || 'Unable to open repository folder.');
       });
     });
   }
@@ -3524,7 +3524,7 @@ function bindEvents() {
       withButtonBusy(refreshWorkbenchListButton, 'Refreshing...', async () => {
         await loadWorkbenchList({ preserveSelected: true });
       }).catch((error) => {
-        setMessage(workbenchListMessage, error.message || 'Unable to refresh workbench list.');
+        setMessage(workbenchListMessage, error.message || 'Unable to refresh repository list.');
       });
     });
   }
@@ -3640,7 +3640,7 @@ function bindEvents() {
       const workbenchId = parsePositiveInt(state.selectedWorkbenchId);
       const message = boardAiChatInput ? boardAiChatInput.value.trim() : '';
       if (!workbenchId || !message) {
-        setMessage(boardAiChatMessage, 'Select a workbench and enter a question.');
+        setMessage(boardAiChatMessage, 'Select a repository and enter a question.');
         return;
       }
 
@@ -3688,7 +3688,7 @@ function bindEvents() {
       clearMessage(createWorkbenchMessage);
       const title = createWorkbenchTitle ? createWorkbenchTitle.value.trim() : '';
       if (!title) {
-        setMessage(createWorkbenchMessage, 'Workbench title is required.');
+        setMessage(createWorkbenchMessage, 'Repository title is required.');
         return;
       }
       withButtonBusy(createWorkbenchButton, 'Creating...', async () => {
@@ -3703,7 +3703,7 @@ function bindEvents() {
           },
           retries: 0,
         });
-        setMessage(createWorkbenchMessage, 'Workbench created.', 'success');
+        setMessage(createWorkbenchMessage, 'Repository created.', 'success');
         if (createWorkbenchTitle) createWorkbenchTitle.value = '';
         if (createWorkbenchDescription) createWorkbenchDescription.value = '';
         await loadWorkbenchList({ focusWorkbenchId: data.workbench && data.workbench.id });
@@ -3713,7 +3713,7 @@ function bindEvents() {
           setMessage(createWorkbenchMessage, `${error.message} Use request form below.`);
           return;
         }
-        setMessage(createWorkbenchMessage, error.message || 'Unable to create workbench.');
+        setMessage(createWorkbenchMessage, error.message || 'Unable to create repository.');
       });
     });
   }
@@ -3756,13 +3756,13 @@ function bindEvents() {
           method: 'POST',
           body: {},
         });
-        setMessage(workbenchDetailMessage, 'Joined workbench.', 'success');
+        setMessage(workbenchDetailMessage, 'Joined repository.', 'success');
         await Promise.all([
           loadWorkbenchList({ preserveSelected: true }),
           loadWorkbenchDetail(id),
         ]);
       }).catch((error) => {
-        setMessage(workbenchDetailMessage, error.message || 'Unable to join workbench.');
+        setMessage(workbenchDetailMessage, error.message || 'Unable to join repository.');
       });
     });
   }
@@ -3771,13 +3771,13 @@ function bindEvents() {
     refreshWorkbenchDetailButton.addEventListener('click', () => {
       const id = parsePositiveInt(state.selectedWorkbenchId);
       if (!id) {
-        setMessage(workbenchDetailMessage, 'Select a workbench first.');
+        setMessage(workbenchDetailMessage, 'Select a repository first.');
         return;
       }
       withButtonBusy(refreshWorkbenchDetailButton, 'Refreshing...', async () => {
         await loadWorkbenchDetail(id);
       }).catch((error) => {
-        setMessage(workbenchDetailMessage, error.message || 'Unable to refresh workbench details.');
+        setMessage(workbenchDetailMessage, error.message || 'Unable to refresh repository details.');
       });
     });
   }
@@ -3860,7 +3860,7 @@ function bindEvents() {
       const selectedMember = state.memberPicker.selected;
       const uid = selectedMember ? String(selectedMember.uid || '').trim() : '';
       if (!id || !uid) {
-        setMessage(memberManageMessage, 'Select a workbench and choose a user from search results.');
+        setMessage(memberManageMessage, 'Select a repository and choose a user from search results.');
         return;
       }
       withButtonBusy(memberManageButton, 'Saving...', async () => {
@@ -3959,7 +3959,7 @@ function bindEvents() {
       const visibility = nodeVisibilityInput ? nodeVisibilityInput.value : 'private';
       const parentId = parsePositiveInt(state.directory.currentParentId);
       if (!id || !title) {
-        setMessage(nodeCreateMessage, 'Select a workbench and provide a file title.');
+        setMessage(nodeCreateMessage, 'Select a repository and provide a file title.');
         return;
       }
       const busyLabel = editingNodeId ? 'Saving...' : 'Adding...';
@@ -4121,7 +4121,7 @@ function bindEvents() {
       const id = parsePositiveInt(state.selectedWorkbenchId);
       const title = taskTitleInput ? taskTitleInput.value.trim() : '';
       if (!id || !title) {
-        setMessage(taskCreateMessage, 'Select a workbench and provide a task title.');
+        setMessage(taskCreateMessage, 'Select a repository and provide a task title.');
         return;
       }
       const selectedAssigneeIds = Array.from(
@@ -4200,7 +4200,7 @@ async function tryOpenSharedMarkdownLink() {
 async function bootstrap() {
   bindEvents();
   setWorkbenchView('overview');
-  updateWorkbenchAiUi(true, 'AI notes: select a workbench');
+  updateWorkbenchAiUi(true, 'AI notes: select a repository');
   clearDirectoryEditorForm();
   setDirectoryPendingOperation(null);
   resetTaskAssigneePicker();

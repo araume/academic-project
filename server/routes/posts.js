@@ -15,6 +15,7 @@ const {
   createNotificationsForRecipients,
   isBlockedEitherDirection,
 } = require('../services/notificationService');
+const { autoScanIncomingContent } = require('../services/aiContentScanService');
 
 const router = express.Router();
 const upload = multer({
@@ -276,6 +277,33 @@ async function buildPostAttachmentContext(attachment) {
   return { summary: 'Attachment present but unsupported for direct parsing.', imageUrl: null };
 }
 
+function buildPostContentScanText(postDoc = {}) {
+  const attachment = postDoc && typeof postDoc.attachment === 'object' ? postDoc.attachment : null;
+  const parts = [
+    `Title: ${postDoc.title || ''}`,
+    `Content: ${postDoc.content || ''}`,
+    `Course: ${postDoc.course || ''}`,
+    `Visibility: ${postDoc.visibility || 'public'}`,
+  ];
+  if (attachment) {
+    const attachmentType = typeof attachment.type === 'string' ? attachment.type.trim() : '';
+    parts.push(`Attachment type: ${attachmentType || 'none'}`);
+    if (attachment.filename) {
+      parts.push(`Attachment filename: ${attachment.filename}`);
+    }
+    if (attachment.title) {
+      parts.push(`Attachment title: ${attachment.title}`);
+    }
+    if (attachment.link) {
+      parts.push(`Attachment link: ${attachment.link}`);
+    }
+    if (attachment.libraryDocumentUuid) {
+      parts.push(`Attached Open Library document UUID: ${attachment.libraryDocumentUuid}`);
+    }
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
 async function loadUploaderProfiles(uids) {
   if (!uids.length) {
     return new Map();
@@ -354,25 +382,6 @@ async function loadFollowingUids(viewerUid) {
        FROM follows
        WHERE follower_uid = $1`,
       [viewerUid]
-    );
-    return result.rows.map((row) => row.uid).filter(Boolean);
-  } catch (error) {
-    if (error && error.code === '42P01') {
-      return [];
-    }
-    throw error;
-  }
-}
-
-async function loadCourseMemberUids(courseName) {
-  const normalizedCourse = typeof courseName === 'string' ? courseName.trim() : '';
-  if (!normalizedCourse) return [];
-  try {
-    const result = await pool.query(
-      `SELECT uid
-       FROM accounts
-       WHERE course = $1`,
-      [normalizedCourse]
     );
     return result.rows.map((row) => row.uid).filter(Boolean);
   } catch (error) {
@@ -893,22 +902,29 @@ router.get('/api/posts', async (req, res) => {
           posts: [],
         });
       }
-
-      let courseUserUids = [];
-      try {
-        courseUserUids = await loadCourseMemberUids(viewerCourse);
-      } catch (error) {
-        console.error('Course-scope user loading failed:', error);
-      }
-
-      const scopeClauses = [{ course: viewerCourse }];
-      if (courseUserUids.length) {
-        scopeClauses.push({ uploaderUid: { $in: courseUserUids } });
-      }
+      const scopedVisibility = isUnifiedVisibilityEnabled()
+        ? ['private', 'course_exclusive']
+        : ['private'];
       if (!Array.isArray(filter.$and)) {
         filter.$and = [];
       }
-      filter.$and.push({ $or: scopeClauses });
+      filter.$and.push({
+        course: viewerCourse,
+        visibility: { $in: scopedVisibility },
+      });
+    }
+
+    if (feedScope === FEED_SCOPE_GLOBAL) {
+      if (!Array.isArray(filter.$and)) {
+        filter.$and = [];
+      }
+      filter.$and.push({
+        $or: [
+          { visibility: 'public' },
+          { visibility: null },
+          { visibility: { $exists: false } },
+        ],
+      });
     }
 
     if (course && course !== 'all') {
@@ -1376,6 +1392,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
   const {
     title,
     content,
+    feedScope: requestedFeedScopeRaw,
     attachmentType,
     attachmentLink,
     attachmentTitle,
@@ -1387,8 +1404,19 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Title and content are required.' });
   }
 
-  const visibilityValue = 'public';
+  const requestedFeedScope = normalizeFeedScope(requestedFeedScopeRaw);
+  const feedScopeEnabled = isGlobalCourseFeedEnabled();
+  const effectiveFeedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
+  const visibilityValue = effectiveFeedScope === FEED_SCOPE_COURSE
+    ? (isUnifiedVisibilityEnabled() ? 'course_exclusive' : 'private')
+    : 'public';
   const userCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
+  if (visibilityValue !== 'public' && !userCourse) {
+    return res.status(400).json({
+      ok: false,
+      message: 'Your account must have a course to post in the course feed.',
+    });
+  }
 
   try {
     const db = await getMongoDb();
@@ -1480,20 +1508,55 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const result = await postsCollection.insertOne(postDoc);
     const postId = result.insertedId.toString();
 
+    setImmediate(() => {
+      const contentScanText = buildPostContentScanText(postDoc);
+      autoScanIncomingContent({
+        targetType: 'post',
+        targetId: postId,
+        requestedByUid: req.user.uid,
+        content: contentScanText,
+        metadata: {
+          visibility: postDoc.visibility || 'public',
+          course: postDoc.course || '',
+          attachmentType: postDoc.attachment && postDoc.attachment.type ? postDoc.attachment.type : null,
+          attachmentLibraryDocumentUuid:
+            postDoc.attachment && postDoc.attachment.libraryDocumentUuid
+              ? postDoc.attachment.libraryDocumentUuid
+              : null,
+          source: 'home_feed_create',
+        },
+      }).catch((error) => {
+        console.error('Post auto content scan failed:', error);
+      });
+    });
+
     try {
-      const followersResult = await pool.query(
-        `SELECT f.follower_uid AS uid
-         FROM follows f
-         WHERE f.target_uid = $1
-           AND f.follower_uid <> $1
-           AND NOT EXISTS (
-             SELECT 1
-             FROM blocked_users bu
-             WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
-                OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
-           )`,
-        [req.user.uid]
-      );
+      const followerFilterByCourse = visibilityValue !== 'public' && userCourse;
+      const followerQuery = followerFilterByCourse
+        ? `SELECT f.follower_uid AS uid
+           FROM follows f
+           JOIN accounts follower ON follower.uid = f.follower_uid
+           WHERE f.target_uid = $1
+             AND f.follower_uid <> $1
+             AND follower.course = $2
+             AND NOT EXISTS (
+               SELECT 1
+               FROM blocked_users bu
+               WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
+                  OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
+             )`
+        : `SELECT f.follower_uid AS uid
+           FROM follows f
+           WHERE f.target_uid = $1
+             AND f.follower_uid <> $1
+             AND NOT EXISTS (
+               SELECT 1
+               FROM blocked_users bu
+               WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
+                  OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
+             )`;
+      const followerParams = followerFilterByCourse ? [req.user.uid, userCourse] : [req.user.uid];
+      const followersResult = await pool.query(followerQuery, followerParams);
       const followerUids = followersResult.rows.map((row) => row.uid).filter(Boolean);
       if (followerUids.length) {
         await createNotificationsForRecipients({
@@ -1533,10 +1596,6 @@ router.patch('/api/posts/:id', async (req, res) => {
   const updates = {};
   if (title) updates.title = title.trim();
   if (content) updates.content = content.trim();
-  updates.visibility = 'public';
-  if (req.user && req.user.course) {
-    updates.course = String(req.user.course).trim() || null;
-  }
 
   try {
     const db = await getMongoDb();

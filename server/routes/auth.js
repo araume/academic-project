@@ -100,7 +100,13 @@ function normalizePlatformRole(value) {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'administrator') return 'admin';
   if (normalized === 'student') return 'member';
-  if (normalized === 'owner' || normalized === 'admin' || normalized === 'professor' || normalized === 'member') {
+  if (
+    normalized === 'owner' ||
+    normalized === 'admin' ||
+    normalized === 'depadmin' ||
+    normalized === 'professor' ||
+    normalized === 'member'
+  ) {
     return normalized;
   }
   return 'member';
@@ -1368,10 +1374,10 @@ router.post('/api/id-verification/:uid/decision', requireAuthApi, async (req, re
       return res.status(403).json({ ok: false, message: 'Reviewer account not found.' });
     }
     const actorRole = normalizePlatformRole(actorResult.rows[0].platform_role);
-    if (!['owner', 'admin', 'professor'].includes(actorRole)) {
+    if (!['owner', 'admin', 'depadmin', 'professor'].includes(actorRole)) {
       await client.query('ROLLBACK');
       inTransaction = false;
-      return res.status(403).json({ ok: false, message: 'Only owner/admin/professor can review verification.' });
+      return res.status(403).json({ ok: false, message: 'Only owner/admin/depadmin/professor can review verification.' });
     }
 
     const targetResult = await client.query(
@@ -1392,10 +1398,10 @@ router.post('/api/id-verification/:uid/decision', requireAuthApi, async (req, re
     }
     const targetRole = normalizePlatformRole(targetResult.rows[0].platform_role);
 
-    if (actorRole === 'professor' && targetRole !== 'member') {
+    if ((actorRole === 'professor' || actorRole === 'depadmin') && targetRole !== 'member') {
       await client.query('ROLLBACK');
       inTransaction = false;
-      return res.status(403).json({ ok: false, message: 'Professors can only review member accounts.' });
+      return res.status(403).json({ ok: false, message: 'Professors and DepAdmins can only review member accounts.' });
     }
     if (actorRole === 'admin' && targetRole === 'owner') {
       await client.query('ROLLBACK');

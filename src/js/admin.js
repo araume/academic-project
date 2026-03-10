@@ -48,6 +48,13 @@ const aiMcpCalls = document.getElementById('aiMcpCalls');
 const aiRiskEvents = document.getElementById('aiRiskEvents');
 const aiUsageTableBody = document.getElementById('aiUsageTableBody');
 const aiEventsTableBody = document.getElementById('aiEventsTableBody');
+const aiReportsQuery = document.getElementById('aiReportsQuery');
+const aiReportsRisk = document.getElementById('aiReportsRisk');
+const aiReportsTargetType = document.getElementById('aiReportsTargetType');
+const aiReportsStatus = document.getElementById('aiReportsStatus');
+const aiReportsFlaggedOnly = document.getElementById('aiReportsFlaggedOnly');
+const refreshAiReports = document.getElementById('refreshAiReports');
+const aiReportsTableBody = document.getElementById('aiReportsTableBody');
 const reloadAiFeatures = document.getElementById('reloadAiFeatures');
 const saveAiFeatures = document.getElementById('saveAiFeatures');
 const aiFeatureToggleScan = document.getElementById('aiFeatureToggleScan');
@@ -74,6 +81,15 @@ const professorCodeExpiresDays = document.getElementById('professorCodeExpiresDa
 const generateProfessorCodes = document.getElementById('generateProfessorCodes');
 const generatedProfessorCodesOutput = document.getElementById('generatedProfessorCodesOutput');
 const professorCodesMessage = document.getElementById('professorCodesMessage');
+const depAdminAssignmentsQuery = document.getElementById('depAdminAssignmentsQuery');
+const depAdminCourseFilter = document.getElementById('depAdminCourseFilter');
+const refreshDepAdminAssignments = document.getElementById('refreshDepAdminAssignments');
+const depAdminAssignCourse = document.getElementById('depAdminAssignCourse');
+const depAdminAccountQuery = document.getElementById('depAdminAccountQuery');
+const searchDepAdminCandidates = document.getElementById('searchDepAdminCandidates');
+const depAdminMessage = document.getElementById('depAdminMessage');
+const depAdminCandidatesTableBody = document.getElementById('depAdminCandidatesTableBody');
+const depAdminAssignmentsTableBody = document.getElementById('depAdminAssignmentsTableBody');
 
 const moderatorCommunity = document.getElementById('moderatorCommunity');
 const moderatorTargetUid = document.getElementById('moderatorTargetUid');
@@ -127,6 +143,7 @@ let viewerRole = 'member';
 let viewerUid = '';
 let currentContentTab = 'main-posts';
 let cachedCommunities = [];
+let cachedDepAdminCourses = [];
 
 function escapeHtml(value) {
   const stringValue = String(value ?? '');
@@ -195,6 +212,14 @@ function formatNumber(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return '0';
   return parsed.toLocaleString();
+}
+
+function formatAiTargetType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'post') return 'Main feed post';
+  if (normalized === 'subject_post') return 'Unit post';
+  if (normalized === 'document') return 'Open Library document';
+  return normalized || '-';
 }
 
 function formatDeadlineLabel(value) {
@@ -603,6 +628,75 @@ async function loadAiUsage() {
   }
 }
 
+async function loadAiReports() {
+  if (!aiReportsTableBody) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+  });
+  if (aiReportsQuery && aiReportsQuery.value.trim()) params.set('q', aiReportsQuery.value.trim());
+  if (aiReportsRisk && aiReportsRisk.value) params.set('risk', aiReportsRisk.value);
+  if (aiReportsTargetType && aiReportsTargetType.value) params.set('targetType', aiReportsTargetType.value);
+  if (aiReportsStatus && aiReportsStatus.value) params.set('status', aiReportsStatus.value);
+  if (aiReportsFlaggedOnly) {
+    params.set('flaggedOnly', aiReportsFlaggedOnly.checked ? 'true' : 'false');
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/ai-reports?${params.toString()}`);
+    const reports = Array.isArray(data.reports) ? data.reports : [];
+    if (!reports.length) {
+      renderEmptyRow(aiReportsTableBody, 8);
+      return;
+    }
+
+    aiReportsTableBody.innerHTML = reports
+      .map((item) => {
+        const targetLabel = item.targetTitle || item.targetId || '-';
+        const targetMeta = [formatAiTargetType(item.targetType), item.targetCourse || '']
+          .filter(Boolean)
+          .join(' • ');
+        const targetLink = normalizeActionTargetUrl(item.targetUrl || '');
+        const targetCellMain = targetLink
+          ? `<a href="${escapeHtml(targetLink)}">${escapeHtml(targetLabel)}</a>`
+          : escapeHtml(targetLabel);
+        const flagsText = Array.isArray(item.flags) && item.flags.length
+          ? item.flags.join(', ')
+          : '-';
+        const recommendedAction = item.recommendedAction
+          ? String(item.recommendedAction).replace(/_/g, ' ')
+          : '-';
+        const summaryText = item.summary || '-';
+        const riskClass = item.flagged ? 'error' : item.riskLevel === 'low' ? 'success' : 'blocked';
+        const statusClass = item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'blocked';
+        return `
+          <tr>
+            <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${targetCellMain}</strong>
+                <small>${escapeHtml(targetMeta || '-')}</small>
+              </div>
+            </td>
+            <td>
+              <div class="stacked-cell">
+                <span class="status-pill ${riskClass}">${escapeHtml(item.riskLevel || 'unknown')}</span>
+                <small>Score: ${escapeHtml(item.riskScore == null ? '-' : formatNumber(item.riskScore))}</small>
+              </div>
+            </td>
+            <td>${escapeHtml(recommendedAction)}</td>
+            <td>${escapeHtml(flagsText)}</td>
+            <td>${escapeHtml(summaryText)}</td>
+            <td>${escapeHtml(item.requestedByName || item.requestedByUid || '-')}</td>
+            <td><span class="status-pill ${statusClass}">${escapeHtml(item.status || '-')}</span></td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(aiReportsTableBody, 8, error.message);
+  }
+}
+
 const aiFeatureToggleConfig = {
   ai_scan: {
     input: aiFeatureToggleScan,
@@ -695,6 +789,7 @@ function buildRoleControl(uid, role) {
       <select class="small-select" data-role-select="${escapeHtml(uid)}">
         <option value="member" ${normalizedRole === 'member' ? 'selected' : ''}>student</option>
         <option value="professor" ${normalizedRole === 'professor' ? 'selected' : ''}>professor</option>
+        <option value="depadmin" ${normalizedRole === 'depadmin' ? 'selected' : ''}>depadmin</option>
         <option value="admin" ${normalizedRole === 'admin' ? 'selected' : ''}>admin</option>
       </select>
       <button class="secondary-button" data-action="save-role" data-uid="${escapeHtml(uid)}">Save role</button>
@@ -706,6 +801,7 @@ function formatRoleLabel(role) {
   const normalized = String(role || '').trim().toLowerCase();
   if (normalized === 'owner') return 'Owner';
   if (normalized === 'admin') return 'Admin';
+  if (normalized === 'depadmin') return 'DepAdmin';
   if (normalized === 'professor') return 'Professor';
   return 'Student';
 }
@@ -739,7 +835,7 @@ function buildIdVerificationControl(account) {
   const note = account && account.idVerificationNote ? String(account.idVerificationNote).trim() : '';
   const reviewerName = account && account.idVerifiedByName ? String(account.idVerifiedByName).trim() : '';
   const reviewedAt = account && account.idVerifiedAt ? formatDateTime(account.idVerifiedAt) : '';
-  const canReview = ['owner', 'admin', 'professor'].includes(viewerRole) && account && account.uid && account.uid !== viewerUid;
+  const canReview = ['owner', 'admin', 'depadmin', 'professor'].includes(viewerRole) && account && account.uid && account.uid !== viewerUid;
 
   const lines = [buildIdVerificationPill(status)];
   if (reviewerName || reviewedAt) {
@@ -917,6 +1013,175 @@ async function generateProfessorCodesBatch() {
   } finally {
     generateProfessorCodes.disabled = false;
     generateProfessorCodes.textContent = originalLabel;
+  }
+}
+
+function populateDepAdminCourseSelectors(courses) {
+  cachedDepAdminCourses = Array.isArray(courses) ? courses : [];
+  const options = cachedDepAdminCourses
+    .map((course) => {
+      const code = course && course.courseCode ? `${course.courseCode} · ` : '';
+      const label = `${code}${course && course.courseName ? course.courseName : 'Unnamed course'}`;
+      return `<option value="${escapeHtml(course.courseName || '')}">${escapeHtml(label)}</option>`;
+    })
+    .join('');
+
+  if (depAdminCourseFilter) {
+    const previousValue = depAdminCourseFilter.value;
+    depAdminCourseFilter.innerHTML = `<option value="">All courses</option>${options}`;
+    if (previousValue) depAdminCourseFilter.value = previousValue;
+  }
+  if (depAdminAssignCourse) {
+    const previousValue = depAdminAssignCourse.value;
+    depAdminAssignCourse.innerHTML = `<option value="">Select course</option>${options}`;
+    if (previousValue) depAdminAssignCourse.value = previousValue;
+  }
+}
+
+async function loadDepAdminAssignments() {
+  if (!depAdminAssignmentsTableBody) return;
+  const params = new URLSearchParams();
+  if (depAdminAssignmentsQuery && depAdminAssignmentsQuery.value.trim()) {
+    params.set('q', depAdminAssignmentsQuery.value.trim());
+  }
+  if (depAdminCourseFilter && depAdminCourseFilter.value.trim()) {
+    params.set('course', depAdminCourseFilter.value.trim());
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/dep-admin/assignments?${params.toString()}`);
+    populateDepAdminCourseSelectors(Array.isArray(data.courses) ? data.courses : []);
+
+    const rows = Array.isArray(data.assignments) ? data.assignments : [];
+    if (!rows.length) {
+      renderEmptyRow(depAdminAssignmentsTableBody, 6);
+      return;
+    }
+
+    depAdminAssignmentsTableBody.innerHTML = rows
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(item.courseCode ? `${item.courseCode} · ${item.courseName || ''}` : item.courseName || '-')}</td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${escapeHtml(item.depAdminName || item.depAdminUid || '-')}</strong>
+                <small>${escapeHtml(item.depAdminUsername || item.depAdminEmail || item.depAdminUid || '-')}</small>
+              </div>
+            </td>
+            <td>${escapeHtml(formatRoleLabel(item.depAdminRole || 'member'))}</td>
+            <td>${escapeHtml(item.assignedByName || item.assignedByUid || '-')}</td>
+            <td>${escapeHtml(formatDateTime(item.updatedAt || item.createdAt))}</td>
+            <td>
+              <div class="row-actions">
+                <button class="danger-button" data-action="remove-dep-admin-assignment" data-id="${escapeHtml(item.id)}">
+                  Remove
+                </button>
+              </div>
+            </td>
+          </tr>`
+      )
+      .join('');
+  } catch (error) {
+    renderEmptyRow(depAdminAssignmentsTableBody, 6, error.message);
+  }
+}
+
+async function searchDepAdminCandidatesList() {
+  if (!depAdminCandidatesTableBody) return;
+  setInlineMessage(depAdminMessage, '');
+
+  const query = depAdminAccountQuery ? depAdminAccountQuery.value.trim() : '';
+  if (!query || query.length < 2) {
+    renderEmptyRow(depAdminCandidatesTableBody, 6, 'Type at least 2 characters to search accounts.');
+    return;
+  }
+
+  const params = new URLSearchParams();
+  params.set('q', query);
+  if (depAdminAssignCourse && depAdminAssignCourse.value.trim()) {
+    params.set('course', depAdminAssignCourse.value.trim());
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/dep-admin/candidates?${params.toString()}`);
+    const rows = Array.isArray(data.candidates) ? data.candidates : [];
+    if (!rows.length) {
+      renderEmptyRow(depAdminCandidatesTableBody, 6, 'No matching accounts.');
+      return;
+    }
+
+    depAdminCandidatesTableBody.innerHTML = rows
+      .map((item) => {
+        const assignedCourses = Array.isArray(item.assignedCourses) && item.assignedCourses.length
+          ? item.assignedCourses.join(', ')
+          : '-';
+        const actionDisabled = item.isBanned ? 'disabled' : '';
+        return `
+          <tr>
+            <td>${escapeHtml(item.displayName || item.username || item.email || item.uid || '-')}</td>
+            <td>${escapeHtml(item.uid || '-')}</td>
+            <td>${escapeHtml(item.course || '-')}</td>
+            <td>${escapeHtml(formatRoleLabel(item.role || 'member'))}</td>
+            <td>${escapeHtml(assignedCourses)}</td>
+            <td>
+              <div class="row-actions">
+                <button class="secondary-button" data-action="assign-dep-admin" data-uid="${escapeHtml(item.uid)}" ${actionDisabled}>
+                  Assign
+                </button>
+              </div>
+            </td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(depAdminCandidatesTableBody, 6, error.message);
+  }
+}
+
+async function assignDepAdmin(uid) {
+  const targetUid = String(uid || '').trim();
+  const courseName = depAdminAssignCourse ? depAdminAssignCourse.value.trim() : '';
+  if (!targetUid) return;
+  if (!courseName) {
+    setInlineMessage(depAdminMessage, 'Select a course first.');
+    return;
+  }
+
+  try {
+    const data = await apiRequest('/api/admin/dep-admin/assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUid,
+        courseName,
+        accountQuery: depAdminAccountQuery ? depAdminAccountQuery.value.trim() : '',
+      }),
+    });
+    setInlineMessage(depAdminMessage, data.message || 'DepAdmin assigned.', 'success');
+    setPageMessage('DepAdmin assignment updated.', 'success');
+    await loadDepAdminAssignments();
+    await searchDepAdminCandidatesList();
+    await loadAccounts();
+  } catch (error) {
+    setInlineMessage(depAdminMessage, error.message);
+  }
+}
+
+async function removeDepAdminAssignment(id) {
+  const assignmentId = String(id || '').trim();
+  if (!assignmentId) return;
+  if (!window.confirm('Remove this DepAdmin assignment?')) return;
+  try {
+    const data = await apiRequest(`/api/admin/dep-admin/assignments/${encodeURIComponent(assignmentId)}`, {
+      method: 'DELETE',
+    });
+    setInlineMessage(depAdminMessage, data.message || 'DepAdmin assignment removed.', 'success');
+    setPageMessage('DepAdmin assignment removed.', 'success');
+    await loadDepAdminAssignments();
+    await loadAccounts();
+  } catch (error) {
+    setInlineMessage(depAdminMessage, error.message);
   }
 }
 
@@ -1592,6 +1857,24 @@ if (professorCodesTableBody) {
   });
 }
 
+if (depAdminCandidatesTableBody) {
+  depAdminCandidatesTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="assign-dep-admin"][data-uid]');
+    if (!button) return;
+    const uid = button.dataset.uid || '';
+    await assignDepAdmin(uid);
+  });
+}
+
+if (depAdminAssignmentsTableBody) {
+  depAdminAssignmentsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="remove-dep-admin-assignment"][data-id]');
+    if (!button) return;
+    const id = button.dataset.id || '';
+    await removeDepAdminAssignment(id);
+  });
+}
+
 accountsTableBody.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -1796,9 +2079,23 @@ if (refreshRestricted) refreshRestricted.addEventListener('click', loadRestricte
 if (refreshAppeals) refreshAppeals.addEventListener('click', loadAppeals);
 if (refreshAccounts) refreshAccounts.addEventListener('click', loadAccounts);
 if (refreshProfessorCodes) refreshProfessorCodes.addEventListener('click', loadProfessorCodes);
+if (refreshDepAdminAssignments) refreshDepAdminAssignments.addEventListener('click', loadDepAdminAssignments);
 if (refreshContent) refreshContent.addEventListener('click', loadContent);
 if (refreshAiUsage) refreshAiUsage.addEventListener('click', loadAiUsage);
 if (aiUsageDays) aiUsageDays.addEventListener('change', loadAiUsage);
+if (refreshAiReports) refreshAiReports.addEventListener('click', loadAiReports);
+if (aiReportsFlaggedOnly) aiReportsFlaggedOnly.addEventListener('change', loadAiReports);
+if (aiReportsRisk) aiReportsRisk.addEventListener('change', loadAiReports);
+if (aiReportsTargetType) aiReportsTargetType.addEventListener('change', loadAiReports);
+if (aiReportsStatus) aiReportsStatus.addEventListener('change', loadAiReports);
+if (aiReportsQuery) {
+  aiReportsQuery.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadAiReports();
+    }
+  });
+}
 if (reloadAiFeatures) reloadAiFeatures.addEventListener('click', loadAiFeatureStates);
 if (saveAiFeatures) {
   saveAiFeatures.addEventListener('click', () => {
@@ -1806,6 +2103,15 @@ if (saveAiFeatures) {
   });
 }
 if (generateProfessorCodes) generateProfessorCodes.addEventListener('click', generateProfessorCodesBatch);
+if (searchDepAdminCandidates) searchDepAdminCandidates.addEventListener('click', searchDepAdminCandidatesList);
+if (depAdminAccountQuery) {
+  depAdminAccountQuery.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      searchDepAdminCandidatesList();
+    }
+  });
+}
 
 if (purgeExpiredRestricted) {
   purgeExpiredRestricted.addEventListener('click', async () => {
@@ -1892,6 +2198,10 @@ if (reloadSpacesRooms) {
   });
 }
 
+if (depAdminCandidatesTableBody) {
+  renderEmptyRow(depAdminCandidatesTableBody, 6, 'Search accounts to assign as DepAdmin.');
+}
+
 async function init() {
   try {
     await loadAdminContext();
@@ -1903,12 +2213,14 @@ async function init() {
       loadAppeals(),
       loadAccounts(),
       loadProfessorCodes(),
+      loadDepAdminAssignments(),
       loadAboutPageEditor(),
       loadFaqPageEditor(),
       loadMobileAppPageEditor(),
       loadRoomContextLabelEditor(),
       loadAiFeatureStates(),
       loadAiUsage(),
+      loadAiReports(),
     ]);
     setContentHeaders(currentContentTab);
     await loadContent();

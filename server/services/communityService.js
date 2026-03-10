@@ -214,7 +214,7 @@ async function ensureCommunitySchema() {
   await pool.query(
     `UPDATE accounts
      SET platform_role = 'member'
-     WHERE platform_role IS NULL OR platform_role NOT IN ('owner', 'admin', 'member')`
+     WHERE platform_role IS NULL OR platform_role NOT IN ('owner', 'admin', 'depadmin', 'professor', 'member')`
   );
 }
 
