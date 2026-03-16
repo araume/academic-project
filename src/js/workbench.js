@@ -1663,7 +1663,8 @@ async function showDirectoryProperties(nodeId) {
   const props = data && data.properties ? data.properties : null;
   if (!props) throw new Error('No properties found.');
   const pathLabel = Array.isArray(props.path) ? props.path.map((entry) => entry.title).join('/') : '';
-  const summary = [
+  const history = Array.isArray(props.history) ? props.history : [];
+  const summaryLines = [
     `Title: ${props.title}`,
     `Type: ${props.nodeType}`,
     `Visibility: ${props.visibility}`,
@@ -1671,8 +1672,20 @@ async function showDirectoryProperties(nodeId) {
     `Size(bytes): ${props.markdownBytes}`,
     `Created by: ${props.createdByUid}`,
     `Path: ${pathLabel}`,
-  ].join('\n');
-  window.alert(summary);
+  ];
+  if (history.length) {
+    summaryLines.push('');
+    summaryLines.push('History (latest first):');
+    history.forEach((event) => {
+      const actor = event.actorName || event.actorUid || 'unknown';
+      const when = event.createdAt ? formatDateTime(event.createdAt) : '';
+      const lineParts = [`- ${event.action} by ${actor}`];
+      if (when) lineParts.push(`at ${when}`);
+      if (event.description) lineParts.push(`— ${event.description}`);
+      summaryLines.push(lineParts.join(' '));
+    });
+  }
+  window.alert(summaryLines.join('\n'));
 }
 
 async function setDirectoryVisibility(node, visibility) {
@@ -2532,6 +2545,13 @@ function renderNodeList() {
     const mainButton = document.createElement('button');
     mainButton.type = 'button';
     mainButton.className = 'directory-row-main';
+    const lastActor = node.lastEventActorName || node.lastEventActorUid || node.createdByUid || '';
+    const lastAction = node.lastEventAction || 'updated';
+    const lastAt = node.lastEventAt || node.updatedAt || node.createdAt;
+    const hoverSummaryParts = [];
+    if (lastActor) hoverSummaryParts.push(`Last: ${lastAction} by ${lastActor}`);
+    if (lastAt) hoverSummaryParts.push(`at ${formatDateTime(lastAt)}`);
+    mainButton.title = hoverSummaryParts.join(' • ') || '';
     mainButton.innerHTML = `
       <span class="directory-icon">${node.nodeType === 'folder' ? '\uD83D\uDCC1' : '\uD83D\uDCC4'}</span>
       <span class="directory-name-wrap">

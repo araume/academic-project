@@ -37,6 +37,26 @@ const WORKBENCH_WORKSPACE_FOLDER_NAME = 'workbench';
 const WORKBENCH_RECYCLE_BIN_NAME = 'recycle-bin';
 let ensureWorkbenchTablesPromise = null;
 
+async function logWorkbenchNodeEvent(client, {
+  workbenchId,
+  nodeId,
+  actorUid,
+  action,
+  description,
+}) {
+  const numericWorkbenchId = parsePositiveInt(workbenchId);
+  const numericNodeId = parsePositiveInt(nodeId);
+  if (!numericWorkbenchId || !numericNodeId) return;
+  const safeAction = sanitizeText(action, 80) || 'unknown';
+  const safeDescription = sanitizeText(description, 4000);
+  await client.query(
+    `INSERT INTO workbench_node_events
+      (workbench_id, node_id, actor_uid, action, description, created_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [numericWorkbenchId, numericNodeId, actorUid || null, safeAction, safeDescription]
+  );
+}
+
 function sanitizeText(value, maxLen = 500) {
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, maxLen);
@@ -972,6 +992,19 @@ async function ensureWorkbenchTables() {
       END IF;
     END $$;
 
+    CREATE TABLE IF NOT EXISTS workbench_node_events (
+      id BIGSERIAL PRIMARY KEY,
+      workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+      node_id BIGINT NOT NULL REFERENCES workbench_nodes(id) ON DELETE CASCADE,
+      actor_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS workbench_node_events_node_idx
+      ON workbench_node_events(workbench_id, node_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS workbench_professor_assignments (
       id BIGSERIAL PRIMARY KEY,
       workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
@@ -1479,6 +1512,10 @@ function mapDirectoryNodePayload(row) {
     positionY: row.position_y == null ? null : Number(row.position_y),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastEventAction: row.last_event_action || null,
+    lastEventActorUid: row.last_event_actor_uid || null,
+    lastEventAt: row.last_event_at || null,
+    lastEventActorName: row.last_event_actor_name || null,
   };
 }
 
@@ -2832,8 +2869,23 @@ router.get('/api/workbench/:id/directory', async (req, res) => {
         wn.source,
         wn.ai_model,
         wn.created_at,
-        wn.updated_at
+        wn.updated_at,
+        evt.action AS last_event_action,
+        evt.actor_uid AS last_event_actor_uid,
+        evt.created_at AS last_event_at,
+        COALESCE(evt_actor.display_name, evt_actor.username, evt_actor.email, evt.actor_uid) AS last_event_actor_name
        FROM workbench_nodes wn
+       LEFT JOIN LATERAL (
+         SELECT action, actor_uid, created_at
+         FROM workbench_node_events
+         WHERE workbench_id = $1
+           AND node_id = wn.id
+         ORDER BY created_at DESC
+         LIMIT 1
+       ) AS evt ON TRUE
+       LEFT JOIN accounts evt_actor
+         ON evt.actor_uid IS NOT NULL
+        AND evt_actor.uid = evt.actor_uid
        WHERE wn.workbench_id = $1
          AND wn.parent_node_id = $2
          AND COALESCE(wn.is_deleted, false) = ${inRecycleBin ? 'true' : 'false'}
@@ -2911,6 +2963,14 @@ router.post('/api/workbench/:id/directory', async (req, res) => {
        RETURNING *`,
       [workbenchId, viewer.uid, title, markdown, nodeType, parentId, visibility, sortOrder]
     );
+    const createdNode = result.rows[0];
+    await logWorkbenchNodeEvent(client, {
+      workbenchId,
+      nodeId: createdNode.id,
+      actorUid: viewer.uid,
+      action: nodeType === 'folder' ? 'create_folder' : 'create_file',
+      description: `Created ${nodeType} "${title}" in folder #${parentId}`,
+    });
     return res.status(201).json({
       ok: true,
       node: mapDirectoryNodePayload(result.rows[0]),
@@ -2990,6 +3050,13 @@ router.post('/api/workbench/:id/directory/:nodeId/move', async (req, res) => {
          AND id = $2`,
       [workbenchId, nodeId, targetParentId]
     );
+    await logWorkbenchNodeEvent(client, {
+      workbenchId,
+      nodeId,
+      actorUid: viewer.uid,
+      action: 'move',
+      description: `Moved item #${nodeId} to folder #${targetParentId}`,
+    });
     return res.json({ ok: true, message: 'Item moved.' });
   } catch (error) {
     console.error('Repository directory move failed:', error);
@@ -3098,6 +3165,15 @@ router.post('/api/workbench/:id/directory/:nodeId/copy', async (req, res) => {
     }
 
     const copiedNode = await getWorkbenchNodeById(workbenchId, copiedRootId, client);
+    if (copiedNode) {
+      await logWorkbenchNodeEvent(client, {
+        workbenchId,
+        nodeId: copiedNode.id,
+        actorUid: viewer.uid,
+        action: 'copy',
+        description: `Copied item #${nodeId} to folder #${copiedNode.parent_node_id || targetParentId}`,
+      });
+    }
     return res.status(201).json({
       ok: true,
       copiedNode: copiedNode ? mapDirectoryNodePayload(copiedNode) : null,
@@ -3159,6 +3235,13 @@ router.post('/api/workbench/:id/directory/:nodeId/trash', async (req, res) => {
       WHERE wn.id IN (SELECT id FROM subtree)`,
       [workbenchId, nodeId, viewer.uid, roots.recycleBinId]
     );
+    await logWorkbenchNodeEvent(client, {
+      workbenchId,
+      nodeId,
+      actorUid: viewer.uid,
+      action: 'trash',
+      description: `Moved item #${nodeId} (and its children, if any) to recycle-bin.`,
+    });
     return res.json({ ok: true, message: 'Item moved to recycle-bin.' });
   } catch (error) {
     console.error('Repository directory trash failed:', error);
@@ -3228,6 +3311,13 @@ router.post('/api/workbench/:id/directory/:nodeId/restore', async (req, res) => 
       [workbenchId, nodeId, targetParentId]
     );
 
+    await logWorkbenchNodeEvent(client, {
+      workbenchId,
+      nodeId,
+      actorUid: viewer.uid,
+      action: 'restore',
+      description: `Restored item #${nodeId} to folder #${targetParentId}.`,
+    });
     return res.json({ ok: true, message: 'Item restored.' });
   } catch (error) {
     console.error('Repository directory restore failed:', error);
@@ -3283,6 +3373,13 @@ router.delete('/api/workbench/:id/directory/:nodeId/permanent', async (req, res)
       [workbenchId, nodeId]
     );
 
+    await logWorkbenchNodeEvent(client, {
+      workbenchId,
+      nodeId,
+      actorUid: viewer.uid,
+      action: 'delete_permanent',
+      description: `Permanently deleted item #${nodeId} (and its children, if any).`,
+    });
     return res.json({
       ok: true,
       deletedCount: deleteResult.rows.length,
@@ -3315,7 +3412,7 @@ router.get('/api/workbench/:id/directory/:nodeId/properties', async (req, res) =
       return res.status(403).json({ ok: false, message: 'You cannot view this item.' });
     }
 
-    const [childCountResult, path] = await Promise.all([
+    const [childCountResult, path, historyResult] = await Promise.all([
       client.query(
         `SELECT COUNT(*)::INT AS total
          FROM workbench_nodes
@@ -3324,6 +3421,23 @@ router.get('/api/workbench/:id/directory/:nodeId/properties', async (req, res) =
         [workbenchId, nodeId]
       ),
       getNodePath(workbenchId, nodeId, client),
+      client.query(
+        `SELECT
+           e.action,
+           e.actor_uid,
+           COALESCE(a.display_name, a.username, a.email, e.actor_uid) AS actor_name,
+           e.description,
+           e.created_at
+         FROM workbench_node_events e
+         LEFT JOIN accounts a
+           ON e.actor_uid IS NOT NULL
+          AND a.uid = e.actor_uid
+         WHERE e.workbench_id = $1
+           AND e.node_id = $2
+         ORDER BY e.created_at DESC
+         LIMIT 50`,
+        [workbenchId, nodeId]
+      ),
     ]);
 
     const markdownBytes = Buffer.byteLength(node.markdown_content || '', 'utf8');
@@ -3345,6 +3459,13 @@ router.get('/api/workbench/:id/directory/:nodeId/properties', async (req, res) =
         deletedAt: node.deleted_at || null,
         deletedByUid: node.deleted_by_uid || null,
         path,
+        history: historyResult.rows.map((row) => ({
+          action: row.action,
+          actorUid: row.actor_uid,
+          actorName: row.actor_name || row.actor_uid || null,
+          description: row.description || '',
+          createdAt: row.created_at,
+        })),
       },
     });
   } catch (error) {
@@ -3412,6 +3533,17 @@ router.patch('/api/workbench/:id/directory/:nodeId/visibility', async (req, res)
         [workbenchId, nodeId, visibility]
       );
     }
+
+    await logWorkbenchNodeEvent(client, {
+      workbenchId,
+      nodeId,
+      actorUid: viewer.uid,
+      action: 'visibility_change',
+      description: applyRecursively && node.node_type === 'folder'
+        ? `Updated visibility to "${visibility}" for folder #${nodeId} and its descendants.`
+        : `Updated visibility to "${visibility}" for item #${nodeId}.`,
+    });
+
     return res.json({
       ok: true,
       updatedCount: updateResult.rows.length,
@@ -3714,6 +3846,16 @@ router.patch('/api/workbench/:id/nodes/:nodeId', async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Node not found.' });
     }
     const row = result.rows[0];
+    const changedFields = Object.keys(req.body || {}).filter(Boolean).join(', ');
+    await logWorkbenchNodeEvent(pool, {
+      workbenchId,
+      nodeId,
+      actorUid: viewer.uid,
+      action: 'edit',
+      description: changedFields
+        ? `Edited node #${nodeId} (fields: ${changedFields}).`
+        : `Edited node #${nodeId}.`,
+    });
     return res.json({
       ok: true,
       node: {

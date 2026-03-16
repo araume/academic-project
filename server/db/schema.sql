@@ -1076,6 +1076,16 @@ CREATE TABLE IF NOT EXISTS workbench_nodes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS workbench_node_events (
+  id BIGSERIAL PRIMARY KEY,
+  workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
+  node_id BIGINT NOT NULL REFERENCES workbench_nodes(id) ON DELETE CASCADE,
+  actor_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS workbench_edges (
   id BIGSERIAL PRIMARY KEY,
   workbench_id BIGINT NOT NULL REFERENCES workbenches(id) ON DELETE CASCADE,
@@ -1120,6 +1130,9 @@ ALTER TABLE workbench_edges
 ALTER TABLE workbench_edges
   ADD CONSTRAINT workbench_edges_to_anchor_check
     CHECK (to_anchor IN ('top', 'right', 'bottom', 'left'));
+
+CREATE INDEX IF NOT EXISTS workbench_node_events_node_idx
+  ON workbench_node_events(workbench_id, node_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS workbench_notes (
   id BIGSERIAL PRIMARY KEY,
