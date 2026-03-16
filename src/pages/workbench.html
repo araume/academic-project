@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Repository</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/workbench.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" class="is-active" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">ME</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="workbench-shell" id="workbenchShell">
+    <section class="card workbench-menu" id="workbenchMenuCard" aria-label="Repository sections">
+      <button type="button" class="workbench-menu-button is-active" data-workbench-view="overview">Overview</button>
+      <button type="button" class="workbench-menu-button" data-workbench-view="create">Create / Request</button>
+      <button type="button" class="workbench-menu-button" data-workbench-view="markdown">Markdown Directory</button>
+      <button type="button" class="workbench-menu-button" data-workbench-view="board">Node Board</button>
+      <button type="button" class="workbench-menu-button" data-workbench-view="tasks">Taskboard</button>
+      <button type="button" class="workbench-menu-button" data-workbench-view="members">Members</button>
+      <button type="button" class="workbench-menu-button is-hidden" data-workbench-view="review" id="reviewQueueMenuButton">Review Queue</button>
+    </section>
+
+    <aside class="workbench-left" id="workbenchLeftColumn">
+      <section class="card hero-card" data-workbench-panel="overview">
+        <p class="eyebrow">ComLab collaboration</p>
+        <h1>Repository + Taskboard</h1>
+        <p class="subcopy">Build shared markdown nodes, connect ideas, and manage collaborative tasks in one course-scoped workspace.</p>
+        <div class="hero-actions">
+          <a href="/connections" class="secondary-button">Back to Connections</a>
+        </div>
+      </section>
+
+      <section class="card action-card is-hidden" data-workbench-panel="create">
+        <div class="section-head">
+          <h2>Create Repository</h2>
+          <p>Professors/admins can create directly. Members can submit a request for review.</p>
+        </div>
+        <div id="createWorkbenchDirectSection" class="is-hidden">
+          <form id="createWorkbenchForm" class="stack-form">
+            <label>
+              <span>Title</span>
+              <input type="text" id="createWorkbenchTitle" maxlength="200" placeholder="Example: Thesis Draft Lab" required />
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea id="createWorkbenchDescription" rows="3" maxlength="4000" placeholder="Describe the scope and expected outputs."></textarea>
+            </label>
+            <div class="row two-col">
+              <label>
+                <span>Course</span>
+                <input type="text" id="createWorkbenchCourse" maxlength="160" placeholder="Course" />
+              </label>
+              <label>
+                <span>Visibility</span>
+                <select id="createWorkbenchVisibility">
+                  <option value="invite_only">Invite-only</option>
+                  <option value="open">Open</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit" class="primary-button" id="createWorkbenchButton">Create repository</button>
+            <p class="form-message" id="createWorkbenchMessage"></p>
+          </form>
+        </div>
+
+        <div class="divider is-hidden" id="createRequestDivider"></div>
+
+        <form id="requestWorkbenchForm" class="stack-form">
+          <label>
+            <span>Request title</span>
+            <input type="text" id="requestWorkbenchTitle" maxlength="200" placeholder="Request title" required />
+          </label>
+          <label>
+            <span>Request description</span>
+            <textarea id="requestWorkbenchDescription" rows="2" maxlength="4000" placeholder="What is this repository for?"></textarea>
+          </label>
+          <button type="submit" class="secondary-button" id="requestWorkbenchButton">Submit creation request</button>
+          <p class="form-message" id="requestWorkbenchMessage"></p>
+        </form>
+      </section>
+
+      <section class="card list-card" data-workbench-panel="overview">
+        <div class="section-head list-head">
+          <h2>My Repositories</h2>
+          <div class="list-head-controls">
+            <span id="workbenchCount">0</span>
+            <button type="button" class="secondary-button section-toggle-button" id="toggleWorkbenchListButton">Collapse</button>
+          </div>
+        </div>
+        <div id="workbenchListBody">
+          <div class="toolbar-row">
+            <input type="search" id="workbenchSearchInput" placeholder="Search title or course" autocomplete="off" />
+            <button type="button" class="secondary-button" id="refreshWorkbenchListButton">Refresh</button>
+          </div>
+          <p class="form-message" id="workbenchListMessage"></p>
+          <div class="list-scroll" id="workbenchList"></div>
+        </div>
+      </section>
+
+      <section class="card list-card is-hidden" id="requestReviewCard" data-workbench-panel="review">
+        <div class="section-head list-head">
+          <h2>Pending Requests</h2>
+          <span id="requestQueueCount">0</span>
+        </div>
+        <div class="toolbar-row">
+          <button type="button" class="secondary-button" id="refreshRequestQueueButton">Refresh queue</button>
+        </div>
+        <p class="form-message" id="requestQueueMessage"></p>
+        <div class="list-scroll" id="requestQueueList"></div>
+      </section>
+    </aside>
+
+    <section class="workbench-main">
+      <section class="card detail-card" id="workbenchDetailCard" data-workbench-panel="overview create review members">
+        <header class="detail-head">
+          <div>
+            <p class="eyebrow">Active workspace</p>
+            <h2 id="activeWorkbenchTitle">Select a repository</h2>
+            <p class="subcopy" id="activeWorkbenchDescription">Choose a repository from the left panel to load nodes, notes, and tasks.</p>
+          </div>
+          <div class="detail-actions">
+            <button type="button" class="secondary-button is-hidden" id="joinWorkbenchButton">Join repository</button>
+            <button type="button" class="secondary-button" id="refreshWorkbenchDetailButton">Refresh details</button>
+          </div>
+        </header>
+        <div class="chip-row">
+          <span class="meta-chip" id="activeWorkbenchMeta">No repository selected</span>
+          <span class="meta-chip" id="activeWorkbenchVisibility">Visibility: -</span>
+          <span class="meta-chip" id="activeWorkbenchStatus">Status: -</span>
+          <span class="meta-chip" id="activeWorkbenchOwner">Owner: -</span>
+          <span class="meta-chip" id="activeWorkbenchAi">AI notes: loading...</span>
+        </div>
+        <p class="form-message" id="workbenchDetailMessage"></p>
+
+        <div class="detail-grid">
+          <article class="panel">
+            <h3>Members</h3>
+            <form id="memberManageForm" class="stack-form is-hidden">
+              <label class="member-picker-field">
+                <span>Member</span>
+                <input type="search" id="memberSearchInput" maxlength="160" placeholder="Search by name, username, email, or UID" autocomplete="off" />
+              </label>
+              <div id="memberSearchResults" class="member-search-results is-hidden"></div>
+              <div class="row two-col">
+                <label>
+                  <span>Selected user</span>
+                  <input type="text" id="memberSelectedInput" placeholder="No user selected" readonly />
+                </label>
+                <label>
+                  <span>Role</span>
+                  <select id="memberRoleInput">
+                    <option value="member">Member</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="manager">Manager</option>
+                  </select>
+                </label>
+              </div>
+              <button type="submit" class="secondary-button" id="memberManageButton">Add or update member</button>
+              <p class="form-message" id="memberManageMessage"></p>
+            </form>
+            <div class="compact-list" id="workbenchMembersList"></div>
+          </article>
+
+          <article class="panel">
+            <h3>Ownership Transfer</h3>
+            <div id="pendingTransferBox" class="pending-box">No pending transfer request.</div>
+            <form id="ownershipTransferForm" class="stack-form is-hidden">
+              <label>
+                <span>Target user UID</span>
+                <input type="text" id="transferToUidInput" maxlength="120" placeholder="user uid" />
+              </label>
+              <div class="row two-col">
+                <label>
+                  <span>Temporary privilege hours</span>
+                  <input type="number" id="transferHoursInput" min="1" max="168" value="72" />
+                </label>
+                <label>
+                  <span>Note</span>
+                  <input type="text" id="transferNoteInput" maxlength="1000" placeholder="Optional note" />
+                </label>
+              </div>
+              <button type="submit" class="secondary-button" id="transferRequestButton">Request ownership transfer</button>
+              <p class="form-message" id="transferRequestMessage"></p>
+            </form>
+            <form id="ownershipTransferRespondForm" class="stack-form is-hidden">
+              <label>
+                <span>Response note</span>
+                <input type="text" id="transferRespondNoteInput" maxlength="1000" placeholder="Optional note" />
+              </label>
+              <div class="row">
+                <button type="button" class="primary-button" id="transferAcceptButton">Accept transfer</button>
+                <button type="button" class="danger-button" id="transferRejectButton">Reject transfer</button>
+              </div>
+              <p class="form-message" id="transferRespondMessage"></p>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <section class="board-task-grid">
+        <section class="card markdown-card is-hidden" data-workbench-panel="markdown">
+          <div class="section-head">
+            <h2>Markdown Directory</h2>
+            <p>Browse markdown files and folders from a filesystem-style directory.</p>
+          </div>
+          <div class="markdown-fs-layout">
+            <aside class="directory-pane">
+              <div class="directory-toolbar">
+                <div class="directory-path" id="directoryPath">Select a repository to load directory.</div>
+                <div class="directory-actions">
+                  <button type="button" class="secondary-button" id="addFileButton">Add file</button>
+                  <button type="button" class="secondary-button" id="addFolderButton">Add folder</button>
+                  <button type="button" class="secondary-button" id="directoryRootButton">Root</button>
+                  <button type="button" class="secondary-button" id="directoryWorkspaceButton">Repository</button>
+                  <button type="button" class="secondary-button" id="directoryRecycleButton">Recycle-bin</button>
+                  <button type="button" class="secondary-button is-hidden" id="directoryPasteButton">Paste here</button>
+                  <button type="button" class="danger-button is-hidden" id="directoryCancelPasteButton">Cancel</button>
+                </div>
+                <p class="form-message" id="directoryPendingOperationMessage"></p>
+              </div>
+              <div class="compact-list node-list directory-tree-list" id="workbenchNodesList"></div>
+              <p class="form-message" id="directoryActionMessage"></p>
+            </aside>
+            <section class="markdown-viewer-pane is-hidden" id="markdownViewerPane">
+              <header class="markdown-viewer-head">
+                <div class="section-head">
+                  <h3 id="markdownViewerTitle">Markdown File</h3>
+                  <p id="markdownViewerMeta">Select a markdown file from the directory.</p>
+                </div>
+                <div class="markdown-viewer-actions">
+                  <button type="button" class="secondary-button" id="markdownViewerToggleModeButton">Edit mode</button>
+                  <button type="button" class="secondary-button" id="markdownViewerCloseButton">Exit view</button>
+                </div>
+              </header>
+              <article class="markdown-viewer-content" id="markdownViewerContent">
+                <p class="viewer-empty">Open a markdown file to view its content.</p>
+              </article>
+              <form class="stack-form is-hidden markdown-viewer-edit-form" id="markdownViewerEditForm">
+                <label>
+                  <span>Title</span>
+                  <input type="text" id="markdownViewerTitleInput" maxlength="220" placeholder="Markdown file name" required />
+                </label>
+                <div class="row two-col">
+                  <label>
+                    <span>Visibility</span>
+                    <select id="markdownViewerVisibilityInput">
+                      <option value="private">Private</option>
+                      <option value="members">Visible to all repository members</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Sort order</span>
+                    <input type="number" id="markdownViewerSortOrderInput" value="0" />
+                  </label>
+                </div>
+                <label>
+                  <span>Markdown content</span>
+                  <textarea id="markdownViewerMarkdownInput" rows="12" maxlength="250000" placeholder="Write markdown content for this file."></textarea>
+                </label>
+                <div class="row">
+                  <button type="submit" class="primary-button" id="markdownViewerSaveButton">Save changes</button>
+                  <button type="button" class="secondary-button" id="markdownViewerCancelEditButton">Cancel edit</button>
+                </div>
+                <p class="form-message" id="markdownViewerEditMessage"></p>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="card board-card is-hidden" data-workbench-panel="board">
+          <div class="section-head">
+            <h2>Node Board</h2>
+            <p>Visual graph of markdown directory items. Place files/folders as nodes, connect them, and ask AI about the board.</p>
+          </div>
+          <div class="board-layout" id="boardLayout">
+            <section class="board-canvas-card">
+              <div class="board-canvas-toolbar">
+                <div class="board-picker">
+                  <label>
+                    <span>Search directory items</span>
+                    <input type="search" id="boardNodeSearchInput" placeholder="Search files or folders" autocomplete="off" />
+                  </label>
+                  <div class="board-node-quick-list" id="boardNodeQuickList"></div>
+                  <label class="board-selected-item">
+                    <span>Selected item</span>
+                    <select id="boardNodeSourceSelect"></select>
+                  </label>
+                </div>
+                <button type="button" class="secondary-button" id="boardAddNodeButton">Add to canvas</button>
+                <button type="button" class="secondary-button" id="boardResetLayoutButton">Auto layout</button>
+                <button type="button" class="secondary-button" id="boardExpandCanvasButton" aria-expanded="false">Expand canvas</button>
+              </div>
+              <div class="graph-canvas-viewport" id="graphCanvasViewport">
+                <svg class="graph-canvas-edges" id="graphCanvasEdges"></svg>
+                <div class="graph-canvas-nodes" id="graphCanvasNodes"></div>
+                <p class="graph-canvas-empty" id="graphCanvasEmpty">Add directory items to place nodes on the canvas.</p>
+                <div class="graph-edge-tooltip is-hidden" id="graphEdgeTooltip"></div>
+              </div>
+              <p class="form-message" id="graphCanvasMessage"></p>
+            </section>
+
+            <section class="board-side-card">
+              <form id="edgeSelectionForm" class="stack-form edge-selection-form is-hidden">
+                <h3>Selected edge</h3>
+                <p class="edge-selected-label" id="edgeSelectedLabel">No edge selected.</p>
+                <label>
+                  <span>Edit description</span>
+                  <textarea id="edgeSelectedDescriptionInput" rows="2" maxlength="4000" placeholder="Explain this connection."></textarea>
+                </label>
+                <div class="row">
+                  <button type="button" class="secondary-button" id="edgeUpdateButton">Update edge</button>
+                  <button type="button" class="danger-button" id="edgeDeleteButton">Delete edge</button>
+                </div>
+                <p class="form-message" id="edgeSelectionMessage"></p>
+              </form>
+
+              <p class="meta-note board-connect-hint">Drag from a node connection point to another node connection point to create an edge. Right-click a node to remove it from canvas.</p>
+              <div class="compact-list" id="workbenchEdgesList"></div>
+
+              <section class="board-panel is-expanded" data-board-panel="ai-chat">
+                <button type="button" class="board-panel-toggle" data-board-panel-toggle="ai-chat" aria-expanded="true">
+                  <span class="board-panel-title">Board AI Chat</span>
+                  <span class="board-panel-meta">Ask about relationships and weak links</span>
+                  <span class="board-panel-chevron" aria-hidden="true">▾</span>
+                </button>
+                <form id="boardAiChatForm" class="stack-form board-panel-body">
+                  <div class="board-ai-chat-list" id="boardAiChatList"></div>
+                  <label>
+                    <span>Ask about this node board</span>
+                    <textarea id="boardAiChatInput" rows="3" maxlength="4000" placeholder="Explain weak links, summarize dependencies, suggest improvements, etc."></textarea>
+                  </label>
+                  <button type="submit" class="primary-button" id="boardAiChatSendButton">Send</button>
+                  <p class="form-message" id="boardAiChatMessage"></p>
+                </form>
+              </section>
+
+              <section class="board-panel is-collapsed" data-board-panel="note-create">
+                <button type="button" class="board-panel-toggle" data-board-panel-toggle="note-create" aria-expanded="false">
+                  <span class="board-panel-title">Add note</span>
+                  <span class="board-panel-meta">Node/edge notes and AI-generated note drafts</span>
+                  <span class="board-panel-chevron" aria-hidden="true">▾</span>
+                </button>
+                <form id="noteCreateForm" class="stack-form board-panel-body">
+                  <div class="row two-col">
+                    <label>
+                      <span>Target type</span>
+                      <select id="noteTargetTypeInput">
+                        <option value="node">Node</option>
+                        <option value="edge">Edge</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Target</span>
+                      <select id="noteTargetIdInput"></select>
+                    </label>
+                  </div>
+                  <label>
+                    <span>Note content</span>
+                    <textarea id="noteContentInput" rows="3" maxlength="20000" placeholder="Write note content."></textarea>
+                  </label>
+                  <label>
+                    <span>AI instruction (optional)</span>
+                    <input type="text" id="aiNoteInstructionInput" maxlength="1200" placeholder="Example: summarize this in 5 bullets" />
+                  </label>
+                  <button type="button" class="secondary-button" id="noteCreateAiButton">Generate AI note</button>
+                  <p class="form-message" id="noteCreateAiMessage"></p>
+                  <button type="submit" class="secondary-button" id="noteCreateButton">Add note</button>
+                  <p class="form-message" id="noteCreateMessage"></p>
+                </form>
+              </section>
+
+              <div class="compact-list" id="workbenchNotesList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="card task-card is-hidden" data-workbench-panel="tasks">
+          <div class="section-head">
+            <h2>Taskboard</h2>
+            <div class="task-head-actions">
+              <span id="taskCount">0</span>
+              <button type="button" class="secondary-button" id="openCollaborativeTasksModal">Collaborative tasks</button>
+            </div>
+          </div>
+
+          <form id="taskCreateForm" class="stack-form">
+            <label>
+              <span>Task title</span>
+              <input type="text" id="taskTitleInput" maxlength="220" placeholder="Task title" />
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea id="taskDescriptionInput" rows="3" maxlength="6000" placeholder="Task details"></textarea>
+            </label>
+            <div class="row three-col">
+              <label>
+                <span>Type</span>
+                <select id="taskTypeInput">
+                  <option value="collaborative">Collaborative</option>
+                  <option value="personal">Personal</option>
+                </select>
+              </label>
+              <label>
+                <span>Priority</span>
+                <select id="taskPriorityInput">
+                  <option value="normal">Normal</option>
+                  <option value="low">Low</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+              <label>
+                <span>Due</span>
+                <input type="datetime-local" id="taskDueAtInput" />
+              </label>
+            </div>
+            <div class="row two-col">
+              <label>
+                <span>Group title</span>
+                <input type="text" id="taskGroupTitleInput" maxlength="120" value="General" />
+              </label>
+              <label class="task-assignee-picker-field">
+                <span>Add assignees (ID)</span>
+                <input type="search" id="taskAssigneeSearchInput" placeholder="Search by name, username, student ID, or email" autocomplete="off" />
+              </label>
+            </div>
+            <div id="taskAssigneeSearchResults" class="task-assignee-results is-hidden"></div>
+            <div class="task-assignee-selected" id="taskAssigneeSelectedList"></div>
+            <label class="checkbox-line">
+              <input type="checkbox" id="taskRequiresFileInput" />
+              <span>Require file submission before completion</span>
+            </label>
+            <button type="submit" class="primary-button" id="taskCreateButton">Create task</button>
+            <p class="form-message" id="taskCreateMessage"></p>
+          </form>
+
+          <div class="compact-list" id="workbenchTasksList"></div>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <div class="workbench-modal is-hidden" id="collaborativeTasksModal">
+    <div class="workbench-modal-card collaborative-tasks-modal-card">
+      <button type="button" class="workbench-modal-close" id="collaborativeTasksModalClose" aria-label="Close collaborative tasks">×</button>
+      <div class="section-head">
+        <h2>Collaborative Tasks</h2>
+        <p>Shared tasks are grouped by progress. Update status directly from this window.</p>
+      </div>
+      <p class="form-message" id="collaborativeTasksMessage"></p>
+      <div class="workbench-task-board">
+        <section class="workbench-task-column">
+          <h3>Pending</h3>
+          <div class="workbench-task-list" id="collaborativeTasksPending"></div>
+        </section>
+        <section class="workbench-task-column">
+          <h3>Ongoing</h3>
+          <div class="workbench-task-list" id="collaborativeTasksOngoing"></div>
+        </section>
+        <section class="workbench-task-column">
+          <h3>Complete</h3>
+          <div class="workbench-task-list" id="collaborativeTasksComplete"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script src="/src/js/workbench.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

@@ -12,14 +12,19 @@ const profileRoutes = require('./server/routes/profile');
 const personalRoutes = require('./server/routes/personal');
 const connectionsRoutes = require('./server/routes/connections');
 const communityRoutes = require('./server/routes/community');
+const subjectsRoutes = require('./server/routes/subjects');
 const roomsRoutes = require('./server/routes/rooms');
+const workbenchRoutes = require('./server/routes/workbench');
+const aiRoutes = require('./server/routes/ai');
+const systemRoutes = require('./server/routes/system');
 const adminRoutes = require('./server/routes/admin');
 const notificationsRoutes = require('./server/routes/notifications');
 const searchRoutes = require('./server/routes/search');
+const { isSubjectsEnabled, loadRuntimeFeatureOverrides } = require('./server/services/featureFlags');
 const requireAuth = require('./server/middleware/requireAuth');
 const requireOwnerOrAdmin = require('./server/middleware/requireOwnerOrAdmin');
 const auditLogger = require('./server/middleware/auditLogger');
-const { getSession } = require('./server/auth/sessionStore');
+const { getSession, getRequestSessionId } = require('./server/auth/sessionStore');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -38,28 +43,47 @@ app.use(libraryRoutes);
 app.use(postsRoutes);
 app.use(profileRoutes);
 app.use(personalRoutes);
+app.use(systemRoutes);
 app.use(connectionsRoutes);
 app.use(communityRoutes);
+app.use(subjectsRoutes);
 app.use(roomsRoutes);
+app.use(workbenchRoutes);
+app.use(aiRoutes);
 app.use(adminRoutes);
 app.use(notificationsRoutes);
 app.use(searchRoutes);
 
-app.get('/', (req, res) => {
-  const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;
+app.get('/', async (req, res) => {
+  const sessionId = getRequestSessionId(req, { preferBearer: false });
+  const session = sessionId ? await getSession(sessionId) : null;
   return res.redirect(session ? '/home' : '/login');
 });
 
-app.get('/login', (req, res) => {
-  const session = req.cookies.session_id ? getSession(req.cookies.session_id) : null;
+app.get('/login', async (req, res) => {
+  const sessionId = getRequestSessionId(req, { preferBearer: false });
+  const session = sessionId ? await getSession(sessionId) : null;
   if (session) {
     return res.redirect('/home');
   }
   res.sendFile(path.join(__dirname, 'src', 'login.html'));
 });
 
+app.get('/signup', async (req, res) => {
+  const sessionId = getRequestSessionId(req, { preferBearer: false });
+  const session = sessionId ? await getSession(sessionId) : null;
+  if (session) {
+    return res.redirect('/home');
+  }
+  res.sendFile(path.join(__dirname, 'src', 'signup.html'));
+});
+
 app.get('/home', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'home.html'));
+});
+
+app.get('/posts/:id', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'post.html'));
 });
 
 app.get('/connections', requireAuth, (req, res) => {
@@ -75,11 +99,25 @@ app.get('/open-library', requireAuth, (req, res) => {
 });
 
 app.get('/community', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'src', 'pages', 'community.html'));
+  if (!isSubjectsEnabled()) {
+    return res.sendFile(path.join(__dirname, 'src', 'pages', 'community.html'));
+  }
+  return res.sendFile(path.join(__dirname, 'src', 'pages', 'subjects.html'));
+});
+
+app.get('/subjects', requireAuth, (req, res) => {
+  if (!isSubjectsEnabled()) {
+    return res.redirect('/home');
+  }
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'subjects.html'));
 });
 
 app.get('/rooms', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'pages', 'rooms.html'));
+});
+
+app.get('/workbench', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'workbench.html'));
 });
 
 app.get('/profile', requireAuth, (req, res) => {
@@ -110,6 +148,17 @@ app.get('/admin', requireAuth, requireOwnerOrAdmin, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'pages', 'admin.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+async function startServer() {
+  try {
+    await loadRuntimeFeatureOverrides();
+    console.log('Runtime feature overrides loaded.');
+  } catch (error) {
+    console.warn('Runtime feature overrides unavailable, falling back to env defaults:', error.message);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+}
+
+startServer();

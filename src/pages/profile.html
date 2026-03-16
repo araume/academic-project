@@ -14,13 +14,14 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -65,6 +66,7 @@
             <span id="profilePresenceLabel">Inactive</span>
           </span>
         </div>
+        <p class="profile-username" id="profileUsername">@username</p>
         <p id="profileCourse">Main course</p>
         <p id="profileBio" class="profile-bio">No bio yet.</p>
         <div class="profile-view-actions is-hidden" id="profileViewActions">
@@ -81,6 +83,7 @@
         </div>
         <div class="profile-own-actions is-hidden" id="profileOwnActions">
           <button type="button" class="ghost-button" id="viewBookmarksButton">Bookmarked posts</button>
+          <button type="button" class="ghost-button" id="toggleEditMode">Edit profile</button>
         </div>
         <p class="form-message" id="profileActionMessage"></p>
       </div>
@@ -113,6 +116,14 @@
           <p id="profilePortfolio">Not set.</p>
         </article>
       </div>
+    </section>
+
+    <section class="profile-form-card profile-view-card profile-posts-card">
+      <div class="profile-posts-head">
+        <h2>Posts</h2>
+        <p id="profilePostsHint">Loading posts...</p>
+      </div>
+      <div class="profile-posts-list" id="profilePostsList"></div>
     </section>
 
     <section class="profile-form-card is-hidden" id="profileEditCard">
@@ -167,8 +178,6 @@
     </section>
   </main>
 
-  <button type="button" class="mode-toggle-button" id="toggleEditMode">Edit profile</button>
-
   <div class="floating-modal is-hidden" id="bookmarksModal" role="dialog" aria-modal="true" aria-labelledby="bookmarksModalTitle">
     <div class="floating-modal-card">
       <div class="floating-modal-head">
@@ -180,6 +189,7 @@
     </div>
   </div>
 
+  <script src="/src/js/report-dialog.js"></script>
   <script src="/src/js/profile.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
 </body>

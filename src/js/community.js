@@ -71,6 +71,9 @@ const commentsList = document.getElementById('commentsList');
 const commentForm = document.getElementById('commentForm');
 const commentInput = document.getElementById('commentInput');
 const commentMessage = document.getElementById('commentMessage');
+const commentSubmitButton = commentForm
+  ? commentForm.querySelector('button[type="submit"]')
+  : null;
 
 const createPostModal = document.getElementById('createPostModal');
 const createPostModalClose = document.getElementById('createPostModalClose');
@@ -78,8 +81,6 @@ const libraryPickerModal = document.getElementById('libraryPickerModal');
 const libraryPickerClose = document.getElementById('libraryPickerClose');
 const libraryPickerSearch = document.getElementById('libraryPickerSearch');
 const libraryPickerList = document.getElementById('libraryPickerList');
-
-const DEFAULT_AVATAR = '/assets/LOGO.png';
 
 const state = {
   viewer: null,
@@ -102,15 +103,13 @@ const state = {
 
 let libraryPickerSearchTimer = null;
 let membersSearchTimer = null;
+let isSubmittingCommunityPost = false;
+let isSubmittingCommunityComment = false;
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -126,6 +125,19 @@ function setNavAvatar(photoLink, displayName) {
   }
 
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setAvatarContent(container, photoLink, displayName, altText) {
+  if (!container) return;
+  container.textContent = '';
+  if (photoLink) {
+    const image = document.createElement('img');
+    image.src = photoLink;
+    image.alt = altText || `${displayName || 'User'} profile photo`;
+    container.appendChild(image);
+    return;
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -157,6 +169,21 @@ function showMessage(target, text, type = 'error') {
   if (!target) return;
   target.textContent = text || '';
   target.classList.toggle('success', type === 'success');
+}
+
+function setPostingState(button, isPosting) {
+  if (!button) return;
+  if (isPosting) {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText = button.textContent || 'Post';
+    }
+    button.disabled = true;
+    button.textContent = 'Posting...';
+    return;
+  }
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || button.textContent || 'Post';
+  delete button.dataset.originalText;
 }
 
 function formatAgo(dateString) {
@@ -569,7 +596,7 @@ function setPostFormEnabled(enabled) {
   postTitle.disabled = !enabled;
   postContent.disabled = !enabled;
   postVisibility.disabled = !enabled;
-  postSubmitButton.disabled = !enabled;
+  postSubmitButton.disabled = !enabled || isSubmittingCommunityPost;
   if (postCourseName) {
     postCourseName.disabled = true;
   }
@@ -656,10 +683,13 @@ function renderFeed() {
 
     const avatar = document.createElement('div');
     avatar.className = 'post-avatar';
-    const avatarImg = document.createElement('img');
-    avatarImg.src = post.author && post.author.photoLink ? post.author.photoLink : DEFAULT_AVATAR;
-    avatarImg.alt = `${post.author && post.author.displayName ? post.author.displayName : 'Member'} profile photo`;
-    avatar.appendChild(avatarImg);
+    const authorName = post.author && post.author.displayName ? post.author.displayName : 'Member';
+    setAvatarContent(
+      avatar,
+      post.author && post.author.photoLink ? post.author.photoLink : '',
+      authorName,
+      `${authorName} profile photo`
+    );
 
     const meta = document.createElement('div');
     const name = document.createElement('h4');
@@ -1157,9 +1187,14 @@ function renderMembersModalList(members, canModerate) {
     const identity = document.createElement('div');
     identity.className = 'member-directory-identity';
 
-    const avatar = document.createElement('img');
-    avatar.src = member.photoLink || DEFAULT_AVATAR;
-    avatar.alt = `${member.displayName || 'Member'} profile photo`;
+    const avatar = document.createElement('div');
+    avatar.className = 'member-directory-avatar';
+    setAvatarContent(
+      avatar,
+      member.photoLink || '',
+      member.displayName || 'Member',
+      `${member.displayName || 'Member'} profile photo`
+    );
 
     const info = document.createElement('div');
     const name = document.createElement('h4');
@@ -1447,6 +1482,7 @@ async function togglePostLike(post) {
 
 async function submitPost(event) {
   event.preventDefault();
+  if (isSubmittingCommunityPost) return;
   showMessage(postMessage, '');
 
   if (!state.selectedCommunityId) {
@@ -1493,6 +1529,8 @@ async function submitPost(event) {
     formData.set('attachmentType', 'none');
   }
 
+  isSubmittingCommunityPost = true;
+  setPostingState(postSubmitButton, true);
   try {
     await createCommunityPost(formData);
 
@@ -1518,6 +1556,9 @@ async function submitPost(event) {
       return;
     }
     showMessage(postMessage, error.message);
+  } finally {
+    isSubmittingCommunityPost = false;
+    setPostingState(postSubmitButton, false);
   }
 }
 
@@ -1574,7 +1615,24 @@ async function takeDownPost(post) {
 async function reportPost(post) {
   if (!state.selectedCommunityId) return;
 
-  const reason = window.prompt('Why are you reporting this post?', '') || '';
+  const reportPayload =
+    typeof window.showReportDialog === 'function'
+      ? await window.showReportDialog({
+          title: 'Report community post',
+          subtitle: 'Select a reason and include optional details.',
+        })
+      : (() => {
+          const reason = window.prompt('Report reason:', '');
+          if (reason === null) return null;
+          const text = reason.trim();
+          return {
+            category: 'other',
+            customReason: text || 'Other',
+            details: null,
+            reason: text || 'Other',
+          };
+        })();
+  if (!reportPayload) return;
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/reports`, {
       method: 'POST',
@@ -1582,7 +1640,7 @@ async function reportPost(post) {
       body: JSON.stringify({
         targetType: 'post',
         targetPostId: post.id,
-        reason: reason.trim(),
+        ...reportPayload,
       }),
     });
     showMessage(communityMessage, 'Report submitted.', 'success');
@@ -1682,6 +1740,7 @@ function renderComments(comments) {
 
 async function submitComment(event) {
   event.preventDefault();
+  if (isSubmittingCommunityComment) return;
   showMessage(commentMessage, '');
 
   if (!state.selectedCommunityId || !state.currentPostForComments) {
@@ -1695,6 +1754,8 @@ async function submitComment(event) {
     return;
   }
 
+  isSubmittingCommunityComment = true;
+  setPostingState(commentSubmitButton, true);
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/posts/${state.currentPostForComments.id}/comments`, {
       method: 'POST',
@@ -1719,6 +1780,9 @@ async function submitComment(event) {
       return;
     }
     showMessage(commentMessage, error.message);
+  } finally {
+    isSubmittingCommunityComment = false;
+    setPostingState(commentSubmitButton, false);
   }
 }
 
@@ -1773,7 +1837,24 @@ async function takeDownComment(comment) {
 async function reportComment(comment) {
   if (!state.selectedCommunityId) return;
 
-  const reason = window.prompt('Why are you reporting this comment?', '') || '';
+  const reportPayload =
+    typeof window.showReportDialog === 'function'
+      ? await window.showReportDialog({
+          title: 'Report community comment',
+          subtitle: 'Select a reason and include optional details.',
+        })
+      : (() => {
+          const reason = window.prompt('Report reason:', '');
+          if (reason === null) return null;
+          const text = reason.trim();
+          return {
+            category: 'other',
+            customReason: text || 'Other',
+            details: null,
+            reason: text || 'Other',
+          };
+        })();
+  if (!reportPayload) return;
   try {
     await apiRequest(`/api/community/${state.selectedCommunityId}/reports`, {
       method: 'POST',
@@ -1781,7 +1862,7 @@ async function reportComment(comment) {
       body: JSON.stringify({
         targetType: 'comment',
         targetCommentId: comment.id,
-        reason: reason.trim(),
+        ...reportPayload,
       }),
     });
     showMessage(commentMessage, 'Report submitted.', 'success');

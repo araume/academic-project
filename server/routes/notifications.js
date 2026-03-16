@@ -8,6 +8,11 @@ const {
   markNotificationRead,
   markAllNotificationsRead,
 } = require('../services/notificationService');
+const {
+  ensurePushReady,
+  upsertPushToken,
+  deactivatePushToken,
+} = require('../services/pushService');
 
 const router = express.Router();
 const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
@@ -17,6 +22,8 @@ function buildNotificationMessage(row) {
   const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle : 'a post';
   const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle : 'a document';
   const communityName = typeof meta.communityName === 'string' ? meta.communityName : 'this community';
+  const customTitle = typeof meta.title === 'string' ? meta.title : 'Admin notice';
+  const customMessage = typeof meta.message === 'string' ? meta.message : 'A new admin notice is available.';
 
   if (row.type === 'following_new_post') {
     return `shared a new post: ${postTitle}`;
@@ -35,6 +42,9 @@ function buildNotificationMessage(row) {
   }
   if (row.type === 'community_rules_required') {
     return `Please agree to the community rules for ${communityName} to interact.`;
+  }
+  if (row.type === 'admin_custom') {
+    return `${customTitle}: ${customMessage}`;
   }
   return 'interacted with your content.';
 }
@@ -146,6 +156,49 @@ router.post('/api/notifications/:id/read', async (req, res) => {
   } catch (error) {
     console.error('Notification read failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to update notification.' });
+  }
+});
+
+router.post('/api/notifications/push-token', async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  const platform = typeof req.body?.platform === 'string' ? req.body.platform.trim() : 'android';
+  const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : null;
+
+  if (!token) {
+    return res.status(400).json({ ok: false, message: 'Push token is required.' });
+  }
+
+  try {
+    await ensurePushReady();
+    await upsertPushToken({
+      userUid: req.user.uid,
+      token,
+      platform,
+      deviceId,
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Push token registration failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to register push token.' });
+  }
+});
+
+router.post('/api/notifications/push-token/remove', async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token) {
+    return res.status(400).json({ ok: false, message: 'Push token is required.' });
+  }
+
+  try {
+    await ensurePushReady();
+    await deactivatePushToken({
+      userUid: req.user.uid,
+      token,
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Push token remove failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to remove push token.' });
   }
 });
 

@@ -1,5 +1,7 @@
 const express = require('express');
+const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
+const multer = require('multer');
 const path = require('path');
 const zlib = require('zlib');
 const requireAuthApi = require('../middleware/requireAuthApi');
@@ -7,16 +9,70 @@ const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const pdfParse = require('pdf-parse');
-const { downloadFromStorage } = require('../services/storage');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
+const {
+  uploadToStorage,
+  deleteFromStorage,
+  getSignedUrl,
+  objectExists,
+  normalizeStorageKey,
+  downloadFromStorage,
+} = require('../services/storage');
 
 const GCLOUD_MCP_SERVER_URL = (process.env.GCLOUD_MCP_SERVER_URL || '').trim();
 const CONTEXT_PARSE_MAX_BYTES = 8 * 1024 * 1024;
 const CONTEXT_EXCERPT_MAX_CHARS = 3500;
 const PDF_OCR_MIN_TEXT_CHARS = 140;
+const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
+const UNIFIED_VISIBILITY_ENABLED = isUnifiedVisibilityEnabled();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
 
 const router = express.Router();
 
 router.use('/api/personal', requireAuthApi);
+
+function parseBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+  }
+  return false;
+}
+
+function normalizeDocumentVisibility(value) {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (raw === 'private') return 'private';
+  if (raw === 'course_exclusive') return 'course_exclusive';
+  return 'public';
+}
+
+async function signIfNeeded(value, { ensureExists = false } = {}) {
+  if (!value) return null;
+  try {
+    const normalized = normalizeStorageKey(value);
+    const original = String(value).trim();
+    if (/^https?:\/\//i.test(original) && normalized === original) {
+      return original;
+    }
+    const key = normalized || original;
+    if (ensureExists) {
+      try {
+        const exists = await objectExists(key);
+        if (exists === false) return null;
+      } catch (error) {
+        console.warn('Personal vault existence check failed:', error && error.message ? error.message : error);
+      }
+    }
+    return await getSignedUrl(key, SIGNED_TTL);
+  } catch (error) {
+    console.warn('Personal vault sign URL failed:', error && error.message ? error.message : error);
+    return null;
+  }
+}
 
 function normalizeTags(value) {
   if (!value) return [];
@@ -710,6 +766,272 @@ async function extractContextExcerpt(document) {
   }
 }
 
+async function mapVaultDocument(row) {
+  const [link, thumbnailLink, uploaderPhotoLink] = await Promise.all([
+    signIfNeeded(row.link, { ensureExists: true }),
+    signIfNeeded(row.thumbnail_link, { ensureExists: true }),
+    signIfNeeded(row.uploader_photo_link, { ensureExists: true }),
+  ]);
+  return {
+    uuid: row.uuid,
+    title: row.title,
+    description: row.description || '',
+    filename: row.filename,
+    uploader_uid: row.uploader_uid,
+    uploader_name: row.uploader_name || 'Member',
+    uploader_photo_link: uploaderPhotoLink,
+    uploaddate: row.uploaddate,
+    course: row.course,
+    subject: row.subject,
+    views: row.views,
+    popularity: row.popularity,
+    visibility: row.visibility,
+    source: row.source,
+    aiallowed: row.aiallowed === true,
+    link,
+    thumbnail_link: thumbnailLink,
+    is_open_library_visible: row.visibility !== 'private',
+  };
+}
+
+router.get('/api/personal/vault/documents', async (req, res) => {
+  if (!req.user || !req.user.uid) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT
+         d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate,
+         d.course, d.subject, d.views, d.popularity, d.visibility, d.source, d.aiallowed,
+         d.link, d.thumbnail_link,
+         COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name,
+         p.photo_link AS uploader_photo_link
+       FROM documents d
+       LEFT JOIN accounts a ON a.uid = d.uploader_uid
+       LEFT JOIN profiles p ON p.uid = d.uploader_uid
+       WHERE d.uploader_uid = $1
+         AND d.source = 'vault'
+       ORDER BY d.uploaddate DESC
+       LIMIT 300`,
+      [req.user.uid]
+    );
+    const documents = await Promise.all(result.rows.map((row) => mapVaultDocument(row)));
+    return res.json({ ok: true, documents });
+  } catch (error) {
+    console.error('Vault documents fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load vault documents.' });
+  }
+});
+
+router.post(
+  '/api/personal/vault/documents',
+  upload.fields([
+    { name: 'file', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    if (!req.user || !req.user.uid) {
+      return res.status(401).json({ ok: false, message: 'Unauthorized' });
+    }
+
+    const { title, description, subject, course, visibility, aiallowed } = req.body || {};
+    const file = req.files && req.files.file ? req.files.file[0] : null;
+    const thumbnail = req.files && req.files.thumbnail ? req.files.thumbnail[0] : null;
+
+    if (!title || !subject || !file) {
+      return res.status(400).json({ ok: false, message: 'Title, subject, and file are required.' });
+    }
+
+    try {
+      const visibilityValue = normalizeDocumentVisibility(visibility || 'private');
+      if (visibilityValue === 'course_exclusive' && !UNIFIED_VISIBILITY_ENABLED) {
+        return res.status(400).json({
+          ok: false,
+          message: 'Course-exclusive visibility is currently unavailable.',
+        });
+      }
+
+      const resolvedCourse =
+        (typeof course === 'string' && course.trim()) ||
+        (typeof req.user.course === 'string' && req.user.course.trim()) ||
+        'General';
+      const uuid = crypto.randomUUID();
+      const aiAllowedValue = parseBoolean(aiallowed);
+
+      const uploadedFile = await uploadToStorage({
+        buffer: file.buffer,
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        prefix: 'vault',
+      });
+
+      let thumbnailKey = null;
+      if (thumbnail) {
+        const uploadedThumb = await uploadToStorage({
+          buffer: thumbnail.buffer,
+          filename: thumbnail.originalname,
+          mimeType: thumbnail.mimetype,
+          prefix: 'vault-thumbs',
+        });
+        thumbnailKey = uploadedThumb.key;
+      }
+
+      const insertResult = await pool.query(
+        `INSERT INTO documents
+          (uuid, title, description, filename, uploader_uid, course, subject, visibility, source, aiallowed, link, thumbnail_link)
+         VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8, 'vault', $9, $10, $11)
+         RETURNING
+          uuid, title, description, filename, uploader_uid, uploaddate, course, subject, views,
+          popularity, visibility, source, aiallowed, link, thumbnail_link`,
+        [
+          uuid,
+          title.trim(),
+          description ? String(description).trim() : '',
+          file.originalname,
+          req.user.uid,
+          String(resolvedCourse).trim(),
+          String(subject).trim(),
+          visibilityValue,
+          aiAllowedValue,
+          uploadedFile.key,
+          thumbnailKey,
+        ]
+      );
+
+      const inserted = insertResult.rows[0];
+      const mapped = await mapVaultDocument({
+        ...inserted,
+        uploader_name: req.user.displayName || req.user.username || req.user.email || 'Member',
+        uploader_photo_link: null,
+      });
+      return res.json({ ok: true, document: mapped });
+    } catch (error) {
+      console.error('Vault document upload failed:', error);
+      return res.status(500).json({ ok: false, message: 'Upload failed.' });
+    }
+  }
+);
+
+router.patch('/api/personal/vault/documents/:uuid', async (req, res) => {
+  const { uuid } = req.params;
+  if (!uuid) {
+    return res.status(400).json({ ok: false, message: 'Missing document id.' });
+  }
+  if (!req.user || !req.user.uid) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+
+  const { title, description, subject, course, visibility, aiallowed } = req.body || {};
+  const updates = [];
+  const values = [];
+
+  if (title !== undefined) {
+    values.push(String(title).trim());
+    updates.push(`title = $${values.length}`);
+  }
+  if (description !== undefined) {
+    values.push(String(description).trim());
+    updates.push(`description = $${values.length}`);
+  }
+  if (subject !== undefined) {
+    values.push(String(subject).trim());
+    updates.push(`subject = $${values.length}`);
+  }
+  if (course !== undefined) {
+    values.push(String(course).trim() || 'General');
+    updates.push(`course = $${values.length}`);
+  }
+  if (visibility !== undefined) {
+    const visibilityValue = normalizeDocumentVisibility(visibility);
+    if (visibilityValue === 'course_exclusive' && !UNIFIED_VISIBILITY_ENABLED) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Course-exclusive visibility is currently unavailable.',
+      });
+    }
+    values.push(visibilityValue);
+    updates.push(`visibility = $${values.length}`);
+  }
+  if (aiallowed !== undefined) {
+    values.push(parseBoolean(aiallowed));
+    updates.push(`aiallowed = $${values.length}`);
+  }
+
+  if (!updates.length) {
+    return res.status(400).json({ ok: false, message: 'No fields to update.' });
+  }
+
+  try {
+    values.push(uuid, req.user.uid);
+    const result = await pool.query(
+      `UPDATE documents
+       SET ${updates.join(', ')}
+       WHERE uuid = $${values.length - 1}
+         AND uploader_uid = $${values.length}
+         AND source = 'vault'
+       RETURNING uuid, title, description, filename, uploader_uid, uploaddate, course, subject,
+                 views, popularity, visibility, source, aiallowed, link, thumbnail_link`,
+      values
+    );
+    if (!result.rowCount) {
+      return res.status(404).json({ ok: false, message: 'Vault document not found.' });
+    }
+
+    const mapped = await mapVaultDocument({
+      ...result.rows[0],
+      uploader_name: req.user.displayName || req.user.username || req.user.email || 'Member',
+      uploader_photo_link: null,
+    });
+    return res.json({ ok: true, document: mapped });
+  } catch (error) {
+    console.error('Vault document update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update vault document.' });
+  }
+});
+
+router.delete('/api/personal/vault/documents/:uuid', async (req, res) => {
+  const { uuid } = req.params;
+  if (!uuid) {
+    return res.status(400).json({ ok: false, message: 'Missing document id.' });
+  }
+  if (!req.user || !req.user.uid) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const docResult = await pool.query(
+      `DELETE FROM documents
+       WHERE uuid = $1
+         AND uploader_uid = $2
+         AND source = 'vault'
+       RETURNING link, thumbnail_link`,
+      [uuid, req.user.uid]
+    );
+    if (!docResult.rowCount) {
+      return res.status(404).json({ ok: false, message: 'Vault document not found.' });
+    }
+
+    const doc = docResult.rows[0];
+    const keysToDelete = [doc.link, doc.thumbnail_link].filter(Boolean);
+    await Promise.all(
+      keysToDelete.map(async (key) => {
+        if (/^https?:\/\//i.test(String(key))) return;
+        try {
+          await deleteFromStorage(key);
+        } catch (error) {
+          console.error('Vault storage delete failed:', error);
+        }
+      })
+    );
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Vault document delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to delete vault document.' });
+  }
+});
+
 router.get('/api/personal/journals', async (req, res) => {
   try {
     const db = await getMongoDb();
@@ -998,6 +1320,7 @@ router.post('/api/personal/conversations', async (req, res) => {
     const conversation = {
       userUid: req.user.uid,
       title: title ? title.trim() : 'New conversation',
+      contextDoc: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1027,6 +1350,55 @@ router.delete('/api/personal/conversations/:id', async (req, res) => {
   }
 });
 
+router.patch('/api/personal/conversations/:id/context', async (req, res) => {
+  const { id } = req.params;
+  const { contextDoc } = req.body || {};
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
+  }
+  if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'contextDoc')) {
+    return res.status(400).json({ ok: false, message: 'contextDoc is required.' });
+  }
+  try {
+    const db = await getMongoDb();
+    const conversationId = new ObjectId(id);
+    const conversation = await db
+      .collection('ai_conversations')
+      .findOne({ _id: conversationId, userUid: req.user.uid });
+    if (!conversation) {
+      return res.status(404).json({ ok: false, message: 'Conversation not found.' });
+    }
+
+    let nextContext = null;
+    if (contextDoc && contextDoc.uuid) {
+      const contextDocument = await loadContextDocument(String(contextDoc.uuid));
+      if (!contextDocument) {
+        return res.status(404).json({ ok: false, message: 'Context document not found.' });
+      }
+      nextContext = {
+        uuid: contextDocument.uuid,
+        title: contextDocument.title || 'Context document',
+        course: contextDocument.course || null,
+        subject: contextDocument.subject || null,
+      };
+    }
+
+    await db.collection('ai_conversations').updateOne(
+      { _id: conversationId, userUid: req.user.uid },
+      {
+        $set: {
+          contextDoc: nextContext,
+          updatedAt: new Date(),
+        },
+      }
+    );
+    return res.json({ ok: true, contextDoc: nextContext });
+  } catch (error) {
+    console.error('Conversation context update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update context.' });
+  }
+});
+
 router.get('/api/personal/conversations/:id/messages', async (req, res) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) {
@@ -1035,12 +1407,26 @@ router.get('/api/personal/conversations/:id/messages', async (req, res) => {
   try {
     const db = await getMongoDb();
     const conversationId = new ObjectId(id);
+    const conversation = await db
+      .collection('ai_conversations')
+      .findOne({ _id: conversationId, userUid: req.user.uid });
+    if (!conversation) {
+      return res.status(404).json({ ok: false, message: 'Conversation not found.' });
+    }
     const messages = await db
       .collection('ai_messages')
       .find({ conversationId, userUid: req.user.uid })
       .sort({ createdAt: 1 })
       .toArray();
-    return res.json({ ok: true, messages });
+    return res.json({
+      ok: true,
+      messages,
+      conversation: {
+        _id: conversation._id,
+        title: conversation.title || 'New conversation',
+        contextDoc: conversation.contextDoc || null,
+      },
+    });
   } catch (error) {
     console.error('Messages fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load messages.' });
@@ -1050,6 +1436,7 @@ router.get('/api/personal/conversations/:id/messages', async (req, res) => {
 router.post('/api/personal/conversations/:id/messages', async (req, res) => {
   const { id } = req.params;
   const { content, contextDoc } = req.body || {};
+  const hasContextPayload = Object.prototype.hasOwnProperty.call(req.body || {}, 'contextDoc');
   const streamRequested = wantsMessageStream(req);
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid conversation id.' });
@@ -1076,22 +1463,38 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
     const db = await getMongoDb();
     const conversationId = new ObjectId(id);
     const now = new Date();
-    const contextUuid = contextDoc && contextDoc.uuid ? contextDoc.uuid : null;
-    const contextDocument = await loadContextDocument(contextUuid);
+    const contextUuid = contextDoc && contextDoc.uuid ? String(contextDoc.uuid) : null;
+    const conversation = await db
+      .collection('ai_conversations')
+      .findOne({ _id: conversationId, userUid: req.user.uid });
+    if (!conversation) {
+      if (streamRequested) {
+        writeNdjsonEvent(res, {
+          type: 'error',
+          message: 'Conversation not found.',
+        });
+        res.end();
+        return;
+      }
+      return res.status(404).json({ ok: false, message: 'Conversation not found.' });
+    }
+    const fallbackContextUuid =
+      !hasContextPayload && conversation.contextDoc && conversation.contextDoc.uuid
+        ? String(conversation.contextDoc.uuid)
+        : null;
+    const resolvedContextUuid = contextUuid || fallbackContextUuid;
+    const contextDocument = await loadContextDocument(resolvedContextUuid);
     const contextExcerpt = await extractContextExcerpt(contextDocument);
     const userMessage = {
       conversationId,
       userUid: req.user.uid,
       role: 'user',
       content: content.trim(),
-      contextDoc: contextUuid ? { uuid: contextUuid } : null,
+      contextDoc: resolvedContextUuid ? { uuid: resolvedContextUuid } : null,
       createdAt: now,
     };
     await db.collection('ai_messages').insertOne(userMessage);
     let conversationTitle = null;
-    const conversation = await db
-      .collection('ai_conversations')
-      .findOne({ _id: conversationId, userUid: req.user.uid });
     const userMessageCount = await db
       .collection('ai_messages')
       .countDocuments({ conversationId, userUid: req.user.uid, role: 'user' });
@@ -1105,6 +1508,17 @@ router.post('/api/personal/conversations/:id/messages', async (req, res) => {
     const conversationUpdate = { updatedAt: now };
     if (conversationTitle) {
       conversationUpdate.title = conversationTitle;
+    }
+    if (hasContextPayload) {
+      conversationUpdate.contextDoc =
+        contextDocument && contextDocument.uuid
+          ? {
+              uuid: contextDocument.uuid,
+              title: contextDocument.title || 'Context document',
+              course: contextDocument.course || null,
+              subject: contextDocument.subject || null,
+            }
+          : null;
     }
 
     await db.collection('ai_conversations').updateOne(
@@ -1421,6 +1835,13 @@ router.post('/api/personal/task-proposals/:id/reject', async (req, res) => {
     console.error('Proposal reject failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to reject proposal.' });
   }
+});
+
+router.use('/api/personal', (err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ ok: false, message: 'File exceeds 50MB limit.' });
+  }
+  return next(err);
 });
 
 module.exports = router;

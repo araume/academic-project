@@ -8,17 +8,25 @@ const { getMongoDb } = require('../db/mongo');
 const pool = require('../db/pool');
 const { uploadToStorage, deleteFromStorage, getSignedUrl, downloadFromStorage } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
+const { parseReportPayload } = require('../services/reporting');
+const { isGlobalCourseFeedEnabled, isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 const {
   createNotification,
   createNotificationsForRecipients,
   isBlockedEitherDirection,
 } = require('../services/notificationService');
+const { autoScanIncomingContent } = require('../services/aiContentScanService');
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
+const FEED_HIDE_WITHOUT_INTERACTION_DAYS = 5;
+const FEED_HIDE_THRESHOLD_RECENT_POSTS = 500;
+const FEED_HIDE_THRESHOLD_WINDOW_DAYS = 3;
+const FEED_SCOPE_GLOBAL = 'global';
+const FEED_SCOPE_COURSE = 'course';
 
 router.use('/api/posts', requireAuthApi);
 router.use('/api/home', requireAuthApi);
@@ -26,16 +34,34 @@ router.use('/api/home', requireAuthApi);
 function buildVisibilityFilter(user) {
   const userCourse = user && user.course;
   const userUid = user && user.uid;
+  const includeCourseExclusive = isUnifiedVisibilityEnabled();
   const filter = {
-    $or: [{ visibility: 'public' }],
+    moderationStatus: { $ne: 'restricted' },
+    $or: [{ visibility: 'public' }, { visibility: null }, { visibility: { $exists: false } }],
   };
   if (userCourse) {
-    filter.$or.push({ visibility: 'private', course: userCourse });
+    if (includeCourseExclusive) {
+      filter.$or.push({
+        visibility: { $in: ['private', 'course_exclusive'] },
+        course: userCourse,
+      });
+    } else {
+      filter.$or.push({
+        visibility: 'private',
+        course: userCourse,
+      });
+    }
   }
   if (userUid) {
     filter.$or.push({ uploaderUid: userUid });
   }
   return filter;
+}
+
+function normalizeFeedScope(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized === FEED_SCOPE_COURSE) return FEED_SCOPE_COURSE;
+  return FEED_SCOPE_GLOBAL;
 }
 
 const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
@@ -131,6 +157,7 @@ async function loadLibraryDocumentContext(uuid) {
       `SELECT uuid, title, description, course, subject, filename, link, aiallowed
        FROM documents
        WHERE uuid = $1
+         AND COALESCE(is_restricted, false) = false
        LIMIT 1`,
       [uuid]
     );
@@ -142,6 +169,40 @@ async function loadLibraryDocumentContext(uuid) {
     console.error('Library doc context load failed:', error);
     return null;
   }
+}
+
+async function canAttachLibraryDocumentForUser(user, uuid) {
+  if (!user || !user.uid || !uuid) return false;
+  const userCourse = user.course ? String(user.course).trim() : '';
+  const includeCourseExclusive = isUnifiedVisibilityEnabled();
+  const values = [uuid];
+  const filters = ['uuid = $1', 'COALESCE(is_restricted, false) = false'];
+
+  values.push(user.uid);
+  const uidParam = values.length;
+  if (userCourse) {
+    values.push(userCourse);
+    const courseParam = values.length;
+    const courseVisibilityClause = includeCourseExclusive
+      ? `(visibility IN ('private', 'course_exclusive') AND course = $${courseParam})`
+      : `(visibility = 'private' AND course = $${courseParam})`;
+    filters.push(
+      `(uploader_uid = $${uidParam}
+        OR visibility = 'public'
+        OR ${courseVisibilityClause})`
+    );
+  } else {
+    filters.push(`(uploader_uid = $${uidParam} OR visibility = 'public')`);
+  }
+
+  const result = await pool.query(
+    `SELECT uuid
+     FROM documents
+     WHERE ${filters.join(' AND ')}
+     LIMIT 1`,
+    values
+  );
+  return result.rowCount > 0;
 }
 
 async function getAccessiblePostForUser(req, postId) {
@@ -214,6 +275,33 @@ async function buildPostAttachmentContext(attachment) {
   }
 
   return { summary: 'Attachment present but unsupported for direct parsing.', imageUrl: null };
+}
+
+function buildPostContentScanText(postDoc = {}) {
+  const attachment = postDoc && typeof postDoc.attachment === 'object' ? postDoc.attachment : null;
+  const parts = [
+    `Title: ${postDoc.title || ''}`,
+    `Content: ${postDoc.content || ''}`,
+    `Course: ${postDoc.course || ''}`,
+    `Visibility: ${postDoc.visibility || 'public'}`,
+  ];
+  if (attachment) {
+    const attachmentType = typeof attachment.type === 'string' ? attachment.type.trim() : '';
+    parts.push(`Attachment type: ${attachmentType || 'none'}`);
+    if (attachment.filename) {
+      parts.push(`Attachment filename: ${attachment.filename}`);
+    }
+    if (attachment.title) {
+      parts.push(`Attachment title: ${attachment.title}`);
+    }
+    if (attachment.link) {
+      parts.push(`Attachment link: ${attachment.link}`);
+    }
+    if (attachment.libraryDocumentUuid) {
+      parts.push(`Attached Open Library document UUID: ${attachment.libraryDocumentUuid}`);
+    }
+  }
+  return parts.filter(Boolean).join('\n\n');
 }
 
 async function loadUploaderProfiles(uids) {
@@ -321,12 +409,37 @@ function buildFeedRankingPipeline({
     { $match: filter },
     {
       $addFields: {
+        _feedTimestamp: {
+          $ifNull: [
+            {
+              $convert: {
+                input: '$uploadDate',
+                to: 'date',
+                onError: null,
+                onNull: null,
+              },
+            },
+            {
+              $ifNull: [
+                {
+                  $convert: {
+                    input: '$createdAt',
+                    to: 'date',
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+                { $toDate: '$_id' },
+              ],
+            },
+          ],
+        },
         _hoursSincePost: {
           $max: [
             0.05,
             {
               $divide: [
-                { $subtract: [now, { $ifNull: ['$uploadDate', now] }] },
+                { $subtract: [now, { $ifNull: ['$_feedTimestamp', now] }] },
                 1000 * 60 * 60,
               ],
             },
@@ -343,13 +456,19 @@ function buildFeedRankingPipeline({
         _freshBoost: {
           $cond: [
             { $lte: ['$_hoursSincePost', 1] },
-            2.6,
+            3.2,
             {
               $cond: [
                 { $lte: ['$_hoursSincePost', 6] },
-                1.6,
+                2.2,
                 {
-                  $cond: [{ $lte: ['$_hoursSincePost', 24] }, 0.75, 0],
+                  $cond: [
+                    { $lte: ['$_hoursSincePost', 24] },
+                    1.2,
+                    {
+                      $cond: [{ $lte: ['$_hoursSincePost', 72] }, 0.55, 0],
+                    },
+                  ],
                 },
               ],
             },
@@ -392,11 +511,12 @@ function buildFeedRankingPipeline({
         },
       },
     },
-    { $sort: { _feedScore: -1, uploadDate: -1, _id: -1 } },
+    { $sort: { _feedScore: -1, _feedTimestamp: -1, _id: -1 } },
     { $skip: skip },
     { $limit: pageSize },
     {
       $project: {
+        _feedTimestamp: 0,
         _hoursSincePost: 0,
         _engagementRaw: 0,
         _followBoost: 0,
@@ -409,6 +529,127 @@ function buildFeedRankingPipeline({
       },
     },
   ];
+}
+
+function buildFeedVisibilityWindowFilter(baseFilter, now = new Date()) {
+  const cutoff = new Date(
+    now.getTime() - FEED_HIDE_WITHOUT_INTERACTION_DAYS * 24 * 60 * 60 * 1000
+  );
+  return {
+    $and: [
+      baseFilter,
+      {
+        $expr: {
+          $or: [
+            {
+              $gt: [
+                {
+                  $convert: {
+                    input: '$likesCount',
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+                0,
+              ],
+            },
+            {
+              $gt: [
+                {
+                  $convert: {
+                    input: '$commentsCount',
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+                0,
+              ],
+            },
+            {
+              $gte: [
+                {
+                  $ifNull: [
+                    {
+                      $convert: {
+                        input: '$uploadDate',
+                        to: 'date',
+                        onError: null,
+                        onNull: null,
+                      },
+                    },
+                    {
+                      $ifNull: [
+                        {
+                          $convert: {
+                            input: '$createdAt',
+                            to: 'date',
+                            onError: null,
+                            onNull: null,
+                          },
+                        },
+                        { $toDate: '$_id' },
+                      ],
+                    },
+                  ],
+                },
+                cutoff,
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+function buildPostDateExpr() {
+  return {
+    $ifNull: [
+      {
+        $convert: {
+          input: '$uploadDate',
+          to: 'date',
+          onError: null,
+          onNull: null,
+        },
+      },
+      {
+        $ifNull: [
+          {
+            $convert: {
+              input: '$createdAt',
+              to: 'date',
+              onError: null,
+              onNull: null,
+            },
+          },
+          { $toDate: '$_id' },
+        ],
+      },
+    ],
+  };
+}
+
+async function countRecentFeedPosts(postsCollection, baseFilter, now = new Date()) {
+  const recentCutoff = new Date(
+    now.getTime() - FEED_HIDE_THRESHOLD_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+  const rows = await postsCollection
+    .aggregate([
+      { $match: baseFilter },
+      {
+        $match: {
+          $expr: {
+            $gte: [buildPostDateExpr(), recentCutoff],
+          },
+        },
+      },
+      { $count: 'count' },
+    ])
+    .toArray();
+  return Number(rows[0]?.count || 0);
 }
 
 function parseSidecardLimit(value, fallback = 5, max = 10) {
@@ -486,13 +727,17 @@ router.get('/api/home/sidecards', async (req, res) => {
       (async () => {
         const filters = [];
         const values = [];
+        filters.push('COALESCE(d.is_restricted, false) = false');
+        const sharedVisibilityClause = isUnifiedVisibilityEnabled()
+          ? "d.visibility IN ('private', 'course_exclusive')"
+          : "d.visibility = 'private'";
         if (userCourse && userUid) {
           values.push(userCourse);
           const courseParam = values.length;
           values.push(userUid);
           const uidParam = values.length;
           filters.push(
-            `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+            `(d.visibility = 'public' OR (${sharedVisibilityClause} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
           );
         } else if (userUid) {
           values.push(userUid);
@@ -617,8 +862,12 @@ router.get('/api/home/sidecards', async (req, res) => {
 
 router.get('/api/posts', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
-  const pageSize = Math.min(Math.max(Number(req.query.pageSize || 10), 1), 50);
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize || 50), 1), 500);
   const course = (req.query.course || '').trim();
+  const requestedFeedScope = normalizeFeedScope(req.query.feedScope);
+  const feedScopeEnabled = isGlobalCourseFeedEnabled();
+  const feedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
+  const now = new Date();
 
   try {
     const db = await getMongoDb();
@@ -631,19 +880,78 @@ router.get('/api/posts', async (req, res) => {
     if (excludedAuthors.length) {
       filter.uploaderUid = { $nin: excludedAuthors };
     }
+
+    if (feedScope === FEED_SCOPE_COURSE) {
+      const viewerCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
+      if (!viewerCourse) {
+        return res.json({
+          ok: true,
+          total: 0,
+          page,
+          pageSize,
+          feedScope,
+          feedScopeEnabled,
+          requestedFeedScope,
+          unifiedVisibilityEnabled: isUnifiedVisibilityEnabled(),
+          feedPolicy: {
+            recentWindowDays: FEED_HIDE_THRESHOLD_WINDOW_DAYS,
+            recentPostCount: 0,
+            hideThreshold: FEED_HIDE_THRESHOLD_RECENT_POSTS,
+            lowInteractionHidingActive: false,
+          },
+          posts: [],
+        });
+      }
+      const scopedVisibility = isUnifiedVisibilityEnabled()
+        ? ['private', 'course_exclusive']
+        : ['private'];
+      if (!Array.isArray(filter.$and)) {
+        filter.$and = [];
+      }
+      filter.$and.push({
+        course: viewerCourse,
+        visibility: { $in: scopedVisibility },
+      });
+    }
+
+    if (feedScope === FEED_SCOPE_GLOBAL) {
+      if (!Array.isArray(filter.$and)) {
+        filter.$and = [];
+      }
+      filter.$and.push({
+        $or: [
+          { visibility: 'public' },
+          { visibility: null },
+          { visibility: { $exists: false } },
+        ],
+      });
+    }
+
     if (course && course !== 'all') {
       filter.course = course;
     }
+    let recentPostCount = 0;
+    try {
+      recentPostCount = await countRecentFeedPosts(postsCollection, filter, now);
+    } catch (countError) {
+      console.error('Recent feed count failed:', countError);
+    }
+
+    const shouldHideLowInteraction =
+      recentPostCount >= FEED_HIDE_THRESHOLD_RECENT_POSTS;
+    const feedFilter = shouldHideLowInteraction
+      ? buildFeedVisibilityWindowFilter(filter, now)
+      : filter;
 
     const followedUids = await loadFollowingUids(req.user.uid);
-    const total = await postsCollection.countDocuments(filter);
+    const total = await postsCollection.countDocuments(feedFilter);
     const posts = await postsCollection
       .aggregate(
         buildFeedRankingPipeline({
-          filter,
+          filter: feedFilter,
           skip: (page - 1) * pageSize,
           pageSize,
-          now: new Date(),
+          now,
           userCourse: req.user?.course || '',
           followedUids,
         })
@@ -691,7 +999,23 @@ router.get('/api/posts', async (req, res) => {
       })
     );
 
-    return res.json({ ok: true, total, page, pageSize, posts: response });
+    return res.json({
+      ok: true,
+      total,
+      page,
+      pageSize,
+      feedScope,
+      feedScopeEnabled,
+      requestedFeedScope,
+      unifiedVisibilityEnabled: isUnifiedVisibilityEnabled(),
+      feedPolicy: {
+        recentWindowDays: FEED_HIDE_THRESHOLD_WINDOW_DAYS,
+        recentPostCount,
+        hideThreshold: FEED_HIDE_THRESHOLD_RECENT_POSTS,
+        lowInteractionHidingActive: shouldHideLowInteraction,
+      },
+      posts: response,
+    });
   } catch (error) {
     console.error('Posts fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load posts.' });
@@ -1068,6 +1392,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
   const {
     title,
     content,
+    feedScope: requestedFeedScopeRaw,
     attachmentType,
     attachmentLink,
     attachmentTitle,
@@ -1079,7 +1404,19 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Title and content are required.' });
   }
 
-  const visibilityValue = 'public';
+  const requestedFeedScope = normalizeFeedScope(requestedFeedScopeRaw);
+  const feedScopeEnabled = isGlobalCourseFeedEnabled();
+  const effectiveFeedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
+  const visibilityValue = effectiveFeedScope === FEED_SCOPE_COURSE
+    ? (isUnifiedVisibilityEnabled() ? 'course_exclusive' : 'private')
+    : 'public';
+  const userCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
+  if (visibilityValue !== 'public' && !userCourse) {
+    return res.status(400).json({
+      ok: false,
+      message: 'Your account must have a course to post in the course feed.',
+    });
+  }
 
   try {
     const db = await getMongoDb();
@@ -1126,6 +1463,13 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
       if (!libraryDocumentUuid) {
         return res.status(400).json({ ok: false, message: 'Library document details required.' });
       }
+      const canAttach = await canAttachLibraryDocumentForUser(req.user, libraryDocumentUuid);
+      if (!canAttach) {
+        return res.status(404).json({
+          ok: false,
+          message: 'Open Library document is not accessible.',
+        });
+      }
       attachment = {
         type: 'library_doc',
         libraryDocumentUuid,
@@ -1148,7 +1492,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const postDoc = {
       title: title.trim(),
       content: content.trim(),
-      course: null,
+      course: userCourse || null,
       visibility: visibilityValue,
       attachment,
       uploadDate: now,
@@ -1164,20 +1508,55 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const result = await postsCollection.insertOne(postDoc);
     const postId = result.insertedId.toString();
 
+    setImmediate(() => {
+      const contentScanText = buildPostContentScanText(postDoc);
+      autoScanIncomingContent({
+        targetType: 'post',
+        targetId: postId,
+        requestedByUid: req.user.uid,
+        content: contentScanText,
+        metadata: {
+          visibility: postDoc.visibility || 'public',
+          course: postDoc.course || '',
+          attachmentType: postDoc.attachment && postDoc.attachment.type ? postDoc.attachment.type : null,
+          attachmentLibraryDocumentUuid:
+            postDoc.attachment && postDoc.attachment.libraryDocumentUuid
+              ? postDoc.attachment.libraryDocumentUuid
+              : null,
+          source: 'home_feed_create',
+        },
+      }).catch((error) => {
+        console.error('Post auto content scan failed:', error);
+      });
+    });
+
     try {
-      const followersResult = await pool.query(
-        `SELECT f.follower_uid AS uid
-         FROM follows f
-         WHERE f.target_uid = $1
-           AND f.follower_uid <> $1
-           AND NOT EXISTS (
-             SELECT 1
-             FROM blocked_users bu
-             WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
-                OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
-           )`,
-        [req.user.uid]
-      );
+      const followerFilterByCourse = visibilityValue !== 'public' && userCourse;
+      const followerQuery = followerFilterByCourse
+        ? `SELECT f.follower_uid AS uid
+           FROM follows f
+           JOIN accounts follower ON follower.uid = f.follower_uid
+           WHERE f.target_uid = $1
+             AND f.follower_uid <> $1
+             AND follower.course = $2
+             AND NOT EXISTS (
+               SELECT 1
+               FROM blocked_users bu
+               WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
+                  OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
+             )`
+        : `SELECT f.follower_uid AS uid
+           FROM follows f
+           WHERE f.target_uid = $1
+             AND f.follower_uid <> $1
+             AND NOT EXISTS (
+               SELECT 1
+               FROM blocked_users bu
+               WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
+                  OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
+             )`;
+      const followerParams = followerFilterByCourse ? [req.user.uid, userCourse] : [req.user.uid];
+      const followersResult = await pool.query(followerQuery, followerParams);
       const followerUids = followersResult.rows.map((row) => row.uid).filter(Boolean);
       if (followerUids.length) {
         await createNotificationsForRecipients({
@@ -1186,7 +1565,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
           type: 'following_new_post',
           entityType: 'post',
           entityId: postId,
-          targetUrl: `/home?post=${encodeURIComponent(postId)}`,
+          targetUrl: `/posts/${encodeURIComponent(postId)}`,
           meta: {
             postTitle: postDoc.title,
           },
@@ -1217,8 +1596,6 @@ router.patch('/api/posts/:id', async (req, res) => {
   const updates = {};
   if (title) updates.title = title.trim();
   if (content) updates.content = content.trim();
-  updates.visibility = 'public';
-  updates.course = null;
 
   try {
     const db = await getMongoDb();
@@ -1287,8 +1664,16 @@ router.post('/api/posts/:id/like', async (req, res) => {
     const postId = new ObjectId(id);
     const likesCollection = db.collection('post_likes');
     const postsCollection = db.collection('posts');
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: postId,
+    };
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
     const postForRecipient = await postsCollection.findOne(
-      { _id: postId },
+      filter,
       { projection: { uploaderUid: 1, title: 1 } }
     );
     if (!postForRecipient) {
@@ -1325,7 +1710,7 @@ router.post('/api/posts/:id/like', async (req, res) => {
             type: 'post_liked',
             entityType: 'post',
             entityId: id,
-            targetUrl: `/home?post=${encodeURIComponent(id)}`,
+            targetUrl: `/posts/${encodeURIComponent(id)}`,
             meta: {
               postTitle: postForRecipient.title || 'Untitled post',
             },
@@ -1352,6 +1737,21 @@ router.get('/api/posts/:id/comments', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: postId,
+    };
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
+    const post = await db
+      .collection('posts')
+      .findOne(filter, { projection: { _id: 1 } });
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+
     const comments = await db
       .collection('post_comments')
       .find({ postId })
@@ -1378,9 +1778,17 @@ router.post('/api/posts/:id/comments', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
+    const filter = {
+      ...buildVisibilityFilter(req.user),
+      _id: postId,
+    };
+    const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
+    if (excludedAuthors.length) {
+      filter.uploaderUid = { $nin: excludedAuthors };
+    }
     const post = await db
       .collection('posts')
-      .findOne({ _id: postId }, { projection: { uploaderUid: 1, title: 1 } });
+      .findOne(filter, { projection: { uploaderUid: 1, title: 1 } });
     if (!post) {
       return res.status(404).json({ ok: false, message: 'Post not found.' });
     }
@@ -1404,7 +1812,7 @@ router.post('/api/posts/:id/comments', async (req, res) => {
             type: 'post_commented',
             entityType: 'post',
             entityId: id,
-            targetUrl: `/home?post=${encodeURIComponent(id)}`,
+            targetUrl: `/posts/${encodeURIComponent(id)}`,
             meta: {
               postTitle: post.title || 'Untitled post',
             },
@@ -1453,7 +1861,6 @@ router.post('/api/posts/:id/bookmark', async (req, res) => {
 
 router.post('/api/posts/:id/report', async (req, res) => {
   const { id } = req.params;
-  const { reason } = req.body || {};
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ ok: false, message: 'Invalid post id.' });
   }
@@ -1461,12 +1868,37 @@ router.post('/api/posts/:id/report', async (req, res) => {
   try {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
-    await db.collection('post_reports').insertOne({
-      postId,
-      userUid: req.user.uid,
-      reason: reason ? reason.trim() : null,
-      createdAt: new Date(),
-    });
+    const { category, customReason, details, reason } = parseReportPayload(req.body || {});
+    const post = await db.collection('posts').findOne({ _id: postId }, { projection: { uploaderUid: 1 } });
+    if (!post) {
+      return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+    if (post.uploaderUid && post.uploaderUid === req.user.uid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own post.' });
+    }
+
+    await db.collection('post_reports').updateOne(
+      { postId, userUid: req.user.uid },
+      {
+        $set: {
+          postId,
+          userUid: req.user.uid,
+          targetUid: post.uploaderUid || null,
+          category,
+          customReason: customReason || null,
+          details: details || null,
+          reason,
+          status: 'open',
+          moderationAction: null,
+          resolutionNote: null,
+          resolvedAt: null,
+          resolvedByUid: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
     return res.json({ ok: true });
   } catch (error) {
     console.error('Report failed:', error);

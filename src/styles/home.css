@@ -19,6 +19,7 @@ body {
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background: #efeeec;
+  overflow-x: hidden;
 }
 
 .top-nav {
@@ -162,13 +163,15 @@ body {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 32px;
-  padding: 12px 48px 60px;
+  padding: 12px clamp(16px, 4vw, 48px) 60px;
   align-items: start;
+  min-width: 0;
 }
 
 .feed {
   display: grid;
   gap: 24px;
+  min-width: 0;
 }
 
 .posts-feed {
@@ -182,6 +185,38 @@ body {
   gap: 16px;
 }
 
+.feed-scope-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(15, 38, 57, 0.08);
+  border: 1px solid rgba(15, 38, 57, 0.12);
+}
+
+.feed-scope-chip {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #24455c;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.feed-scope-chip:hover {
+  background: rgba(15, 38, 57, 0.08);
+}
+
+.feed-scope-chip.is-active {
+  background: #173b58;
+  color: #fff;
+}
+
 .composer-avatar {
   width: 56px;
   height: 56px;
@@ -189,6 +224,12 @@ body {
   background: linear-gradient(135deg, #b9a79d, #e7e0db);
   overflow: hidden;
   flex: 0 0 56px;
+  display: grid;
+  place-items: center;
+  color: #17384d;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .composer-avatar img {
@@ -269,6 +310,12 @@ a.comment-author-link:hover {
   background: #1e2a3a;
   flex: 0 0 44px;
   overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .post-avatar img {
@@ -331,6 +378,13 @@ a.comment-author-link:hover {
   cursor: pointer;
   color: var(--ink-soft);
   font-weight: 600;
+  border-radius: 10px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.post-actions button:hover {
+  color: var(--ink);
+  background: #edf3f8;
 }
 
 .post-actions img {
@@ -358,16 +412,70 @@ a.comment-author-link:hover {
 
 .post-media {
   margin-top: 12px;
-  width: 100%;
+  width: min(100%, 700px);
   border-radius: 14px;
   overflow: hidden;
+  background: #d8d8d8;
 }
 
 .post-media img,
 .post-media video {
   width: 100%;
+  max-height: 460px;
+  object-fit: cover;
+  object-position: center;
   display: block;
   border-radius: 14px;
+}
+
+.post-media img {
+  cursor: zoom-in;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2400;
+  background: rgba(7, 13, 19, 0.86);
+  display: grid;
+  place-items: center;
+  padding: 26px;
+}
+
+.image-lightbox.is-hidden {
+  display: none;
+}
+
+.lightbox-card {
+  position: relative;
+  width: min(1100px, 100%);
+  max-height: calc(100dvh - 52px);
+  display: grid;
+  place-items: center;
+}
+
+.lightbox-card img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100dvh - 52px);
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: none;
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #173a56;
+  font-size: 1.45rem;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .menu-wrap {
@@ -421,6 +529,8 @@ a.comment-author-link:hover {
   width: 100%;
   box-shadow: var(--shadow);
   position: relative;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
 }
 
 .spotlight-modal-card {
@@ -911,10 +1021,11 @@ a.comment-author-link:hover {
 }
 
 .side-card {
-  background: var(--card);
+  background: #f6f3ee;
+  border: 1px solid #e0d9cf;
   border-radius: 18px;
   padding: 20px;
-  box-shadow: var(--shadow);
+  box-shadow: 0 12px 24px rgba(15, 38, 57, 0.06);
   height: clamp(180px, 24vh, 240px);
   overflow: hidden;
 }
@@ -997,6 +1108,13 @@ a.comment-author-link:hover {
   border-radius: 50%;
   overflow: hidden;
   flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  background: #d8cbc3;
+  color: #17384d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .sidecard-avatar img {
@@ -1105,6 +1223,15 @@ a.sidecard-item {
   .top-nav,
   .dashboard {
     padding: 20px;
+  }
+
+  .composer {
+    flex-wrap: wrap;
+  }
+
+  .composer-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .nav-logo {

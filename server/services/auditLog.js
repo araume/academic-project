@@ -133,7 +133,7 @@ async function deriveAction(req, context = {}) {
     recipientName = (await lookupAccountDisplayName(recipientUid)) || 'a user';
     postTitle = postSummary ? postSummary.title : null;
     actionType = `${executorName} ${body.action === 'unlike' ? 'unliked' : 'liked'} ${toPossessive(recipientName)} post`;
-    targetUrl = postId ? `/home?post=${encodeURIComponent(postId)}` : null;
+    targetUrl = postId ? `/posts/${encodeURIComponent(postId)}` : null;
   } else if (/^\/api\/posts\/[^/]+\/comments$/i.test(path) && method === 'POST' && isSuccess) {
     const postId = req.params && req.params.id ? String(req.params.id) : null;
     const postSummary = await lookupMainFeedPostSummary(postId);
@@ -141,14 +141,14 @@ async function deriveAction(req, context = {}) {
     recipientName = (await lookupAccountDisplayName(recipientUid)) || 'a user';
     postTitle = postSummary ? postSummary.title : null;
     actionType = `${executorName} commented on ${toPossessive(recipientName)} post`;
-    targetUrl = postId ? `/home?post=${encodeURIComponent(postId)}` : null;
+    targetUrl = postId ? `/posts/${encodeURIComponent(postId)}` : null;
   } else if (/^\/api\/posts$/i.test(path) && method === 'POST' && isSuccess) {
     const createdPost =
       responseBody && responseBody.post && typeof responseBody.post === 'object' ? responseBody.post : null;
     const postId = createdPost && createdPost.id ? String(createdPost.id) : null;
     postTitle = createdPost && createdPost.title ? String(createdPost.title) : null;
     actionType = `${executorName} published a post`;
-    targetUrl = postId ? `/home?post=${encodeURIComponent(postId)}` : null;
+    targetUrl = postId ? `/posts/${encodeURIComponent(postId)}` : null;
   } else if (/^\/api\/connections\/follow\/request$/i.test(path) && method === 'POST' && isSuccess) {
     recipientUid = String(body.targetUid || '').trim() || null;
     recipientName = (await lookupAccountDisplayName(recipientUid)) || 'a user';
@@ -169,20 +169,20 @@ async function deriveAction(req, context = {}) {
   if (/^\/api\/posts\/[^/]+\/like$/i.test(path)) {
     const postId = req.params && req.params.id ? String(req.params.id) : null;
     if (postId) {
-      targetUrl = `/home?post=${encodeURIComponent(postId)}`;
+      targetUrl = `/posts/${encodeURIComponent(postId)}`;
     }
   }
   if (/^\/api\/posts\/[^/]+\/comments$/i.test(path) && method === 'POST') {
     const postId = req.params && req.params.id ? String(req.params.id) : null;
     if (postId) {
-      targetUrl = `/home?post=${encodeURIComponent(postId)}`;
+      targetUrl = `/posts/${encodeURIComponent(postId)}`;
     }
   }
   if (/^\/api\/posts$/i.test(path) && method === 'POST' && !targetUrl) {
     const createdPostId =
       responseBody && responseBody.post && responseBody.post.id ? String(responseBody.post.id) : null;
     if (createdPostId) {
-      targetUrl = `/home?post=${encodeURIComponent(createdPostId)}`;
+      targetUrl = `/posts/${encodeURIComponent(createdPostId)}`;
     }
   }
   if (/^\/api\/connections\/follow\/request$/i.test(path) && method === 'POST' && !targetUrl) {

@@ -16,7 +16,14 @@ const {
   normalizeStorageKey,
 } = require('../services/storage');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
+const { hasAdminPrivileges } = require('../services/roleAccess');
 const { createNotification, isBlockedEitherDirection } = require('../services/notificationService');
+const { parseReportPayload } = require('../services/reporting');
+const {
+  autoScanIncomingContent,
+  extractDocumentExcerptForScan,
+} = require('../services/aiContentScanService');
 
 const router = express.Router();
 const upload = multer({
@@ -28,6 +35,15 @@ const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
 const AI_DOC_CONTEXT_MAX_BYTES = 8 * 1024 * 1024;
 const AI_DOC_CONTEXT_MAX_CHARS = 3800;
 const AI_DOC_PDF_OCR_MIN_TEXT_CHARS = 140;
+const UNIFIED_VISIBILITY_ENABLED = isUnifiedVisibilityEnabled();
+const COURSE_SHARED_VISIBILITY_SQL = UNIFIED_VISIBILITY_ENABLED
+  ? "d.visibility IN ('private', 'course_exclusive')"
+  : "d.visibility = 'private'";
+const DOCUMENT_NOT_RESTRICTED_SQL = 'COALESCE(d.is_restricted, false) = false';
+const LIBRARY_VISIBLE_DOCUMENT_SQL =
+  "(COALESCE(d.source, 'library') <> 'vault' OR d.visibility <> 'private')";
+const LIBRARY_VISIBLE_PLAIN_SQL =
+  "(COALESCE(source, 'library') <> 'vault' OR visibility <> 'private')";
 
 async function signIfNeeded(value, { ensureExists = false } = {}) {
   if (!value) return null;
@@ -96,6 +112,10 @@ function getFileExtension(filenameOrPath) {
   if (!filenameOrPath) return '';
   const normalized = String(filenameOrPath).split('?')[0].split('#')[0];
   return path.extname(normalized).toLowerCase();
+}
+
+function escapePostgresRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function classifyContextDocument(document = {}) {
@@ -373,31 +393,35 @@ function buildDocumentContextText(document, excerpt) {
 async function loadAccessibleDocumentForUser(user, uuid) {
   const userCourse = user && user.course ? user.course : null;
   const userUid = user && user.uid ? user.uid : null;
-  const filters = ['d.uuid = $1'];
+  const isPrivilegedViewer = hasAdminPrivileges(user);
+  const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
   const values = [uuid];
 
-  if (userCourse && userUid) {
-    values.push(userCourse);
-    const courseParam = values.length;
-    values.push(userUid);
-    const uidParam = values.length;
-    filters.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    values.push(userUid);
-    filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-  } else {
-    filters.push(`d.visibility = 'public'`);
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      filters.push(
+        `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
   }
 
   const query = `
     SELECT
       d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
       d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
-      COALESCE(a.display_name, a.username, a.email) AS uploader_name
+      COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name
     FROM documents d
     LEFT JOIN accounts a ON d.uploader_uid = a.uid
+    LEFT JOIN profiles p ON d.uploader_uid = p.uid
     WHERE ${filters.join(' AND ')}
     LIMIT 1
   `;
@@ -419,23 +443,107 @@ router.get('/api/library/courses', async (req, res) => {
   }
 });
 
+router.get('/api/library/uploaders', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const userCourse = req.user && req.user.course ? req.user.course : null;
+  const userUid = req.user && req.user.uid ? req.user.uid : null;
+  const isPrivilegedViewer = hasAdminPrivileges(req.user);
+
+  const values = [];
+  const filters = [DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
+
+  if (q) {
+    values.push(`%${q}%`);
+    filters.push(
+      `(COALESCE(p.display_name, a.display_name, a.username, a.email) ILIKE $${values.length}
+        OR a.username ILIKE $${values.length}
+        OR a.email ILIKE $${values.length})`
+    );
+  }
+
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      filters.push(
+        `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
+  }
+
+  const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const query = `
+    SELECT
+      d.uploader_uid AS uid,
+      COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+      p.photo_link,
+      COUNT(*)::int AS upload_count
+    FROM documents d
+    JOIN accounts a ON a.uid = d.uploader_uid
+    LEFT JOIN profiles p ON p.uid = d.uploader_uid
+    ${whereClause}
+    GROUP BY d.uploader_uid, COALESCE(p.display_name, a.display_name, a.username, a.email), p.photo_link
+    ORDER BY lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) ASC
+    LIMIT 50
+  `;
+
+  try {
+    const result = await pool.query(query, values);
+    const uploaders = await Promise.all(
+      result.rows.map(async (row) => ({
+        uid: row.uid,
+        displayName: row.display_name || 'Member',
+        photoLink: await signIfNeeded(row.photo_link, { ensureExists: true }),
+        uploadCount: row.upload_count || 0,
+      }))
+    );
+    return res.json({ ok: true, uploaders });
+  } catch (error) {
+    console.error('Uploader filter fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load uploaders.' });
+  }
+});
+
 router.get('/api/library/documents', async (req, res) => {
   const q = (req.query.q || '').trim();
   const course = (req.query.course || '').trim();
+  const uploaderUid = (req.query.uploaderUid || '').trim();
   const sort = (req.query.sort || 'recent').trim();
   const page = Math.max(Number(req.query.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 12), 1), 50);
   const userCourse = req.user && req.user.course ? req.user.course : null;
   const userUid = req.user && req.user.uid ? req.user.uid : null;
+  const isPrivilegedViewer = hasAdminPrivileges(req.user);
 
-  const filters = [];
+  const filters = [DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
   const countValues = [];
 
   if (q) {
-    countValues.push(`%${q}%`);
-    filters.push(
-      `(d.title ILIKE $${countValues.length} OR d.description ILIKE $${countValues.length} OR d.filename ILIKE $${countValues.length} OR d.subject ILIKE $${countValues.length})`
-    );
+    const terms = q
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter(Boolean);
+
+    const termFilters = [];
+    terms.forEach((term) => {
+      const escaped = escapePostgresRegex(term);
+      if (!escaped) return;
+      countValues.push(`\\m${escaped}\\M`);
+      termFilters.push(
+        `(COALESCE(d.title, '') ~* $${countValues.length} OR COALESCE(d.subject, '') ~* $${countValues.length})`
+      );
+    });
+
+    if (termFilters.length) {
+      filters.push(`(${termFilters.join(' AND ')})`);
+    }
   }
 
   if (course && course !== 'all') {
@@ -443,19 +551,26 @@ router.get('/api/library/documents', async (req, res) => {
     filters.push(`d.course = $${countValues.length}`);
   }
 
-  if (userCourse && userUid) {
-    countValues.push(userCourse);
-    const courseParam = countValues.length;
-    countValues.push(userUid);
-    const uidParam = countValues.length;
-    filters.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    countValues.push(userUid);
-    filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${countValues.length})`);
-  } else {
-    filters.push(`d.visibility = 'public'`);
+  if (uploaderUid) {
+    countValues.push(uploaderUid);
+    filters.push(`d.uploader_uid = $${countValues.length}`);
+  }
+
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      countValues.push(userCourse);
+      const courseParam = countValues.length;
+      countValues.push(userUid);
+      const uidParam = countValues.length;
+      filters.push(
+        `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      countValues.push(userUid);
+      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${countValues.length})`);
+    } else {
+      filters.push(`d.visibility = 'public'`);
+    }
   }
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -492,11 +607,12 @@ router.get('/api/library/documents', async (req, res) => {
       SELECT
         d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
         d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
-        COALESCE(a.display_name, a.username, a.email) AS uploader_name,
+        COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name,
         CASE WHEN l.id IS NULL THEN false ELSE true END AS liked,
         CASE WHEN d.uploader_uid = $${likedParamIndex} THEN true ELSE false END AS is_owner
       FROM documents d
       LEFT JOIN accounts a ON d.uploader_uid = a.uid
+      LEFT JOIN profiles p ON d.uploader_uid = p.uid
       LEFT JOIN document_likes l ON l.document_uuid = d.uuid AND l.user_uid = $${likedParamIndex}
       ${whereClause}
       ORDER BY ${orderBy}
@@ -532,31 +648,35 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
   try {
     const userCourse = req.user && req.user.course ? req.user.course : null;
     const userUid = req.user && req.user.uid ? req.user.uid : null;
-    const filters = ['d.uuid = $1'];
+    const isPrivilegedViewer = hasAdminPrivileges(req.user);
+    const filters = ['d.uuid = $1', DOCUMENT_NOT_RESTRICTED_SQL, LIBRARY_VISIBLE_DOCUMENT_SQL];
     const values = [uuid];
 
-    if (userCourse && userUid) {
-      values.push(userCourse);
-      const courseParam = values.length;
-      values.push(userUid);
-      const uidParam = values.length;
-      filters.push(
-        `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-      );
-    } else if (userUid) {
-      values.push(userUid);
-      filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-    } else {
-      filters.push(`d.visibility = 'public'`);
+    if (!isPrivilegedViewer) {
+      if (userCourse && userUid) {
+        values.push(userCourse);
+        const courseParam = values.length;
+        values.push(userUid);
+        const uidParam = values.length;
+        filters.push(
+          `(d.visibility = 'public' OR (${COURSE_SHARED_VISIBILITY_SQL} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+        );
+      } else if (userUid) {
+        values.push(userUid);
+        filters.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+      } else {
+        filters.push(`d.visibility = 'public'`);
+      }
     }
 
     const query = `
       SELECT
         d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate, d.course,
         d.subject, d.views, d.popularity, d.visibility, d.aiallowed, d.link, d.thumbnail_link,
-        COALESCE(a.display_name, a.username, a.email) AS uploader_name
+        COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name
       FROM documents d
       LEFT JOIN accounts a ON d.uploader_uid = a.uid
+      LEFT JOIN profiles p ON d.uploader_uid = p.uid
       WHERE ${filters.join(' AND ')}
       LIMIT 1
     `;
@@ -612,7 +732,18 @@ router.post(
 
     try {
       const uuid = crypto.randomUUID();
-      const visibilityValue = visibility === 'private' ? 'private' : 'public';
+      const visibilityRaw = typeof visibility === 'string' ? visibility.trim().toLowerCase() : '';
+      if (visibilityRaw === 'course_exclusive' && !UNIFIED_VISIBILITY_ENABLED) {
+        return res.status(400).json({
+          ok: false,
+          message: 'Course-exclusive visibility is currently unavailable.',
+        });
+      }
+      const visibilityValue = visibilityRaw === 'private'
+        ? 'private'
+        : visibilityRaw === 'course_exclusive'
+          ? 'course_exclusive'
+          : 'public';
 
       const uploadedFile = await uploadToStorage({
         buffer: file.buffer,
@@ -634,9 +765,9 @@ router.post(
 
       const insertQuery = `
         INSERT INTO documents
-          (uuid, title, description, filename, uploader_uid, course, subject, visibility, aiallowed, link, thumbnail_link)
+          (uuid, title, description, filename, uploader_uid, course, subject, visibility, source, aiallowed, link, thumbnail_link)
         VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING uuid, title, description, filename, uploader_uid, uploaddate, course, subject,
                   views, popularity, visibility, aiallowed, link, thumbnail_link
       `;
@@ -650,13 +781,54 @@ router.post(
         course.trim(),
         subject.trim(),
         visibilityValue,
+        'library',
         aiAllowedValue,
         uploadedFile.key,
         thumbnailLink,
       ];
 
       const result = await pool.query(insertQuery, insertValues);
-      return res.json({ ok: true, document: result.rows[0] });
+      const createdDocument = result.rows[0];
+
+      setImmediate(async () => {
+        try {
+          const excerpt = await extractDocumentExcerptForScan({
+            buffer: file.buffer,
+            filename: file.originalname,
+            mimeType: file.mimetype,
+          });
+          const contentScanText = [
+            `Title: ${createdDocument && createdDocument.title ? createdDocument.title : title.trim()}`,
+            `Description: ${createdDocument && createdDocument.description ? createdDocument.description : description ? description.trim() : ''}`,
+            `Course: ${createdDocument && createdDocument.course ? createdDocument.course : course.trim()}`,
+            `Subject: ${createdDocument && createdDocument.subject ? createdDocument.subject : subject.trim()}`,
+            `Visibility: ${visibilityValue}`,
+            `Filename: ${file.originalname || ''}`,
+            excerpt ? `Document excerpt:\n${excerpt}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n');
+
+          await autoScanIncomingContent({
+            targetType: 'document',
+            targetId: String(uuid),
+            requestedByUid: req.user.uid,
+            content: contentScanText,
+            metadata: {
+              source: 'open_library_upload',
+              visibility: visibilityValue,
+              course: createdDocument && createdDocument.course ? createdDocument.course : course.trim(),
+              subject: createdDocument && createdDocument.subject ? createdDocument.subject : subject.trim(),
+              filename: file.originalname || '',
+              mimeType: file.mimetype || '',
+            },
+          });
+        } catch (error) {
+          console.error('Open Library auto content scan failed:', error);
+        }
+      });
+
+      return res.json({ ok: true, document: createdDocument });
     } catch (error) {
       console.error('Document upload failed:', error);
       return res.status(500).json({ ok: false, message: 'Upload failed.' });
@@ -671,7 +843,11 @@ router.post('/api/library/documents/:uuid/view', async (req, res) => {
   }
   try {
     const result = await pool.query(
-      'UPDATE documents SET views = views + 1 WHERE uuid = $1 RETURNING views',
+      `UPDATE documents
+       SET views = views + 1
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+       RETURNING views`,
       [uuid]
     );
     return res.json({ ok: true, views: result.rows[0] ? result.rows[0].views : 0 });
@@ -717,7 +893,10 @@ router.patch('/api/library/documents/:uuid', async (req, res) => {
 
   try {
     const ownerCheck = await pool.query(
-      'SELECT uploader_uid FROM documents WHERE uuid = $1',
+      `SELECT uploader_uid
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
       [uuid]
     );
     if (!ownerCheck.rows[0] || ownerCheck.rows[0].uploader_uid !== req.user.uid) {
@@ -750,7 +929,10 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
 
   try {
     const docResult = await pool.query(
-      'SELECT link, thumbnail_link, uploader_uid FROM documents WHERE uuid = $1',
+      `SELECT link, thumbnail_link, uploader_uid
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
       [uuid]
     );
     const doc = docResult.rows[0];
@@ -759,7 +941,11 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
     }
 
     const deleteResult = await pool.query(
-      'DELETE FROM documents WHERE uuid = $1 AND uploader_uid = $2 RETURNING uuid',
+      `DELETE FROM documents
+       WHERE uuid = $1
+         AND uploader_uid = $2
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+       RETURNING uuid`,
       [uuid, req.user.uid]
     );
     if (!deleteResult.rowCount) {
@@ -778,10 +964,74 @@ router.delete('/api/library/documents/:uuid', async (req, res) => {
       }
     }
 
+    const db = await getMongoDb();
+    await db.collection('document_reports').deleteMany({ documentUuid: uuid });
+
     return res.json({ ok: true });
   } catch (error) {
     console.error('Document delete failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to delete document.' });
+  }
+});
+
+router.post('/api/library/documents/:uuid/report', async (req, res) => {
+  const { uuid } = req.params;
+  if (!uuid) {
+    return res.status(400).json({ ok: false, message: 'Missing document id.' });
+  }
+  const userUid = req.user && req.user.uid;
+  if (!userUid) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const docResult = await pool.query(
+      `SELECT uuid, title, uploader_uid
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
+      [uuid]
+    );
+    const doc = docResult.rows[0];
+    if (!doc) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+    if (doc.uploader_uid && doc.uploader_uid === userUid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own document.' });
+    }
+
+    const payload = parseReportPayload(req.body || {});
+    const db = await getMongoDb();
+    await db.collection('document_reports').updateOne(
+      { documentUuid: uuid, userUid },
+      {
+        $set: {
+          documentUuid: uuid,
+          documentTitle: doc.title || '',
+          userUid,
+          targetUid: doc.uploader_uid || null,
+          category: payload.category,
+          customReason: payload.customReason || null,
+          details: payload.details || null,
+          reason: payload.reason,
+          status: 'open',
+          moderationAction: null,
+          resolutionNote: null,
+          resolvedAt: null,
+          resolvedByUid: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Document report failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to submit report.' });
   }
 });
 
@@ -797,7 +1047,12 @@ router.post('/api/library/like', async (req, res) => {
 
   try {
     const docResult = await pool.query(
-      'SELECT uuid, uploader_uid, title FROM documents WHERE uuid = $1 LIMIT 1',
+      `SELECT uuid, uploader_uid, title
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
       [documentUuid]
     );
     const doc = docResult.rows[0];
@@ -813,7 +1068,10 @@ router.post('/api/library/like', async (req, res) => {
       );
       if (del.rowCount) {
         await pool.query(
-          'UPDATE documents SET popularity = GREATEST(popularity - 1, 0) WHERE uuid = $1',
+          `UPDATE documents
+           SET popularity = GREATEST(popularity - 1, 0)
+           WHERE uuid = $1
+             AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
           [documentUuid]
         );
       }
@@ -825,14 +1083,21 @@ router.post('/api/library/like', async (req, res) => {
       if (ins.rowCount) {
         shouldNotifyLike = true;
         await pool.query(
-          'UPDATE documents SET popularity = popularity + 1 WHERE uuid = $1',
+          `UPDATE documents
+           SET popularity = popularity + 1
+           WHERE uuid = $1
+             AND ${LIBRARY_VISIBLE_PLAIN_SQL}`,
           [documentUuid]
         );
       }
     }
 
     const popularity = await pool.query(
-      'SELECT popularity FROM documents WHERE uuid = $1',
+      `SELECT popularity
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+         AND COALESCE(is_restricted, false) = false`,
       [documentUuid]
     );
 
@@ -1096,6 +1361,19 @@ router.get('/api/library/comments', async (req, res) => {
   }
 
   try {
+    const docCheck = await pool.query(
+      `SELECT uuid
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
+      [documentUuid]
+    );
+    if (!docCheck.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Document not found.' });
+    }
+
     const db = await getMongoDb();
     const comments = await db
       .collection('doccomment')
@@ -1121,7 +1399,12 @@ router.post('/api/library/comments', async (req, res) => {
 
   try {
     const docResult = await pool.query(
-      'SELECT uuid, uploader_uid, title FROM documents WHERE uuid = $1 LIMIT 1',
+      `SELECT uuid, uploader_uid, title
+       FROM documents
+       WHERE uuid = $1
+         AND ${LIBRARY_VISIBLE_PLAIN_SQL}
+         AND COALESCE(is_restricted, false) = false
+       LIMIT 1`,
       [documentUuid]
     );
     const doc = docResult.rows[0];

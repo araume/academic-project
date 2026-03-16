@@ -14,13 +14,14 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
         <a href="/personal" class="is-active" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -51,6 +52,7 @@
     <aside class="personal-tabs">
       <button class="tab-button is-active" data-tab="journal">Journal</button>
       <button class="tab-button" data-tab="tasks">Tasks</button>
+      <button class="tab-button" data-tab="vault">File Vault</button>
       <button class="tab-button" data-tab="ai">AI Chatbot</button>
     </aside>
 
@@ -109,6 +111,19 @@
             <div id="tasksComplete" class="task-list"></div>
           </div>
         </div>
+      </div>
+
+      <div class="tab-panel" id="tab-vault">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">File Vault</p>
+            <h2>Upload privately, then publish when ready.</h2>
+          </div>
+          <button class="primary-button" id="openVaultModal">Upload file</button>
+        </div>
+        <p class="hint">Private stays in your vault only. Switching to course-exclusive or public also exposes it in Open Library.</p>
+        <p class="form-message" id="vaultMessage"></p>
+        <div id="vaultList" class="vault-list"></div>
       </div>
 
       <div class="tab-panel" id="tab-ai">
@@ -217,6 +232,48 @@
           <input type="text" name="tags" placeholder="exam, group work" />
         </label>
         <button type="submit" class="primary-button">Add task</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="vaultModal">
+    <div class="modal-card vault-modal-card">
+      <button class="close-button" id="vaultModalClose">×</button>
+      <h2>Upload to file vault</h2>
+      <form id="vaultForm" class="panel-card vault-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Subject / lesson</span>
+          <input type="text" name="subject" required />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea name="description" rows="3" placeholder="Optional description"></textarea>
+        </label>
+        <label>
+          <span>Visibility</span>
+          <select name="visibility" required>
+            <option value="private" selected>Private</option>
+            <option value="course_exclusive">Course-exclusive</option>
+            <option value="public">Public</option>
+          </select>
+        </label>
+        <label>
+          <span>Document file</span>
+          <input type="file" name="file" required />
+        </label>
+        <label>
+          <span>Thumbnail (optional)</span>
+          <input type="file" name="thumbnail" accept="image/*" />
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="aiallowed" />
+          <span>Allow Ask AI for this document</span>
+        </label>
+        <button type="submit" class="primary-button" id="vaultSubmitButton">Upload</button>
       </form>
     </div>
   </div>

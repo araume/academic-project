@@ -1,13 +1,30 @@
 const express = require('express');
+const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
 const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { deleteSessionsForUid } = require('../auth/sessionStore');
 const { getMongoDb } = require('../db/mongo');
-const { deleteFromStorage } = require('../services/storage');
+const { deleteFromStorage, getSignedUrl, normalizeStorageKey } = require('../services/storage');
 const { ensureAuditReady } = require('../services/auditLog');
+const { createNotificationsForRecipients } = require('../services/notificationService');
+const {
+  isRestrictedContentsEnabled,
+  isAdminAppealsEnabled,
+  isAdminCustomNotificationEnabled,
+} = require('../services/featureFlags');
 
 const router = express.Router();
+const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
+const RESTRICTED_RETENTION_DAYS = Math.max(
+  1,
+  Number(process.env.RESTRICTED_CONTENT_RETENTION_DAYS || 30)
+);
+const CUSTOM_NOTIFICATION_MAX_RECIPIENTS = 1000;
+const RESTRICTED_PURGE_INTERVAL_MS = Math.max(
+  1,
+  Number(process.env.RESTRICTED_PURGE_INTERVAL_MINUTES || 15)
+) * 60 * 1000;
 
 function sanitizeText(value, maxLen = 300) {
   if (typeof value !== 'string') return '';
@@ -24,6 +41,761 @@ function parsePagination(req, defaultPageSize = 20, maxPageSize = 100) {
   const pageSize = Math.min(parsePositiveInt(req.query.pageSize) || defaultPageSize, maxPageSize);
   const offset = (page - 1) * pageSize;
   return { page, pageSize, offset };
+}
+
+function clampInteger(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function digestProfessorSignupCode(rawCode) {
+  const normalized = String(rawCode || '').replace(/\s+/g, '').trim().toUpperCase();
+  if (!normalized) return '';
+  return sha256Hex(`${PROFESSOR_SIGNUP_CODE_HASH_PREFIX}${normalized}`);
+}
+
+function buildProfessorSignupCode(length) {
+  const finalLength = clampInteger(
+    length,
+    PROFESSOR_SIGNUP_CODE_MIN_LENGTH,
+    PROFESSOR_SIGNUP_CODE_MAX_LENGTH,
+    PROFESSOR_SIGNUP_CODE_DEFAULT_LENGTH
+  );
+  let output = '';
+  for (let i = 0; i < finalLength; i += 1) {
+    const index = crypto.randomInt(0, PROFESSOR_SIGNUP_CODE_ALPHABET.length);
+    output += PROFESSOR_SIGNUP_CODE_ALPHABET[index];
+  }
+  return output;
+}
+
+function getProfessorCodeStatus(row) {
+  if (!row || typeof row !== 'object') return 'unknown';
+  if (row.consumed_at) return 'consumed';
+  const isExpired = row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
+  if (isExpired) return 'expired';
+  if (row.is_active === false) return 'revoked';
+  return 'available';
+}
+
+const RESTRICTED_QUEUE_SOURCES = new Set([
+  'main_post',
+  'library_document',
+  'community_post',
+  'community_comment',
+  'chat_message',
+]);
+const RESTRICTED_QUEUE_STATUSES = new Set(['restricted', 'restored', 'purged']);
+let ensureGovernanceReadyPromise = null;
+let ensureProfessorCodeManagerReadyPromise = null;
+let ensureDepAdminManagerReadyPromise = null;
+const PROFESSOR_SIGNUP_CODE_HASH_PREFIX = 'professor-signup-code:v1:';
+const PROFESSOR_SIGNUP_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const PROFESSOR_SIGNUP_CODE_MIN_LENGTH = 6;
+const PROFESSOR_SIGNUP_CODE_MAX_LENGTH = 24;
+const PROFESSOR_SIGNUP_CODE_DEFAULT_LENGTH = 10;
+const PROFESSOR_SIGNUP_CODE_MAX_BATCH = 50;
+
+function normalizeRestrictedSource(value) {
+  const normalized = sanitizeText(value, 60).toLowerCase();
+  return RESTRICTED_QUEUE_SOURCES.has(normalized) ? normalized : '';
+}
+
+function normalizeRestrictedStatus(value, fallback = 'restricted') {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  return RESTRICTED_QUEUE_STATUSES.has(normalized) ? normalized : fallback;
+}
+
+function sanitizeRestrictedMetadata(metadata) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {};
+  }
+  const safe = {};
+  Object.entries(metadata).forEach(([key, rawValue]) => {
+    const keyText = sanitizeText(key, 80);
+    if (!keyText) return;
+    if (typeof rawValue === 'string') {
+      safe[keyText] = sanitizeText(rawValue, 1000);
+      return;
+    }
+    if (
+      typeof rawValue === 'number' ||
+      typeof rawValue === 'boolean' ||
+      rawValue === null
+    ) {
+      safe[keyText] = rawValue;
+      return;
+    }
+    safe[keyText] = sanitizeText(String(rawValue), 1000);
+  });
+  return safe;
+}
+
+function computeRestoreDeadlineDate() {
+  return new Date(Date.now() + RESTRICTED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+}
+
+async function ensureGovernanceReady() {
+  if (!ensureGovernanceReadyPromise) {
+    ensureGovernanceReadyPromise = (async () => {
+      await pool.query(`
+        ALTER TABLE documents
+          ADD COLUMN IF NOT EXISTS is_restricted BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE documents
+          ADD COLUMN IF NOT EXISTS restricted_at TIMESTAMPTZ;
+        ALTER TABLE documents
+          ADD COLUMN IF NOT EXISTS restricted_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+        ALTER TABLE documents
+          ADD COLUMN IF NOT EXISTS restricted_reason TEXT;
+
+        CREATE TABLE IF NOT EXISTS restricted_content_queue (
+          id BIGSERIAL PRIMARY KEY,
+          source TEXT NOT NULL CHECK (source IN (
+            'main_post',
+            'library_document',
+            'community_post',
+            'community_comment',
+            'chat_message'
+          )),
+          report_key TEXT,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          target_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          course TEXT,
+          reason TEXT,
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          hidden_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          restore_deadline_at TIMESTAMPTZ NOT NULL,
+          restored_at TIMESTAMPTZ,
+          restored_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          purged_at TIMESTAMPTZ,
+          purged_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'restricted'
+            CHECK (status IN ('restricted', 'restored', 'purged')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS restricted_content_queue_status_deadline_idx
+          ON restricted_content_queue(status, restore_deadline_at);
+        CREATE INDEX IF NOT EXISTS restricted_content_queue_target_idx
+          ON restricted_content_queue(source, target_type, target_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS restricted_content_queue_active_target_idx
+          ON restricted_content_queue(source, target_type, target_id)
+          WHERE status = 'restricted';
+
+        CREATE TABLE IF NOT EXISTS account_disciplinary_actions (
+          id BIGSERIAL PRIMARY KEY,
+          target_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          issued_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          action_type TEXT NOT NULL CHECK (action_type IN ('warn', 'suspend', 'ban')),
+          reason TEXT,
+          starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ends_at TIMESTAMPTZ,
+          active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          revoked_at TIMESTAMPTZ,
+          revoked_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          revoked_reason TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS account_appeals (
+          id BIGSERIAL PRIMARY KEY,
+          appellant_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          disciplinary_action_id BIGINT REFERENCES account_disciplinary_actions(id) ON DELETE SET NULL,
+          appeal_type TEXT NOT NULL CHECK (appeal_type IN ('warning', 'suspension', 'ban', 'verification_rejection', 'other')),
+          status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'under_review', 'accepted', 'denied', 'withdrawn')),
+          message TEXT NOT NULL,
+          evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+          resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          resolution_note TEXT,
+          resolved_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS account_disciplinary_actions_target_active_idx
+          ON account_disciplinary_actions(target_uid, active, created_at DESC);
+        CREATE INDEX IF NOT EXISTS account_disciplinary_actions_target_type_idx
+          ON account_disciplinary_actions(target_uid, action_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS account_appeals_appellant_created_idx
+          ON account_appeals(appellant_uid, created_at DESC);
+        CREATE INDEX IF NOT EXISTS account_appeals_status_created_idx
+          ON account_appeals(status, created_at DESC);
+      `);
+    })().catch((error) => {
+      ensureGovernanceReadyPromise = null;
+      throw error;
+    });
+  }
+  await ensureGovernanceReadyPromise;
+}
+
+async function ensureProfessorCodeManagerReady() {
+  if (!ensureProfessorCodeManagerReadyPromise) {
+    ensureProfessorCodeManagerReadyPromise = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS professor_registration_codes (
+          id BIGSERIAL PRIMARY KEY,
+          code_digest TEXT NOT NULL UNIQUE,
+          source TEXT NOT NULL DEFAULT 'manual',
+          created_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          consumed_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          consumed_at TIMESTAMPTZ,
+          expires_at TIMESTAMPTZ,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS professor_registration_codes_active_idx
+          ON professor_registration_codes(is_active, consumed_at, expires_at);
+      `);
+    })().catch((error) => {
+      ensureProfessorCodeManagerReadyPromise = null;
+      throw error;
+    });
+  }
+  await ensureProfessorCodeManagerReadyPromise;
+}
+
+async function ensureDepAdminManagerReady() {
+  if (!ensureDepAdminManagerReadyPromise) {
+    ensureDepAdminManagerReadyPromise = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS course_dep_admin_assignments (
+          id BIGSERIAL PRIMARY KEY,
+          course_code TEXT,
+          course_name TEXT NOT NULL UNIQUE,
+          depadmin_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          assigned_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_depadmin_uid_idx
+          ON course_dep_admin_assignments(depadmin_uid, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS course_dep_admin_assignments_course_code_idx
+          ON course_dep_admin_assignments(course_code);
+      `);
+    })().catch((error) => {
+      ensureDepAdminManagerReadyPromise = null;
+      throw error;
+    });
+  }
+  await ensureDepAdminManagerReadyPromise;
+}
+
+async function recordDisciplinaryAction({
+  targetUid,
+  issuedByUid,
+  actionType,
+  reason,
+  startsAt = new Date(),
+  endsAt = null,
+  active = true,
+}) {
+  const target = sanitizeText(targetUid, 120);
+  const issuer = sanitizeText(issuedByUid, 120) || null;
+  const action = sanitizeText(actionType, 20).toLowerCase();
+  if (!target || !['warn', 'suspend', 'ban'].includes(action)) return null;
+
+  const result = await pool.query(
+    `INSERT INTO account_disciplinary_actions
+      (target_uid, issued_by_uid, action_type, reason, starts_at, ends_at, active, created_at)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, NOW())
+     RETURNING id`,
+    [target, issuer, action, reason || null, startsAt, endsAt, active]
+  );
+  return result.rows[0] ? Number(result.rows[0].id) : null;
+}
+
+async function upsertRestrictedQueueEntry({
+  source,
+  reportKey = null,
+  targetType,
+  targetId,
+  targetUid = null,
+  course = null,
+  reason = null,
+  metadata = {},
+  hiddenByUid = null,
+}) {
+  const normalizedSource = normalizeRestrictedSource(source);
+  const normalizedTargetType = sanitizeText(targetType, 80).toLowerCase();
+  const normalizedTargetId = sanitizeText(targetId, 240);
+  if (!normalizedSource || !normalizedTargetType || !normalizedTargetId) {
+    return null;
+  }
+
+  const now = new Date();
+  const restoreDeadline = computeRestoreDeadlineDate();
+  const metadataJson = JSON.stringify(sanitizeRestrictedMetadata(metadata));
+  const normalizedReason = sanitizeText(reason, 1000) || null;
+  const normalizedReportKey = sanitizeText(reportKey, 260) || null;
+  const normalizedTargetUid = sanitizeText(targetUid, 120) || null;
+  const normalizedCourse = sanitizeText(course, 160) || null;
+  const normalizedHiddenByUid = sanitizeText(hiddenByUid, 120) || null;
+
+  const updateResult = await pool.query(
+    `UPDATE restricted_content_queue
+     SET
+       report_key = COALESCE($4, report_key),
+       target_uid = COALESCE($5, target_uid),
+       course = COALESCE($6, course),
+       reason = $7,
+       metadata = $8::jsonb,
+       hidden_by_uid = COALESCE($9, hidden_by_uid),
+       hidden_at = $10,
+       restore_deadline_at = $11,
+       restored_at = NULL,
+       restored_by_uid = NULL,
+       purged_at = NULL,
+       purged_by_uid = NULL,
+       status = 'restricted',
+       updated_at = $10
+     WHERE source = $1
+       AND target_type = $2
+       AND target_id = $3
+       AND status = 'restricted'
+     RETURNING *`,
+    [
+      normalizedSource,
+      normalizedTargetType,
+      normalizedTargetId,
+      normalizedReportKey,
+      normalizedTargetUid,
+      normalizedCourse,
+      normalizedReason,
+      metadataJson,
+      normalizedHiddenByUid,
+      now,
+      restoreDeadline,
+    ]
+  );
+  if (updateResult.rows.length) {
+    return updateResult.rows[0];
+  }
+
+  try {
+    const insertResult = await pool.query(
+      `INSERT INTO restricted_content_queue
+        (source, report_key, target_type, target_id, target_uid, course, reason, metadata, hidden_by_uid, hidden_at, restore_deadline_at, status, created_at, updated_at)
+       VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, 'restricted', $10, $10)
+       RETURNING *`,
+      [
+        normalizedSource,
+        normalizedReportKey,
+        normalizedTargetType,
+        normalizedTargetId,
+        normalizedTargetUid,
+        normalizedCourse,
+        normalizedReason,
+        metadataJson,
+        normalizedHiddenByUid,
+        now,
+        restoreDeadline,
+      ]
+    );
+    return insertResult.rows[0] || null;
+  } catch (error) {
+    if (error && error.code === '23505') {
+      const retry = await pool.query(
+        `SELECT *
+         FROM restricted_content_queue
+         WHERE source = $1
+           AND target_type = $2
+           AND target_id = $3
+           AND status = 'restricted'
+         ORDER BY id DESC
+         LIMIT 1`,
+        [normalizedSource, normalizedTargetType, normalizedTargetId]
+      );
+      return retry.rows[0] || null;
+    }
+    throw error;
+  }
+}
+
+async function restrictMainPostById(postIdValue, actorUid, reason) {
+  if (!postIdValue || !ObjectId.isValid(postIdValue)) return null;
+  const postId = new ObjectId(postIdValue);
+  const db = await getMongoDb();
+  const postsCollection = db.collection('posts');
+  const post = await postsCollection.findOne(
+    { _id: postId },
+    { projection: { _id: 1, title: 1, uploaderUid: 1, course: 1 } }
+  );
+  if (!post) return null;
+  await postsCollection.updateOne(
+    { _id: postId },
+    {
+      $set: {
+        moderationStatus: 'restricted',
+        restrictedAt: new Date(),
+        restrictedByUid: sanitizeText(actorUid, 120) || null,
+        restrictedReason: sanitizeText(reason, 1000) || null,
+      },
+    }
+  );
+  return {
+    source: 'main_post',
+    targetType: 'main_post',
+    targetId: String(post._id),
+    targetUid: post.uploaderUid || null,
+    course: post.course || null,
+    title: post.title || 'Untitled post',
+  };
+}
+
+async function restoreMainPostById(postIdValue) {
+  if (!postIdValue || !ObjectId.isValid(postIdValue)) return false;
+  const postId = new ObjectId(postIdValue);
+  const db = await getMongoDb();
+  const result = await db.collection('posts').updateOne(
+    { _id: postId },
+    {
+      $set: {
+        moderationStatus: 'active',
+      },
+      $unset: {
+        restrictedAt: '',
+        restrictedByUid: '',
+        restrictedReason: '',
+      },
+    }
+  );
+  return result.matchedCount > 0;
+}
+
+async function restrictLibraryDocumentByUuid(uuidValue, actorUid, reason) {
+  const uuid = sanitizeText(uuidValue, 120);
+  if (!uuid) return null;
+  const result = await pool.query(
+    `UPDATE documents
+     SET
+       is_restricted = true,
+       restricted_at = NOW(),
+       restricted_by_uid = $2,
+       restricted_reason = $3
+     WHERE uuid::text = $1
+     RETURNING uuid::text AS uuid, title, uploader_uid, course`,
+    [uuid, sanitizeText(actorUid, 120) || null, sanitizeText(reason, 1000) || null]
+  );
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  return {
+    source: 'library_document',
+    targetType: 'library_document',
+    targetId: row.uuid,
+    targetUid: row.uploader_uid || null,
+    course: row.course || null,
+    title: row.title || 'Untitled document',
+  };
+}
+
+async function restoreLibraryDocumentByUuid(uuidValue) {
+  const uuid = sanitizeText(uuidValue, 120);
+  if (!uuid) return false;
+  const result = await pool.query(
+    `UPDATE documents
+     SET
+       is_restricted = false,
+       restricted_at = NULL,
+       restricted_by_uid = NULL,
+       restricted_reason = NULL
+     WHERE uuid::text = $1
+     RETURNING uuid`,
+    [uuid]
+  );
+  return result.rows.length > 0;
+}
+
+async function restrictCommunityPostById(postIdValue, actorUid, reason) {
+  const postId = parsePositiveInt(postIdValue);
+  if (!postId) return null;
+  const result = await pool.query(
+    `UPDATE community_posts cp
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     FROM communities c
+     WHERE cp.id = $1
+       AND cp.community_id = c.id
+     RETURNING cp.id, cp.author_uid, cp.title, c.course_name`,
+    [postId, sanitizeText(actorUid, 120) || null, sanitizeText(reason, 1000) || 'Restricted by admin']
+  );
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  return {
+    source: 'community_post',
+    targetType: 'community_post',
+    targetId: String(row.id),
+    targetUid: row.author_uid || null,
+    course: row.course_name || null,
+    title: row.title || 'Community post',
+  };
+}
+
+async function restoreCommunityPostById(postIdValue) {
+  const postId = parsePositiveInt(postIdValue);
+  if (!postId) return false;
+  const result = await pool.query(
+    `UPDATE community_posts
+     SET
+       status = 'active',
+       taken_down_by_uid = NULL,
+       taken_down_reason = NULL,
+       updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [postId]
+  );
+  return result.rows.length > 0;
+}
+
+async function restrictCommunityCommentById(commentIdValue, actorUid, reason) {
+  const commentId = parsePositiveInt(commentIdValue);
+  if (!commentId) return null;
+  const result = await pool.query(
+    `UPDATE community_comments cc
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     FROM communities c
+     WHERE cc.id = $1
+       AND cc.community_id = c.id
+     RETURNING cc.id, cc.author_uid, c.course_name`,
+    [commentId, sanitizeText(actorUid, 120) || null, sanitizeText(reason, 1000) || 'Restricted by admin']
+  );
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  return {
+    source: 'community_comment',
+    targetType: 'community_comment',
+    targetId: String(row.id),
+    targetUid: row.author_uid || null,
+    course: row.course_name || null,
+    title: 'Community comment',
+  };
+}
+
+async function restoreCommunityCommentById(commentIdValue) {
+  const commentId = parsePositiveInt(commentIdValue);
+  if (!commentId) return false;
+  const result = await pool.query(
+    `UPDATE community_comments
+     SET
+       status = 'active',
+       taken_down_by_uid = NULL,
+       taken_down_reason = NULL,
+       updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [commentId]
+  );
+  return result.rows.length > 0;
+}
+
+function mapRestrictedQueueRow(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    source: row.source,
+    reportKey: row.report_key || null,
+    targetType: row.target_type || null,
+    targetId: row.target_id || null,
+    targetUid: row.target_uid || null,
+    course: row.course || null,
+    reason: row.reason || null,
+    metadata: row.metadata || {},
+    hiddenByUid: row.hidden_by_uid || null,
+    hiddenAt: row.hidden_at || null,
+    restoreDeadlineAt: row.restore_deadline_at || null,
+    restoredAt: row.restored_at || null,
+    restoredByUid: row.restored_by_uid || null,
+    purgedAt: row.purged_at || null,
+    purgedByUid: row.purged_by_uid || null,
+    status: normalizeRestrictedStatus(row.status, 'restricted'),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+async function updateRestrictedQueueStatus(id, status, actorUid) {
+  const normalizedStatus = normalizeRestrictedStatus(status, 'restricted');
+  const now = new Date();
+  const actor = sanitizeText(actorUid, 120) || null;
+  const result = await pool.query(
+    `UPDATE restricted_content_queue
+     SET
+       status = $2,
+       restored_at = CASE WHEN $2 = 'restored' THEN $3 ELSE restored_at END,
+       restored_by_uid = CASE WHEN $2 = 'restored' THEN $4 ELSE restored_by_uid END,
+       purged_at = CASE WHEN $2 = 'purged' THEN $3 ELSE purged_at END,
+       purged_by_uid = CASE WHEN $2 = 'purged' THEN $4 ELSE purged_by_uid END,
+       updated_at = $3
+     WHERE id = $1
+     RETURNING *`,
+    [id, normalizedStatus, now, actor]
+  );
+  return result.rows[0] || null;
+}
+
+async function restoreRestrictedTarget(item) {
+  if (!item) return false;
+  if (item.source === 'main_post') {
+    return restoreMainPostById(item.target_id);
+  }
+  if (item.source === 'library_document') {
+    return restoreLibraryDocumentByUuid(item.target_id);
+  }
+  if (item.source === 'community_post') {
+    return restoreCommunityPostById(item.target_id);
+  }
+  if (item.source === 'community_comment') {
+    return restoreCommunityCommentById(item.target_id);
+  }
+  return false;
+}
+
+async function purgeRestrictedTarget(item, actorUid = null) {
+  if (!item) return false;
+  const actor = sanitizeText(actorUid, 120) || null;
+  if (item.source === 'main_post') {
+    return deleteMainPostById(item.target_id);
+  }
+  if (item.source === 'library_document') {
+    return deleteLibraryDocumentByUuid(item.target_id);
+  }
+  if (item.source === 'community_post') {
+    const postId = parsePositiveInt(item.target_id);
+    if (!postId) return false;
+    const result = await pool.query('DELETE FROM community_posts WHERE id = $1 RETURNING id', [postId]);
+    return result.rows.length > 0;
+  }
+  if (item.source === 'community_comment') {
+    const commentId = parsePositiveInt(item.target_id);
+    if (!commentId) return false;
+    const result = await pool.query('DELETE FROM community_comments WHERE id = $1 RETURNING id', [commentId]);
+    return result.rows.length > 0;
+  }
+  if (item.source === 'chat_message') {
+    const messageId = parsePositiveInt(item.target_id);
+    if (!messageId) return false;
+    return deleteChatMessageById(messageId, actor);
+  }
+  return false;
+}
+
+async function getRestrictedQueueItemById(id) {
+  const numericId = parsePositiveInt(id);
+  if (!numericId) return null;
+  const result = await pool.query(
+    `SELECT *
+     FROM restricted_content_queue
+     WHERE id = $1
+     LIMIT 1`,
+    [numericId]
+  );
+  return result.rows[0] || null;
+}
+
+async function loadRestrictedQueueDisplayNames(rows = []) {
+  const uids = [];
+  rows.forEach((row) => {
+    if (!row || typeof row !== 'object') return;
+    if (row.target_uid) uids.push(row.target_uid);
+    if (row.hidden_by_uid) uids.push(row.hidden_by_uid);
+    if (row.restored_by_uid) uids.push(row.restored_by_uid);
+    if (row.purged_by_uid) uids.push(row.purged_by_uid);
+  });
+  return loadDisplayNamesByUid(uids);
+}
+
+function mapRestrictedQueueRowWithNames(row, namesMap) {
+  const base = mapRestrictedQueueRow(row);
+  if (!base) return null;
+  return {
+    ...base,
+    targetName: namesMap.get(base.targetUid) || null,
+    hiddenByName: namesMap.get(base.hiddenByUid) || null,
+    restoredByName: namesMap.get(base.restoredByUid) || null,
+    purgedByName: namesMap.get(base.purgedByUid) || null,
+    isExpired:
+      base.status === 'restricted' &&
+      base.restoreDeadlineAt &&
+      new Date(base.restoreDeadlineAt).getTime() <= Date.now(),
+  };
+}
+
+async function purgeRestrictedQueueItem(item, actorUid = null) {
+  if (!item || normalizeRestrictedStatus(item.status, 'restricted') === 'purged') {
+    return { ok: false, reason: 'already_purged' };
+  }
+  const purged = await purgeRestrictedTarget(item, actorUid);
+  if (!purged) {
+    const updatedMissingTarget = await updateRestrictedQueueStatus(item.id, 'purged', actorUid);
+    return {
+      ok: Boolean(updatedMissingTarget),
+      reason: 'target_missing',
+      row: updatedMissingTarget || null,
+    };
+  }
+  const updated = await updateRestrictedQueueStatus(item.id, 'purged', actorUid);
+  return { ok: Boolean(updated), row: updated || null };
+}
+
+async function purgeExpiredRestrictedContents({ actorUid = null, limit = 200 } = {}) {
+  if (!isRestrictedContentsEnabled()) {
+    return { processed: 0, purged: 0, skipped: 0, items: [] };
+  }
+  const cappedLimit = Math.min(Math.max(parsePositiveInt(limit) || 200, 1), 500);
+  const expiredResult = await pool.query(
+    `SELECT *
+     FROM restricted_content_queue
+     WHERE status = 'restricted'
+       AND restore_deadline_at <= NOW()
+     ORDER BY restore_deadline_at ASC, id ASC
+     LIMIT $1`,
+    [cappedLimit]
+  );
+
+  const outcomes = [];
+  let purged = 0;
+  let skipped = 0;
+  for (const row of expiredResult.rows) {
+    const outcome = await purgeRestrictedQueueItem(row, actorUid);
+    if (outcome.ok) {
+      purged += 1;
+      outcomes.push({
+        id: Number(row.id),
+        status: 'purged',
+      });
+      continue;
+    }
+    skipped += 1;
+    outcomes.push({
+      id: Number(row.id),
+      status: outcome.reason || 'skipped',
+    });
+  }
+
+  return {
+    processed: expiredResult.rows.length,
+    purged,
+    skipped,
+    items: outcomes,
+  };
 }
 
 async function getViewer(uid) {
@@ -54,6 +826,82 @@ function normalizeReportStatus(row) {
   return 'open';
 }
 
+const ADMIN_REPORT_STATUSES = new Set([
+  'open',
+  'under_review',
+  'resolved_action_taken',
+  'resolved_no_action',
+  'rejected',
+]);
+
+const ADMIN_REPORT_ACTIONS = new Set([
+  'none',
+  'delete_main_post',
+  'delete_library_document',
+  'delete_chat_message',
+  'take_down_community_post',
+  'take_down_community_comment',
+  'ban_target_user',
+]);
+
+const ADMIN_APPEAL_TYPES = new Set([
+  'warning',
+  'suspension',
+  'ban',
+  'verification_rejection',
+  'other',
+]);
+
+const ADMIN_APPEAL_STATUSES = new Set([
+  'open',
+  'under_review',
+  'accepted',
+  'denied',
+  'withdrawn',
+]);
+
+const ADMIN_APPEAL_RESOLUTION_STATUSES = new Set(['under_review', 'accepted', 'denied']);
+
+function parseReportKey(value) {
+  const text = sanitizeText(value, 220);
+  if (!text || !text.includes(':')) return null;
+  const separator = text.indexOf(':');
+  const source = text.slice(0, separator);
+  const rawId = text.slice(separator + 1);
+  if (!source || !rawId) return null;
+  return { source, rawId, key: `${source}:${rawId}` };
+}
+
+function normalizeAdminReportStatus(value, fallback = 'open') {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  if (ADMIN_REPORT_STATUSES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizeAdminReportAction(value, fallback = 'none') {
+  const normalized = sanitizeText(value, 80).toLowerCase();
+  if (ADMIN_REPORT_ACTIONS.has(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizeAdminAppealType(value, fallback = '') {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  if (ADMIN_APPEAL_TYPES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizeAdminAppealStatus(value, fallback = 'open') {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  if (ADMIN_APPEAL_STATUSES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function mapAdminStatusToChatStatus(status) {
+  if (status === 'open') return 'pending';
+  if (status === 'under_review') return 'reviewed';
+  return 'dismissed';
+}
+
 async function loadDisplayNamesByUid(uids) {
   const deduped = Array.from(new Set((uids || []).filter(Boolean)));
   if (!deduped.length) return new Map();
@@ -67,6 +915,364 @@ async function loadDisplayNamesByUid(uids) {
     [deduped]
   );
   return new Map(result.rows.map((row) => [row.uid, row.display_name || 'Member']));
+}
+
+function normalizeUidList(values = [], maxCount = CUSTOM_NOTIFICATION_MAX_RECIPIENTS) {
+  if (!Array.isArray(values)) return [];
+  const deduped = [];
+  const seen = new Set();
+  values.forEach((value) => {
+    const uid = sanitizeText(value, 120);
+    if (!uid || seen.has(uid)) return;
+    seen.add(uid);
+    if (deduped.length < maxCount) {
+      deduped.push(uid);
+    }
+  });
+  return deduped;
+}
+
+function mapDepAdminAccountRow(row) {
+  if (!row) return null;
+  return {
+    uid: row.uid,
+    email: row.email || '',
+    username: row.username || '',
+    displayName: row.display_name || '',
+    course: row.course || '',
+    role: row.platform_role || 'member',
+    isBanned: row.is_banned === true,
+  };
+}
+
+async function resolveCanonicalCourse(value, client = pool) {
+  const courseQuery = sanitizeText(value, 160);
+  if (!courseQuery) return null;
+  const result = await client.query(
+    `SELECT course_code, course_name
+     FROM courses
+     WHERE lower(course_name) = lower($1)
+        OR lower(course_code) = lower($1)
+     ORDER BY CASE WHEN lower(course_name) = lower($1) THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [courseQuery]
+  );
+  if (!result.rows.length) return null;
+  return {
+    courseCode: result.rows[0].course_code || null,
+    courseName: result.rows[0].course_name || '',
+  };
+}
+
+async function resolveDepAdminAccount(accountQuery, client = pool) {
+  const query = sanitizeText(accountQuery, 200);
+  if (!query) {
+    return { account: null, ambiguous: false, candidates: [] };
+  }
+
+  const exactResult = await client.query(
+    `SELECT
+       a.uid,
+       a.email,
+       a.username,
+       COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+       a.course,
+       COALESCE(a.platform_role, 'member') AS platform_role,
+       COALESCE(a.is_banned, false) AS is_banned
+     FROM accounts a
+     LEFT JOIN profiles p ON p.uid = a.uid
+     WHERE lower(a.uid) = lower($1)
+        OR lower(a.email) = lower($1)
+        OR lower(COALESCE(a.username, '')) = lower($1)
+     ORDER BY a.datecreated DESC
+     LIMIT 6`,
+    [query]
+  );
+  if (exactResult.rows.length === 1) {
+    return { account: mapDepAdminAccountRow(exactResult.rows[0]), ambiguous: false, candidates: [] };
+  }
+  if (exactResult.rows.length > 1) {
+    return {
+      account: null,
+      ambiguous: true,
+      candidates: exactResult.rows.map(mapDepAdminAccountRow).filter(Boolean),
+    };
+  }
+
+  const fuzzyResult = await client.query(
+    `SELECT
+       a.uid,
+       a.email,
+       a.username,
+       COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+       a.course,
+       COALESCE(a.platform_role, 'member') AS platform_role,
+       COALESCE(a.is_banned, false) AS is_banned
+     FROM accounts a
+     LEFT JOIN profiles p ON p.uid = a.uid
+     WHERE (
+       a.uid ILIKE $1
+       OR a.email ILIKE $1
+       OR COALESCE(a.username, '') ILIKE $1
+       OR COALESCE(p.display_name, a.display_name, '') ILIKE $1
+     )
+     ORDER BY a.datecreated DESC
+     LIMIT 6`,
+    [`%${query}%`]
+  );
+
+  if (fuzzyResult.rows.length === 1) {
+    return { account: mapDepAdminAccountRow(fuzzyResult.rows[0]), ambiguous: false, candidates: [] };
+  }
+  if (fuzzyResult.rows.length > 1) {
+    return {
+      account: null,
+      ambiguous: true,
+      candidates: fuzzyResult.rows.map(mapDepAdminAccountRow).filter(Boolean),
+    };
+  }
+
+  return { account: null, ambiguous: false, candidates: [] };
+}
+
+async function maybeDowngradeDepAdminAfterUnassign(uid, client = pool) {
+  const targetUid = sanitizeText(uid, 120);
+  if (!targetUid) return;
+
+  const assignmentCountResult = await client.query(
+    `SELECT COUNT(*)::int AS total
+     FROM course_dep_admin_assignments
+     WHERE depadmin_uid = $1`,
+    [targetUid]
+  );
+  const total = Number(assignmentCountResult.rows[0] ? assignmentCountResult.rows[0].total : 0);
+  if (total > 0) return;
+
+  await client.query(
+    `UPDATE accounts
+     SET platform_role = 'professor'
+     WHERE uid = $1
+       AND COALESCE(platform_role, 'member') = 'depadmin'`,
+    [targetUid]
+  );
+}
+
+async function resolveCustomNotificationRecipients({
+  mode,
+  uids = [],
+  course = '',
+  includeBanned = false,
+}) {
+  if (mode === 'uids') {
+    if (!uids.length) return [];
+    const result = await pool.query(
+      `SELECT uid
+       FROM accounts
+       WHERE uid = ANY($1::text[])
+         AND ($2::boolean = true OR COALESCE(is_banned, false) = false)`,
+      [uids, includeBanned]
+    );
+    return result.rows.map((row) => row.uid).filter(Boolean);
+  }
+
+  if (mode === 'course') {
+    const normalizedCourse = sanitizeText(course, 160);
+    if (!normalizedCourse) return [];
+    const result = await pool.query(
+      `SELECT uid
+       FROM accounts
+       WHERE course = $1
+         AND ($2::boolean = true OR COALESCE(is_banned, false) = false)`,
+      [normalizedCourse, includeBanned]
+    );
+    return result.rows.map((row) => row.uid).filter(Boolean);
+  }
+
+  const result = await pool.query(
+    `SELECT uid
+     FROM accounts
+     WHERE ($1::boolean = true OR COALESCE(is_banned, false) = false)`,
+    [includeBanned]
+  );
+  return result.rows.map((row) => row.uid).filter(Boolean);
+}
+
+async function loadAdminReportActionsMap(reportKeys) {
+  const deduped = Array.from(new Set((reportKeys || []).filter(Boolean)));
+  if (!deduped.length) return new Map();
+  const db = await getMongoDb();
+  const rows = await db
+    .collection('admin_report_actions')
+    .find({ reportKey: { $in: deduped } })
+    .toArray();
+  return new Map(rows.map((item) => [item.reportKey, item]));
+}
+
+async function deleteMainPostById(postIdValue) {
+  if (!postIdValue) return false;
+  const postId = ObjectId.isValid(postIdValue) ? new ObjectId(postIdValue) : null;
+  if (!postId) return false;
+
+  const db = await getMongoDb();
+  const postsCollection = db.collection('posts');
+  const post = await postsCollection.findOne({ _id: postId });
+  if (!post) return false;
+
+  const attachmentKey =
+    post.attachment &&
+    (post.attachment.type === 'image' || post.attachment.type === 'video')
+      ? post.attachment.key
+      : null;
+  if (attachmentKey && !String(attachmentKey).startsWith('http')) {
+    try {
+      await deleteFromStorage(attachmentKey);
+    } catch (storageError) {
+      console.error('Admin report action post attachment delete failed:', storageError);
+    }
+  }
+
+  await postsCollection.deleteOne({ _id: postId });
+  await db.collection('post_likes').deleteMany({ postId });
+  await db.collection('post_comments').deleteMany({ postId });
+  await db.collection('post_bookmarks').deleteMany({ postId });
+  await db.collection('post_reports').deleteMany({ postId });
+  return true;
+}
+
+async function deleteLibraryDocumentByUuid(uuid) {
+  const docUuid = sanitizeText(uuid, 120);
+  if (!docUuid) return false;
+
+  const docResult = await pool.query(
+    `SELECT uuid, link, thumbnail_link
+     FROM documents
+     WHERE uuid = $1
+     LIMIT 1`,
+    [docUuid]
+  );
+  if (!docResult.rows.length) return false;
+  const doc = docResult.rows[0];
+
+  await pool.query('DELETE FROM documents WHERE uuid = $1', [docUuid]);
+
+  const keys = [doc.link, doc.thumbnail_link].filter(Boolean);
+  for (const key of keys) {
+    if (!String(key).startsWith('http')) {
+      try {
+        await deleteFromStorage(key);
+      } catch (storageError) {
+        console.error('Admin report action document storage delete failed:', storageError);
+      }
+    }
+  }
+
+  const db = await getMongoDb();
+  await db.collection('document_reports').deleteMany({ documentUuid: docUuid });
+  return true;
+}
+
+async function deleteChatMessageById(messageId, adminUid) {
+  const numericMessageId = Number(messageId);
+  if (!Number.isInteger(numericMessageId) || numericMessageId <= 0) return false;
+
+  const result = await pool.query(
+    `UPDATE chat_messages
+     SET body = '',
+         attachment_type = NULL,
+         attachment_key = NULL,
+         attachment_link = NULL,
+         attachment_filename = NULL,
+         attachment_mime_type = NULL,
+         attachment_size_bytes = NULL,
+         deleted_at = NOW(),
+         deleted_by_uid = $2
+     WHERE id = $1
+     RETURNING id`,
+    [numericMessageId, adminUid]
+  );
+  return Boolean(result.rows.length);
+}
+
+async function takeDownCommunityPostById(postId, adminUid, reason) {
+  const numericPostId = Number(postId);
+  if (!Number.isInteger(numericPostId) || numericPostId <= 0) return false;
+  const result = await pool.query(
+    `UPDATE community_posts
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [numericPostId, adminUid, reason || 'Taken down from report review']
+  );
+  return Boolean(result.rows.length);
+}
+
+async function takeDownCommunityCommentById(commentId, adminUid, reason) {
+  const numericCommentId = Number(commentId);
+  if (!Number.isInteger(numericCommentId) || numericCommentId <= 0) return false;
+  const result = await pool.query(
+    `UPDATE community_comments
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [numericCommentId, adminUid, reason || 'Taken down from report review']
+  );
+  return Boolean(result.rows.length);
+}
+
+async function banTargetUserFromReport(targetUid, adminViewer, note) {
+  const normalizedTargetUid = sanitizeText(targetUid, 120);
+  if (!normalizedTargetUid) {
+    return { ok: false, message: 'Target account unavailable for ban action.' };
+  }
+  if (normalizedTargetUid === adminViewer.uid) {
+    return { ok: false, message: 'You cannot ban your own account.' };
+  }
+
+  const targetResult = await pool.query(
+    `SELECT uid, COALESCE(platform_role, 'member') AS platform_role, COALESCE(is_banned, false) AS is_banned
+     FROM accounts
+     WHERE uid = $1
+     LIMIT 1`,
+    [normalizedTargetUid]
+  );
+  const target = targetResult.rows[0];
+  if (!target) {
+    return { ok: false, message: 'Target account not found.' };
+  }
+  if (target.platform_role === 'owner') {
+    return { ok: false, message: 'Owner account cannot be banned.' };
+  }
+  if (adminViewer.platform_role !== 'owner' && (target.platform_role === 'owner' || target.platform_role === 'admin')) {
+    return { ok: false, message: 'Admins cannot ban owner/admin accounts.' };
+  }
+  if (target.is_banned === true) {
+    return { ok: true, alreadyBanned: true };
+  }
+
+  await pool.query(
+    `UPDATE accounts
+     SET is_banned = true,
+         banned_at = NOW(),
+         banned_reason = $1,
+         banned_by_uid = $2
+     WHERE uid = $3`,
+    [note || 'Banned from report resolution', adminViewer.uid, normalizedTargetUid]
+  );
+  await recordDisciplinaryAction({
+    targetUid: normalizedTargetUid,
+    issuedByUid: adminViewer.uid,
+    actionType: 'ban',
+    reason: note || 'Banned from report resolution',
+    active: true,
+  });
+  await deleteSessionsForUid(normalizedTargetUid);
+  return { ok: true };
 }
 
 async function cleanupMongoDataForAccount(uid) {
@@ -126,6 +1332,8 @@ async function cleanupMongoDataForAccount(uid) {
     db.collection('post_comments').deleteMany({ userUid: uid }),
     db.collection('post_bookmarks').deleteMany({ userUid: uid }),
     db.collection('post_reports').deleteMany({ userUid: uid }),
+    db.collection('document_reports').deleteMany({ userUid: uid }),
+    db.collection('admin_report_actions').deleteMany({ $or: [{ resolvedByUid: uid }, { targetUid: uid }] }),
     db.collection('doccomment').deleteMany({ userUid: uid }),
     db.collection('personal_journal_folders').deleteMany({ userUid: uid }),
     db.collection('personal_journals').deleteMany({ userUid: uid }),
@@ -147,6 +1355,7 @@ async function cleanupMongoDataForAccount(uid) {
     cleanupOps.push(db.collection('post_reports').deleteMany({ postId: { $in: userPostIds } }));
     cleanupOps.push(db.collection('post_ai_conversations').deleteMany({ postId: { $in: userPostIds } }));
   }
+  cleanupOps.push(db.collection('document_reports').deleteMany({ targetUid: uid }));
   const postMessageConversationIds = Array.from(
     new Set([...postAiConversationIds, ...postLinkedAiConversationIds].map((value) => String(value)))
   ).map((value) => new ObjectId(value));
@@ -172,7 +1381,7 @@ async function cleanupMongoDataForAccount(uid) {
   await Promise.all(cleanupOps);
 }
 
-const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq', 'rooms']);
+const ALLOWED_SITE_PAGE_SLUGS = new Set(['about', 'faq', 'rooms', 'mobile-app']);
 
 const DEFAULT_SITE_PAGES = {
   about: {
@@ -224,6 +1433,18 @@ const DEFAULT_SITE_PAGES = {
       courseContextLabel: 'Course context',
     },
   },
+  'mobile-app': {
+    title: 'Open Library Lite',
+    subtitle: 'Scan the QR code to download the Android lite app.',
+    body: {
+      description:
+        'Use the lite mobile app to stay connected with your communities, view feed updates, and access core features on the go.',
+      qrImageUrl: '',
+      qrAltText: 'Open Library Lite QR code',
+      downloadUrl: '',
+      downloadLabel: 'Download APK',
+    },
+  },
 };
 
 let ensureSitePagesReadyPromise = null;
@@ -233,7 +1454,7 @@ async function ensureSitePagesReady() {
   ensureSitePagesReadyPromise = (async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS site_page_content (
-        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms')),
+        slug TEXT PRIMARY KEY CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app')),
         title TEXT NOT NULL,
         subtitle TEXT NOT NULL DEFAULT '',
         body JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -248,7 +1469,7 @@ async function ensureSitePagesReady() {
     await pool.query(`
       ALTER TABLE site_page_content
       ADD CONSTRAINT site_page_content_slug_check
-      CHECK (slug IN ('about', 'faq', 'rooms'));
+      CHECK (slug IN ('about', 'faq', 'rooms', 'mobile-app'));
     `);
   })().catch((error) => {
     ensureSitePagesReadyPromise = null;
@@ -297,12 +1518,25 @@ function normalizeRoomsBody(body = {}) {
   };
 }
 
+function normalizeMobileAppBody(body = {}) {
+  return {
+    description: sanitizeText(body.description, 7000),
+    qrImageUrl: sanitizeText(body.qrImageUrl, 2000),
+    qrAltText: sanitizeText(body.qrAltText, 180) || 'Open Library Lite QR code',
+    downloadUrl: sanitizeText(body.downloadUrl, 2000),
+    downloadLabel: sanitizeText(body.downloadLabel, 80) || 'Download APK',
+  };
+}
+
 function normalizeSitePageBody(slug, body = {}) {
   if (slug === 'about') {
     return normalizeAboutBody(body);
   }
   if (slug === 'faq') {
     return normalizeFaqBody(body);
+  }
+  if (slug === 'mobile-app') {
+    return normalizeMobileAppBody(body);
   }
   return normalizeRoomsBody(body);
 }
@@ -334,6 +1568,33 @@ function normalizeSitePageResult(slug, row) {
     updatedByUid: row.updated_by_uid || null,
     isDefault: false,
   };
+}
+
+async function resolveMobileAppBodyAssets(page) {
+  if (!page || page.slug !== 'mobile-app') return page;
+  const body = page.body && typeof page.body === 'object' ? { ...page.body } : {};
+
+  async function resolveAssetUrl(rawValue, label) {
+    const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!raw) return raw;
+    try {
+      const normalized = normalizeStorageKey(raw);
+      const isHttp = /^https?:\/\//i.test(raw);
+      const shouldSign = Boolean(normalized) && (!isHttp || normalized !== raw);
+      if (!shouldSign) return raw;
+      return await getSignedUrl(normalized, SIGNED_TTL);
+    } catch (error) {
+      console.warn(
+        `Mobile app ${label} signing failed; returning raw URL:`,
+        error && error.message ? error.message : error
+      );
+      return raw;
+    }
+  }
+
+  body.qrImageUrl = await resolveAssetUrl(body.qrImageUrl, 'QR');
+  body.downloadUrl = await resolveAssetUrl(body.downloadUrl, 'download');
+  return { ...page, body };
 }
 
 router.get('/api/admin/me', requireAuthApi, async (req, res) => {
@@ -370,7 +1631,7 @@ router.get('/api/site-pages/:slug', requireAuthApi, async (req, res) => {
        LIMIT 1`,
       [slug]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Site page fetch failed:', error);
@@ -383,6 +1644,9 @@ router.use('/api/admin', requireAuthApi);
 router.use('/api/admin', async (req, res, next) => {
   try {
     await ensureAuditReady();
+    await ensureGovernanceReady();
+    await ensureProfessorCodeManagerReady();
+    await ensureDepAdminManagerReady();
     const viewer = await getViewer(req.user.uid);
     if (!viewer) {
       return res.status(401).json({ ok: false, message: 'Unauthorized.' });
@@ -533,9 +1797,13 @@ router.get('/api/admin/reports', async (req, res) => {
           status: 'open',
           targetType: 'user_profile',
           targetId: row.target_uid,
+          targetUid: row.target_uid,
           targetName: row.target_name || 'User',
           reporterUid: row.reporter_uid,
           reporterName: row.reporter_name || 'Member',
+          category: null,
+          customReason: null,
+          details: null,
           reason: row.reason || null,
           course: row.target_course || null,
           createdAt: row.created_at,
@@ -588,9 +1856,13 @@ router.get('/api/admin/reports', async (req, res) => {
           status: normalizeReportStatus(row),
           targetType: row.target_type || 'community',
           targetId: row.target_uid || row.target_post_id || row.target_comment_id || null,
+          targetUid: row.target_uid || null,
           targetName: row.target_name || null,
           reporterUid: row.reporter_uid,
           reporterName: row.reporter_name || 'Member',
+          category: null,
+          customReason: null,
+          details: null,
           reason: row.reason || null,
           course: row.course_name || null,
           createdAt: row.created_at,
@@ -631,14 +1903,83 @@ router.get('/api/admin/reports', async (req, res) => {
           reports.push({
             id: `main_post:${report._id}`,
             source: 'main_post',
-            status: 'open',
+            status: normalizeAdminReportStatus(report.status, 'open'),
             targetType: 'main_post',
             targetId: post ? String(post._id) : String(report.postId || ''),
+            targetUid: post ? post.uploaderUid || null : report.targetUid || null,
             targetName: post ? post.title : 'Post',
             reporterUid: report.userUid || null,
             reporterName: namesMap.get(report.userUid) || report.userUid || 'Member',
+            category: report.category || null,
+            customReason: report.customReason || null,
+            details: report.details || null,
             reason: report.reason || null,
             course: post ? post.course || null : null,
+            moderationAction: report.moderationAction || 'none',
+            resolutionNote: report.resolutionNote || null,
+            resolvedAt: report.resolvedAt || null,
+            resolvedByUid: report.resolvedByUid || null,
+            createdAt: report.createdAt || new Date(),
+          });
+        });
+      }
+    }
+
+    if (!source || source === 'library_document') {
+      const db = await getMongoDb();
+      const mongoReports = await db
+        .collection('document_reports')
+        .find({})
+        .sort({ createdAt: -1 })
+        .limit(maxSourceRows)
+        .toArray();
+
+      if (mongoReports.length) {
+        const documentUuids = Array.from(
+          new Set(mongoReports.map((item) => sanitizeText(item.documentUuid, 120)).filter(Boolean))
+        );
+        let docsMap = new Map();
+        if (documentUuids.length) {
+          const docsResult = await pool.query(
+            `SELECT uuid::text AS uuid, title, course, uploader_uid
+             FROM documents
+             WHERE uuid::text = ANY($1::text[])`,
+            [documentUuids]
+          );
+          docsMap = new Map(docsResult.rows.map((row) => [row.uuid, row]));
+        }
+
+        const reporterUids = mongoReports.map((item) => item.userUid).filter(Boolean);
+        const uploaderUids = mongoReports
+          .map((item) => {
+            const doc = docsMap.get(sanitizeText(item.documentUuid, 120));
+            return doc ? doc.uploader_uid : item.targetUid;
+          })
+          .filter(Boolean);
+        const namesMap = await loadDisplayNamesByUid([...reporterUids, ...uploaderUids]);
+
+        mongoReports.forEach((report) => {
+          const documentUuid = sanitizeText(report.documentUuid, 120);
+          const doc = docsMap.get(documentUuid);
+          reports.push({
+            id: `library_document:${report._id}`,
+            source: 'library_document',
+            status: normalizeAdminReportStatus(report.status, 'open'),
+            targetType: 'library_document',
+            targetId: documentUuid || null,
+            targetUid: (doc && doc.uploader_uid) || report.targetUid || null,
+            targetName: (doc && doc.title) || report.documentTitle || 'Document',
+            reporterUid: report.userUid || null,
+            reporterName: namesMap.get(report.userUid) || report.userUid || 'Member',
+            category: report.category || null,
+            customReason: report.customReason || null,
+            details: report.details || null,
+            reason: report.reason || null,
+            course: (doc && doc.course) || null,
+            moderationAction: report.moderationAction || 'none',
+            resolutionNote: report.resolutionNote || null,
+            resolvedAt: report.resolvedAt || null,
+            resolvedByUid: report.resolvedByUid || null,
             createdAt: report.createdAt || new Date(),
           });
         });
@@ -655,6 +1996,7 @@ router.get('/api/admin/reports', async (req, res) => {
             r.id,
             r.message_id,
             r.thread_id,
+            r.message_sender_uid,
             r.reason,
             r.status,
             r.created_at,
@@ -684,9 +2026,13 @@ router.get('/api/admin/reports', async (req, res) => {
             status: normalizedStatus,
             targetType: 'chat_message',
             targetId: row.message_id ? String(row.message_id) : null,
+            targetUid: row.message_sender_uid || null,
             targetName: row.sender_name || 'Conversation message',
             reporterUid: row.reporter_uid || null,
             reporterName: row.reporter_name || 'Member',
+            category: null,
+            customReason: null,
+            details: null,
             reason: row.reason || null,
             course: null,
             createdAt: row.created_at,
@@ -698,6 +2044,22 @@ router.get('/api/admin/reports', async (req, res) => {
           throw chatReportError;
         }
       }
+    }
+
+    if (reports.length) {
+      const actionsMap = await loadAdminReportActionsMap(reports.map((item) => item.id));
+      reports.forEach((item) => {
+        const action = actionsMap.get(item.id);
+        if (!action) {
+          if (!item.moderationAction) item.moderationAction = 'none';
+          return;
+        }
+        item.status = normalizeAdminReportStatus(action.status, item.status || 'open');
+        item.moderationAction = normalizeAdminReportAction(action.moderationAction, item.moderationAction || 'none');
+        item.resolutionNote = action.resolutionNote || item.resolutionNote || null;
+        item.resolvedByUid = action.resolvedByUid || item.resolvedByUid || null;
+        item.resolvedAt = action.resolvedAt || action.updatedAt || item.resolvedAt || null;
+      });
     }
 
     let filtered = reports;
@@ -714,7 +2076,12 @@ router.get('/api/admin/reports', async (req, res) => {
           item.targetType,
           item.targetName,
           item.reporterName,
+          item.category,
+          item.customReason,
+          item.details,
           item.reason,
+          item.moderationAction,
+          item.resolutionNote,
           item.course,
           item.targetId,
         ]
@@ -743,9 +2110,1616 @@ router.get('/api/admin/reports', async (req, res) => {
   }
 });
 
+router.post('/api/admin/reports/action', async (req, res) => {
+  const parsed = parseReportKey(req.body && req.body.reportId);
+  if (!parsed) {
+    return res.status(400).json({ ok: false, message: 'Invalid report id.' });
+  }
+
+  let status = normalizeAdminReportStatus(req.body && req.body.status, 'open');
+  const moderationAction = normalizeAdminReportAction(req.body && req.body.moderationAction, 'none');
+  const resolutionNote = sanitizeText(req.body && req.body.note, 1000) || null;
+  if (moderationAction !== 'none' && (status === 'open' || status === 'under_review')) {
+    status = 'resolved_action_taken';
+  }
+
+  const allowedActionsBySource = {
+    profile: new Set(['none', 'ban_target_user']),
+    community: new Set(['none', 'take_down_community_post', 'take_down_community_comment', 'ban_target_user']),
+    main_post: new Set(['none', 'delete_main_post', 'ban_target_user']),
+    library_document: new Set(['none', 'delete_library_document', 'ban_target_user']),
+    chat_message: new Set(['none', 'delete_chat_message', 'ban_target_user']),
+  };
+  const sourceActions = allowedActionsBySource[parsed.source];
+  if (!sourceActions) {
+    return res.status(400).json({ ok: false, message: 'Unsupported report source.' });
+  }
+  if (!sourceActions.has(moderationAction)) {
+    return res.status(400).json({ ok: false, message: 'Invalid moderation action for this report source.' });
+  }
+
+  const shouldMarkResolved = !['open', 'under_review'].includes(status);
+  const resolvedAt = shouldMarkResolved ? new Date() : null;
+  const adminUid = req.adminViewer.uid;
+  const restrictedContentsEnabled = isRestrictedContentsEnabled();
+
+  let targetType = null;
+  let targetId = null;
+  let targetUid = null;
+  let targetCourse = null;
+  let reportExists = false;
+  let restrictedQueueEntry = null;
+
+  try {
+    const db = await getMongoDb();
+
+    if (parsed.source === 'main_post') {
+      if (!ObjectId.isValid(parsed.rawId)) {
+        return res.status(400).json({ ok: false, message: 'Invalid main post report id.' });
+      }
+      const reportObjectId = new ObjectId(parsed.rawId);
+      const report = await db.collection('post_reports').findOne({ _id: reportObjectId });
+      if (!report) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      reportExists = true;
+      targetType = 'main_post';
+      targetId = report.postId ? String(report.postId) : null;
+      targetCourse = report.course || null;
+
+      if (targetId && ObjectId.isValid(targetId)) {
+        const post = await db.collection('posts').findOne(
+          { _id: new ObjectId(targetId) },
+          { projection: { uploaderUid: 1, course: 1 } }
+        );
+        targetUid = (post && post.uploaderUid) || report.targetUid || null;
+        targetCourse = (post && post.course) || targetCourse;
+      } else {
+        targetUid = report.targetUid || null;
+      }
+
+      if (moderationAction === 'delete_main_post') {
+        if (restrictedContentsEnabled) {
+          const restricted = await restrictMainPostById(
+            targetId,
+            adminUid,
+            resolutionNote || report.reason || 'Restricted from report review'
+          );
+          if (!restricted) {
+            return res.status(404).json({ ok: false, message: 'Target post no longer exists.' });
+          }
+          targetType = restricted.targetType;
+          targetId = restricted.targetId;
+          targetUid = restricted.targetUid;
+          targetCourse = restricted.course || targetCourse;
+          restrictedQueueEntry = await upsertRestrictedQueueEntry({
+            source: restricted.source,
+            reportKey: parsed.key,
+            targetType: restricted.targetType,
+            targetId: restricted.targetId,
+            targetUid: restricted.targetUid,
+            course: restricted.course || null,
+            reason: resolutionNote || report.reason || null,
+            metadata: {
+              title: restricted.title || null,
+              sourceReportId: parsed.rawId,
+              moderationAction,
+            },
+            hiddenByUid: adminUid,
+          });
+        } else {
+          const removed = await deleteMainPostById(targetId);
+          if (!removed) {
+            return res.status(404).json({ ok: false, message: 'Target post no longer exists.' });
+          }
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await db.collection('post_reports').updateOne(
+        { _id: reportObjectId },
+        {
+          $set: {
+            status,
+            moderationAction,
+            resolutionNote,
+            resolvedAt,
+            resolvedByUid: shouldMarkResolved ? adminUid : null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } else if (parsed.source === 'library_document') {
+      if (!ObjectId.isValid(parsed.rawId)) {
+        return res.status(400).json({ ok: false, message: 'Invalid document report id.' });
+      }
+      const reportObjectId = new ObjectId(parsed.rawId);
+      const report = await db.collection('document_reports').findOne({ _id: reportObjectId });
+      if (!report) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      reportExists = true;
+      targetType = 'library_document';
+      targetId = sanitizeText(report.documentUuid, 120) || null;
+      targetUid = report.targetUid || null;
+
+      if (targetId) {
+        const docResult = await pool.query(
+          `SELECT uploader_uid, course
+           FROM documents
+           WHERE uuid::text = $1
+           LIMIT 1`,
+          [targetId]
+        );
+        targetUid = (docResult.rows[0] && docResult.rows[0].uploader_uid) || targetUid;
+        targetCourse = (docResult.rows[0] && docResult.rows[0].course) || null;
+      }
+
+      if (moderationAction === 'delete_library_document') {
+        if (restrictedContentsEnabled) {
+          const restricted = await restrictLibraryDocumentByUuid(
+            targetId,
+            adminUid,
+            resolutionNote || report.reason || 'Restricted from report review'
+          );
+          if (!restricted) {
+            return res.status(404).json({ ok: false, message: 'Target document no longer exists.' });
+          }
+          targetType = restricted.targetType;
+          targetId = restricted.targetId;
+          targetUid = restricted.targetUid;
+          targetCourse = restricted.course || targetCourse;
+          restrictedQueueEntry = await upsertRestrictedQueueEntry({
+            source: restricted.source,
+            reportKey: parsed.key,
+            targetType: restricted.targetType,
+            targetId: restricted.targetId,
+            targetUid: restricted.targetUid,
+            course: restricted.course || null,
+            reason: resolutionNote || report.reason || null,
+            metadata: {
+              title: restricted.title || null,
+              sourceReportId: parsed.rawId,
+              moderationAction,
+            },
+            hiddenByUid: adminUid,
+          });
+        } else {
+          const removed = await deleteLibraryDocumentByUuid(targetId);
+          if (!removed) {
+            return res.status(404).json({ ok: false, message: 'Target document no longer exists.' });
+          }
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await db.collection('document_reports').updateOne(
+        { _id: reportObjectId },
+        {
+          $set: {
+            status,
+            moderationAction,
+            resolutionNote,
+            resolvedAt,
+            resolvedByUid: shouldMarkResolved ? adminUid : null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } else if (parsed.source === 'profile') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid profile report id.' });
+      }
+      const profileReport = await pool.query(
+        `SELECT id, target_uid
+         FROM user_profile_reports
+         WHERE id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!profileReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      reportExists = true;
+      targetType = 'user_profile';
+      targetId = profileReport.rows[0].target_uid || null;
+      targetUid = profileReport.rows[0].target_uid || null;
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+    } else if (parsed.source === 'chat_message') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid chat message report id.' });
+      }
+      const chatReport = await pool.query(
+        `SELECT id, message_id, message_sender_uid
+         FROM chat_message_reports
+         WHERE id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!chatReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      const reportRow = chatReport.rows[0];
+      reportExists = true;
+      targetType = 'chat_message';
+      targetId = reportRow.message_id ? String(reportRow.message_id) : null;
+      targetUid = reportRow.message_sender_uid || null;
+
+      if (moderationAction === 'delete_chat_message') {
+        const removed = await deleteChatMessageById(reportRow.message_id, adminUid);
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target chat message no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await pool.query(
+        `UPDATE chat_message_reports
+         SET status = $2,
+             resolution_note = $3,
+             resolved_by_uid = $4,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [reportId, mapAdminStatusToChatStatus(status), resolutionNote, shouldMarkResolved ? adminUid : null]
+      );
+    } else if (parsed.source === 'community') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid community report id.' });
+      }
+      const communityReport = await pool.query(
+        `SELECT id, target_type, target_uid, target_post_id, target_comment_id, reason
+         FROM community_reports
+         WHERE id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!communityReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      const reportRow = communityReport.rows[0];
+      reportExists = true;
+      targetType = reportRow.target_type || 'community';
+      targetUid = reportRow.target_uid || null;
+      targetId = reportRow.target_post_id
+        ? String(reportRow.target_post_id)
+        : (reportRow.target_comment_id ? String(reportRow.target_comment_id) : targetUid);
+      const courseResult = await pool.query(
+        `SELECT c.course_name
+         FROM community_reports r
+         JOIN communities c ON c.id = r.community_id
+         WHERE r.id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      targetCourse = courseResult.rows[0] ? courseResult.rows[0].course_name || null : null;
+
+      if (moderationAction === 'take_down_community_post') {
+        if (targetType !== 'post') {
+          return res.status(400).json({ ok: false, message: 'This report does not target a community post.' });
+        }
+        if (restrictedContentsEnabled) {
+          const restricted = await restrictCommunityPostById(
+            reportRow.target_post_id,
+            adminUid,
+            resolutionNote || 'Restricted from report review'
+          );
+          if (!restricted) {
+            return res.status(404).json({ ok: false, message: 'Target community post no longer exists.' });
+          }
+          targetType = restricted.targetType;
+          targetId = restricted.targetId;
+          targetUid = restricted.targetUid;
+          targetCourse = restricted.course || targetCourse;
+          restrictedQueueEntry = await upsertRestrictedQueueEntry({
+            source: restricted.source,
+            reportKey: parsed.key,
+            targetType: restricted.targetType,
+            targetId: restricted.targetId,
+            targetUid: restricted.targetUid,
+            course: restricted.course || null,
+            reason: resolutionNote || reportRow.reason || null,
+            metadata: {
+              title: restricted.title || null,
+              sourceReportId: parsed.rawId,
+              moderationAction,
+            },
+            hiddenByUid: adminUid,
+          });
+        } else {
+          const removed = await takeDownCommunityPostById(reportRow.target_post_id, adminUid, resolutionNote);
+          if (!removed) {
+            return res.status(404).json({ ok: false, message: 'Target community post no longer exists.' });
+          }
+        }
+      }
+
+      if (moderationAction === 'take_down_community_comment') {
+        if (targetType !== 'comment') {
+          return res.status(400).json({ ok: false, message: 'This report does not target a community comment.' });
+        }
+        if (restrictedContentsEnabled) {
+          const restricted = await restrictCommunityCommentById(
+            reportRow.target_comment_id,
+            adminUid,
+            resolutionNote || 'Restricted from report review'
+          );
+          if (!restricted) {
+            return res.status(404).json({ ok: false, message: 'Target community comment no longer exists.' });
+          }
+          targetType = restricted.targetType;
+          targetId = restricted.targetId;
+          targetUid = restricted.targetUid;
+          targetCourse = restricted.course || targetCourse;
+          restrictedQueueEntry = await upsertRestrictedQueueEntry({
+            source: restricted.source,
+            reportKey: parsed.key,
+            targetType: restricted.targetType,
+            targetId: restricted.targetId,
+            targetUid: restricted.targetUid,
+            course: restricted.course || null,
+            reason: resolutionNote || reportRow.reason || null,
+            metadata: {
+              title: restricted.title || null,
+              sourceReportId: parsed.rawId,
+              moderationAction,
+            },
+            hiddenByUid: adminUid,
+          });
+        } else {
+          const removed = await takeDownCommunityCommentById(reportRow.target_comment_id, adminUid, resolutionNote);
+          if (!removed) {
+            return res.status(404).json({ ok: false, message: 'Target community comment no longer exists.' });
+          }
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+
+      await pool.query(
+        `UPDATE community_reports
+         SET status = $2,
+             resolution_note = $3,
+             resolved_by_uid = $4,
+             resolved_at = $5,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [reportId, status, resolutionNote, shouldMarkResolved ? adminUid : null, resolvedAt]
+      );
+    }
+
+    if (!reportExists) {
+      return res.status(404).json({ ok: false, message: 'Report not found.' });
+    }
+
+    await db.collection('admin_report_actions').updateOne(
+      { reportKey: parsed.key },
+      {
+        $set: {
+          source: parsed.source,
+          sourceReportId: parsed.rawId,
+          reportKey: parsed.key,
+          status,
+          moderationAction,
+          resolutionNote,
+          targetType,
+          targetId,
+          targetUid,
+          targetCourse,
+          restrictedQueueId: restrictedQueueEntry ? Number(restrictedQueueEntry.id) : null,
+          resolvedByUid: shouldMarkResolved ? adminUid : null,
+          resolvedAt,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true }
+    );
+
+    return res.json({
+      ok: true,
+      report: {
+        reportId: parsed.key,
+        status,
+        moderationAction,
+        resolutionNote,
+        targetType,
+        targetId,
+        targetUid,
+        restrictedQueueId: restrictedQueueEntry ? Number(restrictedQueueEntry.id) : null,
+        resolvedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Admin report action failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to apply report action.' });
+  }
+});
+
+router.get('/api/admin/restricted-contents', async (req, res) => {
+  if (!isRestrictedContentsEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Restricted contents feature is disabled.' });
+  }
+
+  const { page, pageSize, offset } = parsePagination(req, 25, 100);
+  const statusFilter = sanitizeText(req.query.status, 30).toLowerCase();
+  const sourceFilter = normalizeRestrictedSource(req.query.source);
+  const query = sanitizeText(req.query.q, 220);
+  const course = sanitizeText(req.query.course, 160);
+
+  try {
+    const where = [];
+    const params = [];
+    if (statusFilter && statusFilter !== 'all') {
+      const normalized = normalizeRestrictedStatus(statusFilter, '');
+      if (!normalized) {
+        return res.status(400).json({ ok: false, message: 'Invalid restricted content status filter.' });
+      }
+      params.push(normalized);
+      where.push(`status = $${params.length}`);
+    }
+    if (sourceFilter) {
+      params.push(sourceFilter);
+      where.push(`source = $${params.length}`);
+    }
+    if (course) {
+      params.push(course);
+      where.push(`course = $${params.length}`);
+    }
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(COALESCE(report_key, '') ILIKE $${params.length}
+          OR COALESCE(target_type, '') ILIKE $${params.length}
+          OR COALESCE(target_id, '') ILIKE $${params.length}
+          OR COALESCE(target_uid, '') ILIKE $${params.length}
+          OR COALESCE(reason, '') ILIKE $${params.length}
+          OR COALESCE(course, '') ILIKE $${params.length}
+          OR COALESCE(metadata::text, '') ILIKE $${params.length})`
+      );
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM restricted_content_queue
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0] ? countResult.rows[0].total : 0);
+
+    params.push(pageSize, offset);
+    const rowsResult = await pool.query(
+      `SELECT *
+       FROM restricted_content_queue
+       ${whereClause}
+       ORDER BY hidden_at DESC, id DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const namesMap = await loadRestrictedQueueDisplayNames(rowsResult.rows);
+    return res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      items: rowsResult.rows
+        .map((row) => mapRestrictedQueueRowWithNames(row, namesMap))
+        .filter(Boolean),
+    });
+  } catch (error) {
+    console.error('Admin restricted contents fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load restricted contents.' });
+  }
+});
+
+router.post('/api/admin/restricted-contents/:id/restore', async (req, res) => {
+  if (!isRestrictedContentsEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Restricted contents feature is disabled.' });
+  }
+
+  const id = parsePositiveInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ ok: false, message: 'Invalid restricted content id.' });
+  }
+
+  try {
+    const item = await getRestrictedQueueItemById(id);
+    if (!item) {
+      return res.status(404).json({ ok: false, message: 'Restricted item not found.' });
+    }
+    if (normalizeRestrictedStatus(item.status, 'restricted') === 'purged') {
+      return res.status(409).json({ ok: false, message: 'Purged item cannot be restored.' });
+    }
+    if (normalizeRestrictedStatus(item.status, 'restricted') === 'restored') {
+      const namesMap = await loadRestrictedQueueDisplayNames([item]);
+      return res.json({
+        ok: true,
+        item: mapRestrictedQueueRowWithNames(item, namesMap),
+        message: 'Item is already restored.',
+      });
+    }
+
+    const restored = await restoreRestrictedTarget(item);
+    if (!restored) {
+      return res.status(404).json({ ok: false, message: 'Target content no longer exists for restore.' });
+    }
+
+    const updated = await updateRestrictedQueueStatus(id, 'restored', req.adminViewer.uid);
+    if (!updated) {
+      return res.status(500).json({ ok: false, message: 'Unable to update restricted queue status.' });
+    }
+
+    const namesMap = await loadRestrictedQueueDisplayNames([updated]);
+    return res.json({
+      ok: true,
+      item: mapRestrictedQueueRowWithNames(updated, namesMap),
+    });
+  } catch (error) {
+    console.error('Admin restricted content restore failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to restore restricted content.' });
+  }
+});
+
+router.post('/api/admin/restricted-contents/:id/purge', async (req, res) => {
+  if (!isRestrictedContentsEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Restricted contents feature is disabled.' });
+  }
+
+  const id = parsePositiveInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ ok: false, message: 'Invalid restricted content id.' });
+  }
+
+  try {
+    const item = await getRestrictedQueueItemById(id);
+    if (!item) {
+      return res.status(404).json({ ok: false, message: 'Restricted item not found.' });
+    }
+
+    const outcome = await purgeRestrictedQueueItem(item, req.adminViewer.uid);
+    if (!outcome.ok) {
+      if (outcome.reason === 'already_purged') {
+        const namesMap = await loadRestrictedQueueDisplayNames([item]);
+        return res.json({
+          ok: true,
+          item: mapRestrictedQueueRowWithNames(item, namesMap),
+          message: 'Item is already purged.',
+        });
+      }
+      return res.status(500).json({ ok: false, message: 'Unable to purge restricted content.' });
+    }
+
+    const updated = outcome.row || (await getRestrictedQueueItemById(id));
+    const namesMap = await loadRestrictedQueueDisplayNames(updated ? [updated] : []);
+    return res.json({
+      ok: true,
+      item: updated ? mapRestrictedQueueRowWithNames(updated, namesMap) : null,
+      missingTarget: outcome.reason === 'target_missing',
+    });
+  } catch (error) {
+    console.error('Admin restricted content purge failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to purge restricted content.' });
+  }
+});
+
+router.post('/api/admin/restricted-contents/purge-expired', async (req, res) => {
+  if (!isRestrictedContentsEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Restricted contents feature is disabled.' });
+  }
+
+  const requestedLimit = parsePositiveInt(req.body && req.body.limit);
+  const limit = Math.min(requestedLimit || 200, 500);
+
+  try {
+    const result = await purgeExpiredRestrictedContents({
+      actorUid: req.adminViewer.uid,
+      limit,
+    });
+    return res.json({
+      ok: true,
+      processed: result.processed,
+      purged: result.purged,
+      skipped: result.skipped,
+      items: result.items,
+    });
+  } catch (error) {
+    console.error('Admin restricted contents purge-expired failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to purge expired restricted contents.' });
+  }
+});
+
+router.get('/api/admin/appeals', async (req, res) => {
+  if (!isAdminAppealsEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Admin appeals feature is disabled.' });
+  }
+
+  const { page, pageSize, offset } = parsePagination(req, 25, 100);
+  const status = normalizeAdminAppealStatus(req.query.status, '');
+  const appealType = normalizeAdminAppealType(req.query.type, '');
+  const query = sanitizeText(req.query.q, 220);
+
+  try {
+    const where = [];
+    const params = [];
+    if (status) {
+      params.push(status);
+      where.push(`aa.status = $${params.length}`);
+    }
+    if (appealType) {
+      params.push(appealType);
+      where.push(`aa.appeal_type = $${params.length}`);
+    }
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(COALESCE(aa.message, '') ILIKE $${params.length}
+          OR COALESCE(aa.resolution_note, '') ILIKE $${params.length}
+          OR COALESCE(aa.appeal_type, '') ILIKE $${params.length}
+          OR COALESCE(aa.status, '') ILIKE $${params.length}
+          OR COALESCE(a.email, '') ILIKE $${params.length}
+          OR COALESCE(a.username, '') ILIKE $${params.length}
+          OR COALESCE(ap.display_name, a.display_name, '') ILIKE $${params.length})`
+      );
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM account_appeals aa
+       JOIN accounts a ON a.uid = aa.appellant_uid
+       LEFT JOIN profiles ap ON ap.uid = aa.appellant_uid
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0] ? countResult.rows[0].total : 0);
+
+    params.push(pageSize, offset);
+    const rowsResult = await pool.query(
+      `SELECT
+        aa.id,
+        aa.appellant_uid,
+        aa.disciplinary_action_id,
+        aa.appeal_type,
+        aa.status,
+        aa.message,
+        aa.evidence,
+        aa.resolution_note,
+        aa.resolved_by_uid,
+        aa.resolved_at,
+        aa.created_at,
+        aa.updated_at,
+        COALESCE(ap.display_name, a.display_name, a.username, a.email) AS appellant_name,
+        a.email AS appellant_email,
+        da.action_type AS disciplinary_action_type,
+        da.reason AS disciplinary_reason,
+        da.active AS disciplinary_active,
+        da.starts_at AS disciplinary_starts_at,
+        da.ends_at AS disciplinary_ends_at,
+        COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS resolved_by_name
+       FROM account_appeals aa
+       JOIN accounts a ON a.uid = aa.appellant_uid
+       LEFT JOIN profiles ap ON ap.uid = aa.appellant_uid
+       LEFT JOIN account_disciplinary_actions da ON da.id = aa.disciplinary_action_id
+       LEFT JOIN accounts ra ON ra.uid = aa.resolved_by_uid
+       LEFT JOIN profiles rp ON rp.uid = aa.resolved_by_uid
+       ${whereClause}
+       ORDER BY aa.created_at DESC, aa.id DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      appeals: rowsResult.rows.map((row) => ({
+        id: Number(row.id),
+        appellantUid: row.appellant_uid,
+        appellantName: row.appellant_name || row.appellant_uid || 'Member',
+        appellantEmail: row.appellant_email || '',
+        actionId: row.disciplinary_action_id ? Number(row.disciplinary_action_id) : null,
+        type: row.appeal_type,
+        status: row.status,
+        message: row.message || '',
+        evidence: row.evidence || {},
+        disciplinaryAction: row.disciplinary_action_type
+          ? {
+              type: row.disciplinary_action_type,
+              reason: row.disciplinary_reason || '',
+              active: row.disciplinary_active === true,
+              startsAt: row.disciplinary_starts_at || null,
+              endsAt: row.disciplinary_ends_at || null,
+            }
+          : null,
+        resolutionNote: row.resolution_note || '',
+        resolvedByUid: row.resolved_by_uid || null,
+        resolvedByName: row.resolved_by_name || null,
+        resolvedAt: row.resolved_at || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('Admin appeals fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load appeals.' });
+  }
+});
+
+router.post('/api/admin/appeals/:id/resolve', async (req, res) => {
+  if (!isAdminAppealsEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Admin appeals feature is disabled.' });
+  }
+
+  const appealId = parsePositiveInt(req.params.id);
+  const status = normalizeAdminAppealStatus(req.body && req.body.status, '');
+  const resolutionNote = sanitizeText(req.body && req.body.note, 2000);
+  if (!appealId) {
+    return res.status(400).json({ ok: false, message: 'Invalid appeal id.' });
+  }
+  if (!ADMIN_APPEAL_RESOLUTION_STATUSES.has(status)) {
+    return res.status(400).json({ ok: false, message: 'Invalid appeal resolution status.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const appealResult = await client.query(
+      `SELECT
+        id,
+        appellant_uid,
+        disciplinary_action_id,
+        appeal_type,
+        status
+       FROM account_appeals
+       WHERE id = $1
+       FOR UPDATE`,
+      [appealId]
+    );
+    if (!appealResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Appeal not found.' });
+    }
+
+    const appeal = appealResult.rows[0];
+    const currentStatus = normalizeAdminAppealStatus(appeal.status, 'open');
+    if (currentStatus === 'withdrawn' || currentStatus === 'accepted' || currentStatus === 'denied') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Appeal is already closed.' });
+    }
+
+    const isFinal = status === 'accepted' || status === 'denied';
+    const resolvedAt = isFinal ? new Date() : null;
+
+    await client.query(
+      `UPDATE account_appeals
+       SET
+         status = $2,
+         resolution_note = $3,
+         resolved_by_uid = $4,
+         resolved_at = $5,
+         updated_at = NOW()
+       WHERE id = $1`,
+      [appealId, status, resolutionNote || null, isFinal ? req.adminViewer.uid : null, resolvedAt]
+    );
+
+    if (status === 'accepted') {
+      if (appeal.disciplinary_action_id) {
+        await client.query(
+          `UPDATE account_disciplinary_actions
+           SET
+             active = false,
+             revoked_at = NOW(),
+             revoked_by_uid = $2,
+             revoked_reason = $3
+           WHERE id = $1`,
+          [appeal.disciplinary_action_id, req.adminViewer.uid, resolutionNote || 'Appeal accepted']
+        );
+      }
+
+      if (appeal.appeal_type === 'ban' || appeal.appeal_type === 'suspension') {
+        await client.query(
+          `UPDATE accounts
+           SET is_banned = false,
+               banned_at = NULL,
+               banned_reason = NULL,
+               banned_by_uid = NULL
+           WHERE uid = $1`,
+          [appeal.appellant_uid]
+        );
+      }
+
+      if (appeal.appeal_type === 'verification_rejection') {
+        await client.query(
+          `UPDATE accounts
+           SET
+             id_verification_status = 'approved',
+             id_verification_note = $2,
+             id_verified_by_uid = $3,
+             id_verified_at = NOW()
+           WHERE uid = $1`,
+          [appeal.appellant_uid, resolutionNote || 'Appeal accepted', req.adminViewer.uid]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    if (isAdminCustomNotificationEnabled() && appeal.appellant_uid) {
+      try {
+        const customTitle =
+          status === 'accepted'
+            ? 'Appeal accepted'
+            : status === 'denied'
+              ? 'Appeal denied'
+              : 'Appeal under review';
+        const customMessage =
+          resolutionNote ||
+          (status === 'accepted'
+            ? 'Your appeal was accepted by an admin.'
+            : status === 'denied'
+              ? 'Your appeal was denied by an admin.'
+              : 'Your appeal is now under review.');
+        await createNotificationsForRecipients({
+          recipientUids: [appeal.appellant_uid],
+          actorUid: req.adminViewer.uid,
+          type: 'admin_custom',
+          entityType: 'appeal',
+          entityId: String(appealId),
+          targetUrl: '/account',
+          meta: {
+            title: customTitle,
+            message: customMessage,
+          },
+        });
+      } catch (notifyError) {
+        console.error('Admin appeal resolution notification failed:', notifyError);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      appeal: {
+        id: appealId,
+        status,
+        resolutionNote: resolutionNote || '',
+        resolvedAt,
+        resolvedByUid: isFinal ? req.adminViewer.uid : null,
+      },
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_rollbackError) {
+      // ignore rollback errors
+    }
+    console.error('Admin appeal resolve failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to resolve appeal.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/api/admin/notifications/custom', async (req, res) => {
+  if (!isAdminCustomNotificationEnabled()) {
+    return res.status(404).json({ ok: false, message: 'Admin custom notification feature is disabled.' });
+  }
+
+  const title = sanitizeText(req.body && req.body.title, 180);
+  const message = sanitizeText(req.body && req.body.message, 3000);
+  const mode = sanitizeText(req.body && req.body.mode, 30).toLowerCase();
+  const course = sanitizeText(req.body && req.body.course, 160);
+  const includeBanned = Boolean(req.body && req.body.includeBanned === true);
+  const includeSelf = Boolean(req.body && req.body.includeSelf === true);
+
+  if (!title) {
+    return res.status(400).json({ ok: false, message: 'Notification title is required.' });
+  }
+  if (!message) {
+    return res.status(400).json({ ok: false, message: 'Notification message is required.' });
+  }
+  if (!['uids', 'course', 'all'].includes(mode)) {
+    return res.status(400).json({ ok: false, message: 'Notification mode must be uids, course, or all.' });
+  }
+
+  try {
+    const uids = normalizeUidList((req.body && req.body.uids) || []);
+    const recipients = await resolveCustomNotificationRecipients({
+      mode,
+      uids,
+      course,
+      includeBanned,
+    });
+
+    let finalRecipients = recipients;
+    if (!includeSelf) {
+      finalRecipients = finalRecipients.filter((uid) => uid !== req.adminViewer.uid);
+    }
+    if (!finalRecipients.length) {
+      return res.status(400).json({ ok: false, message: 'No recipients match the current target filter.' });
+    }
+    if (finalRecipients.length > CUSTOM_NOTIFICATION_MAX_RECIPIENTS) {
+      return res.status(400).json({
+        ok: false,
+        message: `Recipient set is too large. Limit is ${CUSTOM_NOTIFICATION_MAX_RECIPIENTS} users per send.`,
+      });
+    }
+
+    const result = await createNotificationsForRecipients({
+      recipientUids: finalRecipients,
+      actorUid: req.adminViewer.uid,
+      type: 'admin_custom',
+      entityType: 'admin_notice',
+      entityId: `${Date.now()}`,
+      meta: {
+        title,
+        message,
+        mode,
+        course: mode === 'course' ? course : '',
+      },
+    });
+
+    return res.json({
+      ok: true,
+      inserted: Number(result.inserted || 0),
+      attemptedRecipients: finalRecipients.length,
+    });
+  } catch (error) {
+    console.error('Admin custom notification failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to send custom notifications.' });
+  }
+});
+
+router.get('/api/admin/professor-codes', async (req, res) => {
+  const { page, pageSize, offset } = parsePagination(req, 30, 120);
+  const status = sanitizeText(req.query.status, 20).toLowerCase();
+  const query = sanitizeText(req.query.q, 200);
+
+  try {
+    const where = [];
+    const params = [];
+
+    if (status === 'available') {
+      where.push(`c.consumed_at IS NULL AND c.is_active = true AND (c.expires_at IS NULL OR c.expires_at > NOW())`);
+    } else if (status === 'consumed') {
+      where.push(`c.consumed_at IS NOT NULL`);
+    } else if (status === 'revoked') {
+      where.push(`c.consumed_at IS NULL AND c.is_active = false AND (c.expires_at IS NULL OR c.expires_at > NOW())`);
+    } else if (status === 'expired') {
+      where.push(`c.consumed_at IS NULL AND c.expires_at IS NOT NULL AND c.expires_at <= NOW()`);
+    }
+
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(c.source ILIKE $${params.length}
+          OR COALESCE(c.created_by_uid, '') ILIKE $${params.length}
+          OR COALESCE(c.consumed_by_uid, '') ILIKE $${params.length}
+          OR c.id::text ILIKE $${params.length})`
+      );
+    }
+
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM professor_registration_codes c
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0] ? countResult.rows[0].total : 0);
+
+    const pagedParams = params.slice();
+    pagedParams.push(pageSize, offset);
+    const rowsResult = await pool.query(
+      `SELECT
+         c.id,
+         c.source,
+         c.created_by_uid,
+         c.consumed_by_uid,
+         c.created_at,
+         c.expires_at,
+         c.consumed_at,
+         c.is_active,
+         COALESCE(cbp.display_name, cba.display_name, cba.username, cba.email) AS created_by_name,
+         COALESCE(cup.display_name, cua.display_name, cua.username, cua.email) AS consumed_by_name
+       FROM professor_registration_codes c
+       LEFT JOIN accounts cba ON cba.uid = c.created_by_uid
+       LEFT JOIN profiles cbp ON cbp.uid = c.created_by_uid
+       LEFT JOIN accounts cua ON cua.uid = c.consumed_by_uid
+       LEFT JOIN profiles cup ON cup.uid = c.consumed_by_uid
+       ${whereClause}
+       ORDER BY c.created_at DESC, c.id DESC
+       LIMIT $${pagedParams.length - 1} OFFSET $${pagedParams.length}`,
+      pagedParams
+    );
+
+    return res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      codes: rowsResult.rows.map((row) => ({
+        id: Number(row.id),
+        source: row.source || 'manual',
+        createdByUid: row.created_by_uid || null,
+        createdByName: row.created_by_name || null,
+        consumedByUid: row.consumed_by_uid || null,
+        consumedByName: row.consumed_by_name || null,
+        createdAt: row.created_at || null,
+        expiresAt: row.expires_at || null,
+        consumedAt: row.consumed_at || null,
+        isActive: row.is_active === true,
+        status: getProfessorCodeStatus(row),
+      })),
+    });
+  } catch (error) {
+    console.error('Professor code list fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load professor codes.' });
+  }
+});
+
+router.post('/api/admin/professor-codes', async (req, res) => {
+  const count = clampInteger(req.body && req.body.count, 1, PROFESSOR_SIGNUP_CODE_MAX_BATCH, 1);
+  const length = clampInteger(
+    req.body && req.body.length,
+    PROFESSOR_SIGNUP_CODE_MIN_LENGTH,
+    PROFESSOR_SIGNUP_CODE_MAX_LENGTH,
+    PROFESSOR_SIGNUP_CODE_DEFAULT_LENGTH
+  );
+  const expiresInDays = clampInteger(req.body && req.body.expiresInDays, 1, 3650, null);
+  const expiresAt = Number.isInteger(expiresInDays)
+    ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
+    : null;
+
+  const client = await pool.connect();
+  let inTransaction = false;
+  try {
+    await client.query('BEGIN');
+    inTransaction = true;
+
+    const created = [];
+    for (let i = 0; i < count; i += 1) {
+      let insertedRow = null;
+      let generatedCode = '';
+
+      for (let tries = 0; tries < 8; tries += 1) {
+        generatedCode = buildProfessorSignupCode(length);
+        const digest = digestProfessorSignupCode(generatedCode);
+        const insertResult = await client.query(
+          `INSERT INTO professor_registration_codes
+            (code_digest, source, created_by_uid, expires_at, is_active, created_at)
+           VALUES
+            ($1, 'admin_generated', $2, $3, true, NOW())
+           ON CONFLICT (code_digest) DO NOTHING
+           RETURNING id, created_at, expires_at`,
+          [digest, req.adminViewer.uid, expiresAt]
+        );
+        if (insertResult.rows.length) {
+          insertedRow = insertResult.rows[0];
+          break;
+        }
+      }
+
+      if (!insertedRow) {
+        throw new Error('Unable to allocate unique professor code. Please retry.');
+      }
+
+      created.push({
+        id: Number(insertedRow.id),
+        code: generatedCode,
+        createdAt: insertedRow.created_at,
+        expiresAt: insertedRow.expires_at || null,
+      });
+    }
+
+    await client.query('COMMIT');
+    inTransaction = false;
+
+    return res.status(201).json({
+      ok: true,
+      message: `Generated ${created.length} professor code${created.length === 1 ? '' : 's'}.`,
+      created,
+    });
+  } catch (error) {
+    if (inTransaction) {
+      await client.query('ROLLBACK');
+    }
+    console.error('Professor code generation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to generate professor codes.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/api/admin/professor-codes/:id/revoke', async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ ok: false, message: 'Invalid code id.' });
+  }
+
+  try {
+    const updateResult = await pool.query(
+      `UPDATE professor_registration_codes
+       SET is_active = false
+       WHERE id = $1
+         AND consumed_at IS NULL
+         AND is_active = true
+       RETURNING id`,
+      [id]
+    );
+    if (updateResult.rows.length) {
+      return res.json({ ok: true, message: 'Professor code revoked.' });
+    }
+
+    const existing = await pool.query(
+      `SELECT id, consumed_at, is_active
+       FROM professor_registration_codes
+       WHERE id = $1
+       LIMIT 1`,
+      [id]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Professor code not found.' });
+    }
+    if (existing.rows[0].consumed_at) {
+      return res.status(400).json({ ok: false, message: 'Consumed code cannot be revoked.' });
+    }
+    return res.json({ ok: true, message: 'Professor code is already revoked.' });
+  } catch (error) {
+    console.error('Professor code revoke failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to revoke professor code.' });
+  }
+});
+
+router.post('/api/admin/professor-codes/:id/reactivate', async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ ok: false, message: 'Invalid code id.' });
+  }
+
+  try {
+    const updateResult = await pool.query(
+      `UPDATE professor_registration_codes
+       SET is_active = true
+       WHERE id = $1
+         AND consumed_at IS NULL
+         AND is_active = false
+         AND (expires_at IS NULL OR expires_at > NOW())
+       RETURNING id`,
+      [id]
+    );
+    if (updateResult.rows.length) {
+      return res.json({ ok: true, message: 'Professor code reactivated.' });
+    }
+
+    const existing = await pool.query(
+      `SELECT id, consumed_at, is_active, expires_at
+       FROM professor_registration_codes
+       WHERE id = $1
+       LIMIT 1`,
+      [id]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Professor code not found.' });
+    }
+    const row = existing.rows[0];
+    if (row.consumed_at) {
+      return res.status(400).json({ ok: false, message: 'Consumed code cannot be reactivated.' });
+    }
+    if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) {
+      return res.status(400).json({ ok: false, message: 'Expired code cannot be reactivated.' });
+    }
+    return res.json({ ok: true, message: 'Professor code is already active.' });
+  } catch (error) {
+    console.error('Professor code reactivate failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to reactivate professor code.' });
+  }
+});
+
+router.get('/api/admin/dep-admin/assignments', async (req, res) => {
+  const query = sanitizeText(req.query.q, 200);
+  const courseFilter = sanitizeText(req.query.course, 160);
+
+  try {
+    const coursesResult = await pool.query(
+      `SELECT course_code, course_name
+       FROM courses
+       ORDER BY lower(course_name) ASC, id ASC`
+    );
+
+    const where = [];
+    const params = [];
+    if (courseFilter) {
+      params.push(courseFilter);
+      where.push(
+        `(lower(cda.course_name) = lower($${params.length})
+          OR lower(COALESCE(cda.course_code, '')) = lower($${params.length}))`
+      );
+    }
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(cda.course_name ILIKE $${params.length}
+          OR COALESCE(cda.course_code, '') ILIKE $${params.length}
+          OR cda.depadmin_uid ILIKE $${params.length}
+          OR COALESCE(da.username, '') ILIKE $${params.length}
+          OR da.email ILIKE $${params.length}
+          OR COALESCE(dp.display_name, da.display_name, '') ILIKE $${params.length})`
+      );
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const assignmentsResult = await pool.query(
+      `SELECT
+         cda.id,
+         cda.course_code,
+         cda.course_name,
+         cda.depadmin_uid,
+         cda.assigned_by_uid,
+         cda.created_at,
+         cda.updated_at,
+         COALESCE(dp.display_name, da.display_name, da.username, da.email) AS depadmin_name,
+         da.email AS depadmin_email,
+         da.username AS depadmin_username,
+         COALESCE(da.platform_role, 'member') AS depadmin_role,
+         COALESCE(da.course, '') AS depadmin_course,
+         COALESCE(da.is_banned, false) AS depadmin_is_banned,
+         COALESCE(ap.display_name, aa.display_name, aa.username, aa.email) AS assigned_by_name
+       FROM course_dep_admin_assignments cda
+       JOIN accounts da ON da.uid = cda.depadmin_uid
+       LEFT JOIN profiles dp ON dp.uid = da.uid
+       LEFT JOIN accounts aa ON aa.uid = cda.assigned_by_uid
+       LEFT JOIN profiles ap ON ap.uid = aa.uid
+       ${whereClause}
+       ORDER BY lower(cda.course_name) ASC, cda.id ASC`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      courses: coursesResult.rows.map((row) => ({
+        courseCode: row.course_code || null,
+        courseName: row.course_name || '',
+      })),
+      assignments: assignmentsResult.rows.map((row) => ({
+        id: Number(row.id),
+        courseCode: row.course_code || null,
+        courseName: row.course_name || '',
+        depAdminUid: row.depadmin_uid || '',
+        depAdminName: row.depadmin_name || row.depadmin_uid || '',
+        depAdminEmail: row.depadmin_email || '',
+        depAdminUsername: row.depadmin_username || '',
+        depAdminRole: row.depadmin_role || 'member',
+        depAdminCourse: row.depadmin_course || '',
+        depAdminIsBanned: row.depadmin_is_banned === true,
+        assignedByUid: row.assigned_by_uid || null,
+        assignedByName: row.assigned_by_name || null,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+      })),
+    });
+  } catch (error) {
+    console.error('DepAdmin assignments fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load DepAdmin assignments.' });
+  }
+});
+
+router.get('/api/admin/dep-admin/candidates', async (req, res) => {
+  const query = sanitizeText(req.query.q, 200);
+  const courseFilter = sanitizeText(req.query.course, 160);
+
+  if (!query || query.length < 2) {
+    return res.json({ ok: true, candidates: [] });
+  }
+
+  try {
+    let canonicalCourse = null;
+    if (courseFilter) {
+      canonicalCourse = await resolveCanonicalCourse(courseFilter);
+      if (!canonicalCourse) {
+        return res.status(400).json({ ok: false, message: 'Course filter does not match an existing course.' });
+      }
+    }
+
+    const params = [`%${query}%`];
+    const where = [
+      `COALESCE(a.platform_role, 'member') <> 'owner'`,
+      `COALESCE(a.platform_role, 'member') <> 'admin'`,
+      `(
+        a.uid ILIKE $1
+        OR a.email ILIKE $1
+        OR COALESCE(a.username, '') ILIKE $1
+        OR COALESCE(p.display_name, a.display_name, '') ILIKE $1
+      )`,
+    ];
+    if (canonicalCourse && canonicalCourse.courseName) {
+      params.push(canonicalCourse.courseName);
+      where.push(`lower(COALESCE(a.course, '')) = lower($${params.length})`);
+    }
+
+    const result = await pool.query(
+      `SELECT
+         a.uid,
+         a.email,
+         a.username,
+         COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+         COALESCE(a.course, '') AS course,
+         COALESCE(a.platform_role, 'member') AS platform_role,
+         COALESCE(a.is_banned, false) AS is_banned,
+         COALESCE((
+           SELECT array_agg(cda.course_name ORDER BY cda.course_name)
+           FROM course_dep_admin_assignments cda
+           WHERE cda.depadmin_uid = a.uid
+         ), ARRAY[]::text[]) AS assigned_courses
+       FROM accounts a
+       LEFT JOIN profiles p ON p.uid = a.uid
+       WHERE ${where.join(' AND ')}
+       ORDER BY
+         CASE WHEN COALESCE(a.platform_role, 'member') = 'depadmin' THEN 0 ELSE 1 END,
+         lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) ASC
+       LIMIT 30`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      candidates: result.rows.map((row) => ({
+        uid: row.uid,
+        email: row.email || '',
+        username: row.username || '',
+        displayName: row.display_name || '',
+        course: row.course || '',
+        role: row.platform_role || 'member',
+        isBanned: row.is_banned === true,
+        assignedCourses: Array.isArray(row.assigned_courses) ? row.assigned_courses : [],
+      })),
+    });
+  } catch (error) {
+    console.error('DepAdmin candidate search failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to search DepAdmin candidates.' });
+  }
+});
+
+router.post('/api/admin/dep-admin/assignments', async (req, res) => {
+  const courseInput = sanitizeText(req.body && req.body.courseName, 160);
+  const accountQueryInput = sanitizeText(req.body && req.body.accountQuery, 200);
+  const targetUidInput = sanitizeText(req.body && req.body.targetUid, 120);
+
+  if (!courseInput) {
+    return res.status(400).json({ ok: false, message: 'Course is required.' });
+  }
+  if (!accountQueryInput && !targetUidInput) {
+    return res.status(400).json({ ok: false, message: 'Target account is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const course = await resolveCanonicalCourse(courseInput, client);
+    if (!course) {
+      return res.status(400).json({ ok: false, message: 'Course does not exist.' });
+    }
+
+    let targetAccount = null;
+    if (targetUidInput) {
+      const targetResult = await client.query(
+        `SELECT
+           a.uid,
+           a.email,
+           a.username,
+           COALESCE(p.display_name, a.display_name, a.username, a.email) AS display_name,
+           a.course,
+           COALESCE(a.platform_role, 'member') AS platform_role,
+           COALESCE(a.is_banned, false) AS is_banned
+         FROM accounts a
+         LEFT JOIN profiles p ON p.uid = a.uid
+         WHERE a.uid = $1
+         LIMIT 1`,
+        [targetUidInput]
+      );
+      targetAccount = targetResult.rows[0] ? mapDepAdminAccountRow(targetResult.rows[0]) : null;
+      if (!targetAccount) {
+        return res.status(404).json({ ok: false, message: 'Target account not found.' });
+      }
+    } else {
+      const resolved = await resolveDepAdminAccount(accountQueryInput, client);
+      if (resolved.ambiguous) {
+        return res.status(409).json({
+          ok: false,
+          message: 'Multiple accounts match this query. Use a more specific UID/username/email.',
+          candidates: resolved.candidates || [],
+        });
+      }
+      targetAccount = resolved.account;
+      if (!targetAccount) {
+        return res.status(404).json({ ok: false, message: 'Target account not found.' });
+      }
+    }
+
+    if (targetAccount.isBanned) {
+      return res.status(400).json({ ok: false, message: 'Cannot assign a banned account as DepAdmin.' });
+    }
+    if (targetAccount.role === 'owner' || targetAccount.role === 'admin') {
+      return res.status(400).json({ ok: false, message: 'Owner/Admin accounts do not need DepAdmin assignment.' });
+    }
+    const targetAccountCourseRaw = sanitizeText(targetAccount.course, 160);
+    const targetCanonicalCourse = targetAccountCourseRaw
+      ? await resolveCanonicalCourse(targetAccountCourseRaw, client)
+      : null;
+    const courseMatches = targetCanonicalCourse
+      ? targetCanonicalCourse.courseName.toLowerCase() === course.courseName.toLowerCase()
+      : (
+        targetAccountCourseRaw &&
+        (
+          targetAccountCourseRaw.toLowerCase() === course.courseName.toLowerCase() ||
+          (course.courseCode && targetAccountCourseRaw.toLowerCase() === String(course.courseCode).toLowerCase())
+        )
+      );
+    if (!courseMatches) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Target account must belong to the selected course.',
+      });
+    }
+
+    await client.query('BEGIN');
+    const previousAssignmentResult = await client.query(
+      `SELECT id, depadmin_uid
+       FROM course_dep_admin_assignments
+       WHERE course_name = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [course.courseName]
+    );
+    const previousDepAdminUid = previousAssignmentResult.rows[0]
+      ? previousAssignmentResult.rows[0].depadmin_uid
+      : null;
+
+    await client.query(
+      `UPDATE accounts
+       SET platform_role = 'depadmin'
+       WHERE uid = $1
+         AND COALESCE(platform_role, 'member') NOT IN ('owner', 'admin')`,
+      [targetAccount.uid]
+    );
+
+    const upsertResult = await client.query(
+      `INSERT INTO course_dep_admin_assignments
+         (course_code, course_name, depadmin_uid, assigned_by_uid, created_at, updated_at)
+       VALUES
+         ($1, $2, $3, $4, NOW(), NOW())
+       ON CONFLICT (course_name)
+       DO UPDATE
+         SET course_code = EXCLUDED.course_code,
+             depadmin_uid = EXCLUDED.depadmin_uid,
+             assigned_by_uid = EXCLUDED.assigned_by_uid,
+             updated_at = NOW()
+       RETURNING id, course_code, course_name, depadmin_uid, assigned_by_uid, created_at, updated_at`,
+      [course.courseCode || null, course.courseName, targetAccount.uid, req.adminViewer.uid]
+    );
+
+    if (previousDepAdminUid && previousDepAdminUid !== targetAccount.uid) {
+      await maybeDowngradeDepAdminAfterUnassign(previousDepAdminUid, client);
+    }
+
+    await client.query('COMMIT');
+
+    const assignment = upsertResult.rows[0];
+    return res.status(201).json({
+      ok: true,
+      message: `DepAdmin assigned for ${course.courseName}.`,
+      assignment: {
+        id: Number(assignment.id),
+        courseCode: assignment.course_code || null,
+        courseName: assignment.course_name || '',
+        depAdminUid: assignment.depadmin_uid || '',
+        depAdminName: targetAccount.displayName || targetAccount.uid,
+        depAdminEmail: targetAccount.email || '',
+        depAdminUsername: targetAccount.username || '',
+        assignedByUid: assignment.assigned_by_uid || null,
+        createdAt: assignment.created_at || null,
+        updatedAt: assignment.updated_at || null,
+      },
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // ignore rollback error, original error is more useful
+    }
+    console.error('DepAdmin assignment failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to assign DepAdmin.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/api/admin/dep-admin/assignments/:id', async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ ok: false, message: 'Invalid assignment id.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existingResult = await client.query(
+      `SELECT id, course_name, depadmin_uid
+       FROM course_dep_admin_assignments
+       WHERE id = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [id]
+    );
+    if (!existingResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'DepAdmin assignment not found.' });
+    }
+    const existing = existingResult.rows[0];
+
+    await client.query(
+      `DELETE FROM course_dep_admin_assignments
+       WHERE id = $1`,
+      [id]
+    );
+
+    await maybeDowngradeDepAdminAfterUnassign(existing.depadmin_uid, client);
+    await client.query('COMMIT');
+
+    return res.json({
+      ok: true,
+      message: `DepAdmin assignment removed for ${existing.course_name || 'course'}.`,
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // ignore rollback error
+    }
+    console.error('DepAdmin assignment delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to remove DepAdmin assignment.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.get('/api/admin/accounts', async (req, res) => {
   const { page, pageSize, offset } = parsePagination(req, 30, 120);
-  const role = sanitizeText(req.query.role, 30).toLowerCase();
+  const requestedRole = sanitizeText(req.query.role, 30).toLowerCase();
+  const role = requestedRole === 'student' ? 'member' : requestedRole;
   const status = sanitizeText(req.query.status, 40).toLowerCase();
   const course = sanitizeText(req.query.course, 120);
   const query = sanitizeText(req.query.q, 200);
@@ -754,15 +3728,25 @@ router.get('/api/admin/accounts', async (req, res) => {
     const where = [];
     const params = [];
 
-    if (role && ['owner', 'admin', 'member'].includes(role)) {
+    if (role && ['owner', 'admin', 'depadmin', 'professor', 'member'].includes(role)) {
       params.push(role);
       where.push(`COALESCE(a.platform_role, 'member') = $${params.length}`);
     }
 
     if (status === 'banned') {
       where.push(`COALESCE(a.is_banned, false) = true`);
+    } else if (status === 'verification-pending') {
+      where.push(`COALESCE(a.id_verification_status, 'pending') = 'pending'`);
+    } else if (status === 'verification-rejected') {
+      where.push(`COALESCE(a.id_verification_status, 'pending') = 'rejected'`);
+    } else if (status === 'verification-approved') {
+      where.push(`COALESCE(a.id_verification_status, 'pending') = 'approved'`);
     } else if (status === 'verified') {
-      where.push(`COALESCE(a.is_banned, false) = false AND COALESCE(a.email_verified, false) = true`);
+      where.push(
+        `COALESCE(a.is_banned, false) = false
+         AND COALESCE(a.email_verified, false) = true
+         AND COALESCE(a.id_verification_status, 'pending') = 'approved'`
+      );
     } else if (status === 'non-verified') {
       where.push(`COALESCE(a.is_banned, false) = false AND COALESCE(a.email_verified, false) = false`);
     }
@@ -806,9 +3790,19 @@ router.get('/api/admin/accounts', async (req, res) => {
         a.datecreated,
         COALESCE(a.email_verified, false) AS email_verified,
         COALESCE(a.is_banned, false) AS is_banned,
-        a.course
+        COALESCE(a.id_verification_status, 'pending') AS id_verification_status,
+        COALESCE(a.id_verification_note, '') AS id_verification_note,
+        COALESCE(a.student_number, '') AS student_number,
+        COALESCE(a.gender, '') AS gender,
+        a.content_preference,
+        a.course,
+        a.id_verified_by_uid,
+        a.id_verified_at,
+        COALESCE(vp.display_name, va.display_name, va.username, va.email, '') AS id_verified_by_name
        FROM accounts a
        LEFT JOIN profiles p ON p.uid = a.uid
+       LEFT JOIN accounts va ON va.uid = a.id_verified_by_uid
+       LEFT JOIN profiles vp ON vp.uid = a.id_verified_by_uid
        ${whereClause}
        ORDER BY a.datecreated DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -824,8 +3818,14 @@ router.get('/api/admin/accounts', async (req, res) => {
         let derivedStatus = 'non-verified';
         if (row.is_banned === true) {
           derivedStatus = 'banned';
-        } else if (row.email_verified === true) {
+        } else if (row.email_verified !== true) {
+          derivedStatus = 'non-verified';
+        } else if ((row.id_verification_status || 'pending') === 'approved') {
           derivedStatus = 'verified';
+        } else if ((row.id_verification_status || 'pending') === 'rejected') {
+          derivedStatus = 'verification-rejected';
+        } else {
+          derivedStatus = 'verification-pending';
         }
         return {
           uid: row.uid,
@@ -833,8 +3833,17 @@ router.get('/api/admin/accounts', async (req, res) => {
           displayName: row.profile_display_name || row.display_name || '',
           email: row.email,
           userType: row.platform_role || 'member',
+          emailVerified: row.email_verified === true,
           recoveryEmail: row.recovery_email || '',
           status: derivedStatus,
+          idVerificationStatus: row.id_verification_status || 'pending',
+          idVerificationNote: row.id_verification_note || '',
+          idVerifiedByUid: row.id_verified_by_uid || '',
+          idVerifiedByName: row.id_verified_by_name || '',
+          idVerifiedAt: row.id_verified_at || null,
+          studentNumber: row.student_number || '',
+          gender: row.gender || '',
+          contentPreference: row.content_preference || {},
           course: row.course || '',
           dateRegistered: row.datecreated,
         };
@@ -853,8 +3862,8 @@ router.patch('/api/admin/accounts/:uid/role', async (req, res) => {
   if (!targetUid) {
     return res.status(400).json({ ok: false, message: 'Invalid target user.' });
   }
-  if (!['member', 'admin'].includes(role)) {
-    return res.status(400).json({ ok: false, message: 'Role must be member or admin.' });
+  if (!['member', 'admin', 'depadmin', 'professor'].includes(role)) {
+    return res.status(400).json({ ok: false, message: 'Role must be member, professor, depadmin, or admin.' });
   }
   if (req.adminViewer.platform_role !== 'owner') {
     return res.status(403).json({ ok: false, message: 'Only owner can change platform roles.' });
@@ -884,6 +3893,13 @@ router.patch('/api/admin/accounts/:uid/role', async (req, res) => {
        WHERE uid = $2`,
       [role, targetUid]
     );
+    if (role !== 'depadmin') {
+      await pool.query(
+        `DELETE FROM course_dep_admin_assignments
+         WHERE depadmin_uid = $1`,
+        [targetUid]
+      );
+    }
 
     return res.json({ ok: true, message: `Role updated to ${role}.` });
   } catch (error) {
@@ -1005,6 +4021,9 @@ router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
     }
 
     if (banned) {
+      if (target.is_banned === true) {
+        return res.json({ ok: true, message: 'Account is already banned.' });
+      }
       await pool.query(
         `UPDATE accounts
          SET is_banned = true,
@@ -1014,7 +4033,14 @@ router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
          WHERE uid = $3`,
         [reason || null, req.adminViewer.uid, targetUid]
       );
-      deleteSessionsForUid(targetUid);
+      await recordDisciplinaryAction({
+        targetUid,
+        issuedByUid: req.adminViewer.uid,
+        actionType: 'ban',
+        reason: reason || 'Banned by admin action',
+        active: true,
+      });
+      await deleteSessionsForUid(targetUid);
       return res.json({ ok: true, message: 'Account banned.' });
     }
 
@@ -1026,6 +4052,18 @@ router.patch('/api/admin/accounts/:uid/ban', async (req, res) => {
            banned_by_uid = NULL
        WHERE uid = $1`,
       [targetUid]
+    );
+    await pool.query(
+      `UPDATE account_disciplinary_actions
+       SET
+         active = false,
+         revoked_at = NOW(),
+         revoked_by_uid = $2,
+         revoked_reason = $3
+       WHERE target_uid = $1
+         AND action_type IN ('ban', 'suspend')
+         AND active = true`,
+      [targetUid, req.adminViewer.uid, 'Account unbanned by admin']
     );
     return res.json({ ok: true, message: 'Account unbanned.' });
   } catch (error) {
@@ -1066,7 +4104,7 @@ router.delete('/api/admin/accounts/:uid', async (req, res) => {
 
     await cleanupMongoDataForAccount(targetUid);
     await pool.query('DELETE FROM accounts WHERE uid = $1', [targetUid]);
-    deleteSessionsForUid(targetUid);
+    await deleteSessionsForUid(targetUid);
 
     return res.json({ ok: true, message: 'Account deleted.' });
   } catch (error) {
@@ -1280,6 +4318,7 @@ router.delete('/api/admin/content/main-posts/:id', async (req, res) => {
     await db.collection('post_comments').deleteMany({ postId });
     await db.collection('post_bookmarks').deleteMany({ postId });
     await db.collection('post_reports').deleteMany({ postId });
+    await db.collection('admin_report_actions').deleteMany({ source: 'main_post', targetId: String(postId) });
     return res.json({ ok: true });
   } catch (error) {
     console.error('Admin delete main post failed:', error);
@@ -1460,6 +4499,35 @@ router.post('/api/admin/content/community-posts/:id/takedown', async (req, res) 
   }
 
   try {
+    if (isRestrictedContentsEnabled()) {
+      const restricted = await restrictCommunityPostById(
+        postId,
+        req.adminViewer.uid,
+        reason || 'Taken down by admin'
+      );
+      if (!restricted) {
+        return res.status(404).json({ ok: false, message: 'Community post not found.' });
+      }
+      const queueEntry = await upsertRestrictedQueueEntry({
+        source: restricted.source,
+        reportKey: null,
+        targetType: restricted.targetType,
+        targetId: restricted.targetId,
+        targetUid: restricted.targetUid,
+        course: restricted.course || null,
+        reason: reason || 'Taken down by admin',
+        metadata: {
+          title: restricted.title || null,
+          moderationSource: 'content_manager',
+        },
+        hiddenByUid: req.adminViewer.uid,
+      });
+      return res.json({
+        ok: true,
+        restrictedQueueId: queueEntry ? Number(queueEntry.id) : null,
+      });
+    }
+
     const result = await pool.query(
       `UPDATE community_posts
        SET status = 'taken_down',
@@ -1571,6 +4639,35 @@ router.post('/api/admin/content/community-comments/:id/takedown', async (req, re
   }
 
   try {
+    if (isRestrictedContentsEnabled()) {
+      const restricted = await restrictCommunityCommentById(
+        commentId,
+        req.adminViewer.uid,
+        reason || 'Taken down by admin'
+      );
+      if (!restricted) {
+        return res.status(404).json({ ok: false, message: 'Community comment not found.' });
+      }
+      const queueEntry = await upsertRestrictedQueueEntry({
+        source: restricted.source,
+        reportKey: null,
+        targetType: restricted.targetType,
+        targetId: restricted.targetId,
+        targetUid: restricted.targetUid,
+        course: restricted.course || null,
+        reason: reason || 'Taken down by admin',
+        metadata: {
+          title: restricted.title || null,
+          moderationSource: 'content_manager',
+        },
+        hiddenByUid: req.adminViewer.uid,
+      });
+      return res.json({
+        ok: true,
+        restrictedQueueId: queueEntry ? Number(queueEntry.id) : null,
+      });
+    }
+
     const result = await pool.query(
       `UPDATE community_comments
        SET status = 'taken_down',
@@ -1692,6 +4789,9 @@ router.delete('/api/admin/content/library-documents/:uuid', async (req, res) => 
     const doc = docResult.rows[0];
 
     await pool.query('DELETE FROM documents WHERE uuid = $1', [uuid]);
+    const db = await getMongoDb();
+    await db.collection('document_reports').deleteMany({ documentUuid: uuid });
+    await db.collection('admin_report_actions').deleteMany({ source: 'library_document', targetId: uuid });
 
     const keys = [doc.link, doc.thumbnail_link].filter(Boolean);
     for (const key of keys) {
@@ -1726,7 +4826,7 @@ router.get('/api/admin/site-pages/:slug', async (req, res) => {
        LIMIT 1`,
       [slug]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Admin site page fetch failed:', error);
@@ -1764,12 +4864,44 @@ router.patch('/api/admin/site-pages/:slug', async (req, res) => {
        RETURNING slug, title, subtitle, body, updated_by_uid, updated_at`,
       [slug, title, subtitle, JSON.stringify(body), req.adminViewer.uid]
     );
-    const page = normalizeSitePageResult(slug, result.rows[0] || null);
+    const page = await resolveMobileAppBodyAssets(normalizeSitePageResult(slug, result.rows[0] || null));
     return res.json({ ok: true, page });
   } catch (error) {
     console.error('Admin site page update failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to update site page content.' });
   }
 });
+
+function isRestrictedPurgeWorkerEnabled() {
+  const raw = String(process.env.RESTRICTED_PURGE_JOB_ENABLED || 'true').trim().toLowerCase();
+  return !['0', 'false', 'no', 'off', 'disabled'].includes(raw);
+}
+
+let restrictedPurgeWorkerStarted = false;
+
+function startRestrictedPurgeWorker() {
+  if (restrictedPurgeWorkerStarted) return;
+  restrictedPurgeWorkerStarted = true;
+  if (!isRestrictedContentsEnabled() || !isRestrictedPurgeWorkerEnabled()) return;
+
+  const run = async () => {
+    try {
+      const outcome = await purgeExpiredRestrictedContents({ actorUid: null, limit: 300 });
+      if (outcome.purged > 0) {
+        console.log(`[admin] Purged ${outcome.purged} expired restricted content item(s).`);
+      }
+    } catch (error) {
+      console.error('Restricted purge worker iteration failed:', error);
+    }
+  };
+
+  setTimeout(run, 20 * 1000);
+  const timer = setInterval(run, RESTRICTED_PURGE_INTERVAL_MS);
+  if (typeof timer.unref === 'function') {
+    timer.unref();
+  }
+}
+
+startRestrictedPurgeWorker();
 
 module.exports = router;

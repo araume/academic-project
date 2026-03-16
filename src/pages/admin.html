@@ -14,13 +14,14 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -55,7 +56,13 @@
     <section class="admin-tabs">
       <button class="tab-button is-active" data-tab="logs">Logs</button>
       <button class="tab-button" data-tab="reports">Reports</button>
+      <button class="tab-button" data-tab="restricted">Restricted</button>
+      <button class="tab-button" data-tab="appeals">Appeals</button>
+      <button class="tab-button" data-tab="broadcast">Broadcast</button>
+      <button class="tab-button" data-tab="ai">AI</button>
       <button class="tab-button" data-tab="accounts">Accounts</button>
+      <button class="tab-button" data-tab="professor-codes">Professor codes</button>
+      <button class="tab-button" data-tab="dep-admin">DepAdmin</button>
       <button class="tab-button" data-tab="content">Content</button>
       <button class="tab-button" data-tab="spaces">Spaces</button>
       <button class="tab-button" data-tab="site-pages">Site pages</button>
@@ -105,6 +112,7 @@
               <option value="profile">Profile reports</option>
               <option value="community">Community reports</option>
               <option value="main_post">Main post reports</option>
+              <option value="library_document">Library document reports</option>
               <option value="chat_message">Chat message reports</option>
             </select>
             <select id="reportsStatus">
@@ -126,8 +134,10 @@
                 <th>Source</th>
                 <th>Target</th>
                 <th>Reporter</th>
+                <th>Category</th>
                 <th>Status</th>
                 <th>Reason</th>
+                <th>Action</th>
                 <th>Date time</th>
               </tr>
             </thead>
@@ -137,10 +147,299 @@
       </div>
     </section>
 
+    <section class="tab-panel" id="panel-restricted">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Restricted contents</h2>
+          <div class="filters">
+            <input type="text" id="restrictedQuery" placeholder="Search target, reason, report key..." />
+            <select id="restrictedStatus">
+              <option value="">All statuses</option>
+              <option value="restricted">Restricted</option>
+              <option value="restored">Restored</option>
+              <option value="purged">Purged</option>
+            </select>
+            <select id="restrictedSource">
+              <option value="">All sources</option>
+              <option value="main_post">Main post</option>
+              <option value="library_document">Library document</option>
+              <option value="community_post">Community post</option>
+              <option value="community_comment">Community comment</option>
+              <option value="chat_message">Chat message</option>
+            </select>
+            <button class="primary-button" id="refreshRestricted">Refresh</button>
+            <button class="secondary-button" id="purgeExpiredRestricted">Purge expired</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Source</th>
+                <th>Target</th>
+                <th>Status</th>
+                <th>Hidden at</th>
+                <th>Restore deadline</th>
+                <th>Reason</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="restrictedTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-appeals">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Appeals manager</h2>
+          <div class="filters">
+            <input type="text" id="appealsQuery" placeholder="Search appellant, message, notes..." />
+            <select id="appealsStatus">
+              <option value="">All statuses</option>
+              <option value="open">Open</option>
+              <option value="under_review">Under review</option>
+              <option value="accepted">Accepted</option>
+              <option value="denied">Denied</option>
+              <option value="withdrawn">Withdrawn</option>
+            </select>
+            <select id="appealsType">
+              <option value="">All types</option>
+              <option value="warning">Warning</option>
+              <option value="suspension">Suspension</option>
+              <option value="ban">Ban</option>
+              <option value="verification_rejection">Verification rejection</option>
+              <option value="other">Other</option>
+            </select>
+            <button class="primary-button" id="refreshAppeals">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Appellant</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Message</th>
+                <th>Resolution</th>
+                <th>Created</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="appealsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-broadcast">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Custom admin notifications</h2>
+          <p class="subcopy">Send in-app notices to selected users, a course, or all users.</p>
+        </div>
+        <div class="site-editor-body">
+          <label>
+            <span>Recipient mode</span>
+            <select id="customNotifyMode">
+              <option value="uids">Specific users (UID list)</option>
+              <option value="course">Single course</option>
+              <option value="all">All users</option>
+            </select>
+          </label>
+          <label>
+            <span>User UIDs (comma or newline separated)</span>
+            <textarea id="customNotifyUids" rows="4" placeholder="uid-1, uid-2"></textarea>
+          </label>
+          <label>
+            <span>Course (when mode = course)</span>
+            <input type="text" id="customNotifyCourse" placeholder="Computer Science" />
+          </label>
+          <label>
+            <span>Title</span>
+            <input type="text" id="customNotifyTitle" maxlength="180" placeholder="Important platform update" />
+          </label>
+          <label>
+            <span>Message</span>
+            <textarea id="customNotifyMessageBody" rows="5" maxlength="3000" placeholder="Write your notice..."></textarea>
+          </label>
+          <div class="row-actions">
+            <label class="checkline">
+              <input type="checkbox" id="customNotifyIncludeSelf" />
+              <span>Include my account</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="customNotifyIncludeBanned" />
+              <span>Include banned users</span>
+            </label>
+          </div>
+          <div class="site-editor-actions">
+            <button type="button" class="primary-button" id="sendCustomNotification">Send notification</button>
+          </div>
+          <p class="inline-message" id="customNotificationMessage"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-ai">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>AI usage and audit</h2>
+          <div class="filters">
+            <select id="aiUsageDays">
+              <option value="7">Last 7 days</option>
+              <option value="14" selected>Last 14 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+            <button class="primary-button" id="refreshAiUsage">Refresh</button>
+          </div>
+        </div>
+
+        <div class="site-editor-card ai-features-card">
+          <div class="site-editor-head">
+            <h3>AI feature toggles</h3>
+            <div class="row-actions">
+              <button class="secondary-button" id="reloadAiFeatures">Reload</button>
+              <button class="primary-button" id="saveAiFeatures">Save toggles</button>
+            </div>
+          </div>
+          <div class="site-editor-body">
+            <label class="checkline">
+              <input type="checkbox" id="aiFeatureToggleScan" />
+              <span>Enable AI scan and Repository AI</span>
+            </label>
+            <p class="meta-note" id="aiFeatureToggleScanMeta"></p>
+
+            <label class="checkline">
+              <input type="checkbox" id="aiFeatureToggleRoomSummary" />
+              <span>Enable Room AI summaries</span>
+            </label>
+            <p class="meta-note" id="aiFeatureToggleRoomSummaryMeta"></p>
+
+            <label class="checkline">
+              <input type="checkbox" id="aiFeatureToggleMcp" />
+              <span>Enable MCP actions through AI</span>
+            </label>
+            <p class="meta-note" id="aiFeatureToggleMcpMeta"></p>
+          </div>
+          <p class="inline-message" id="aiFeaturesMessage"></p>
+        </div>
+
+        <div class="ai-summary-grid" id="aiSummaryGrid">
+          <article class="ai-summary-card">
+            <p class="label">Total calls</p>
+            <strong id="aiTotalCalls">0</strong>
+          </article>
+          <article class="ai-summary-card">
+            <p class="label">OpenAI calls</p>
+            <strong id="aiOpenAiCalls">0</strong>
+          </article>
+          <article class="ai-summary-card">
+            <p class="label">MCP calls</p>
+            <strong id="aiMcpCalls">0</strong>
+          </article>
+          <article class="ai-summary-card">
+            <p class="label">Blocked/Error events</p>
+            <strong id="aiRiskEvents">0</strong>
+          </article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>User UID</th>
+                <th>Provider</th>
+                <th>Metric</th>
+                <th>Calls</th>
+                <th>Input chars</th>
+                <th>Output chars</th>
+              </tr>
+            </thead>
+            <tbody id="aiUsageTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Actor</th>
+                <th>Provider</th>
+                <th>Event</th>
+                <th>Scope</th>
+                <th>Status</th>
+                <th>Latency (ms)</th>
+              </tr>
+            </thead>
+            <tbody id="aiEventsTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="site-editor-card ai-features-card">
+          <div class="site-editor-head">
+            <h3>AI content reports</h3>
+            <div class="filters">
+              <input type="text" id="aiReportsQuery" placeholder="Search target, actor, summary..." />
+              <select id="aiReportsRisk">
+                <option value="">All risks</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <select id="aiReportsTargetType">
+                <option value="">All targets</option>
+                <option value="post">Main feed post</option>
+                <option value="subject_post">Unit post</option>
+                <option value="document">Open Library document</option>
+              </select>
+              <select id="aiReportsStatus">
+                <option value="">All statuses</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="skipped">Skipped</option>
+              </select>
+              <label class="checkline">
+                <input type="checkbox" id="aiReportsFlaggedOnly" checked />
+                <span>Flagged only</span>
+              </label>
+              <button class="primary-button" id="refreshAiReports">Refresh</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Target</th>
+                  <th>Risk</th>
+                  <th>Action</th>
+                  <th>Flags</th>
+                  <th>Summary</th>
+                  <th>Requested by</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="aiReportsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="tab-panel" id="panel-accounts">
       <div class="panel-card">
         <div class="panel-head">
           <h2>Accounts</h2>
+          <p class="subcopy">Student ID verification is managed in this table through the ID verification column.</p>
           <div class="filters">
             <input type="text" id="accountsQuery" placeholder="Search uid, username, email..." />
             <input type="text" id="accountsCourse" placeholder="Course" />
@@ -148,12 +447,17 @@
               <option value="">All user types</option>
               <option value="owner">Owner</option>
               <option value="admin">Admin</option>
-              <option value="member">Member</option>
+              <option value="depadmin">DepAdmin</option>
+              <option value="professor">Professor</option>
+              <option value="member">Student</option>
             </select>
             <select id="accountsStatusFilter">
               <option value="">All statuses</option>
               <option value="verified">Verified</option>
-              <option value="non-verified">Non-verified</option>
+              <option value="non-verified">Email not verified</option>
+              <option value="verification-pending">ID verification pending</option>
+              <option value="verification-rejected">ID verification rejected</option>
+              <option value="verification-approved">ID verification approved</option>
               <option value="banned">Banned</option>
             </select>
             <button class="primary-button" id="refreshAccounts">Refresh</button>
@@ -179,7 +483,11 @@
                 <th>Username</th>
                 <th>Display name</th>
                 <th>Email</th>
+                <th>Email status</th>
                 <th>User type</th>
+                <th>Course</th>
+                <th>Student #</th>
+                <th>ID verification</th>
                 <th>Recovery email</th>
                 <th>Status</th>
                 <th>Date registered</th>
@@ -187,6 +495,134 @@
               </tr>
             </thead>
             <tbody id="accountsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-professor-codes">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Professor one-time codes</h2>
+          <div class="filters">
+            <input type="text" id="professorCodesQuery" placeholder="Search id, source, creator, consumer..." />
+            <select id="professorCodesStatusFilter">
+              <option value="">All statuses</option>
+              <option value="available">Available</option>
+              <option value="consumed">Consumed</option>
+              <option value="revoked">Revoked</option>
+              <option value="expired">Expired</option>
+            </select>
+            <button class="primary-button" id="refreshProfessorCodes">Refresh</button>
+          </div>
+        </div>
+
+        <div class="site-editor-body">
+          <div class="row-actions">
+            <label>
+              <span>How many codes</span>
+              <input type="number" id="professorCodeBatchCount" min="1" max="50" value="1" />
+            </label>
+            <label>
+              <span>Code length</span>
+              <input type="number" id="professorCodeLength" min="6" max="24" value="10" />
+            </label>
+            <label>
+              <span>Expires in days (optional)</span>
+              <input type="number" id="professorCodeExpiresDays" min="1" max="3650" placeholder="No expiry" />
+            </label>
+          </div>
+          <div class="site-editor-actions">
+            <button type="button" class="primary-button" id="generateProfessorCodes">Generate code(s)</button>
+          </div>
+          <label>
+            <span>Generated codes (shown once, copy immediately)</span>
+            <textarea id="generatedProfessorCodesOutput" rows="4" readonly placeholder="Generated codes will appear here"></textarea>
+          </label>
+          <p class="inline-message" id="professorCodesMessage"></p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th>Created by</th>
+                <th>Created at</th>
+                <th>Expires at</th>
+                <th>Consumed by</th>
+                <th>Consumed at</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="professorCodesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-dep-admin">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Department Admin assignment</h2>
+          <p class="subcopy">Assign one DepAdmin per course. DepAdmins can create Units in their assigned course.</p>
+          <div class="filters">
+            <input type="text" id="depAdminAssignmentsQuery" placeholder="Search course, uid, name, email..." />
+            <select id="depAdminCourseFilter">
+              <option value="">All courses</option>
+            </select>
+            <button class="primary-button" id="refreshDepAdminAssignments">Refresh</button>
+          </div>
+        </div>
+
+        <div class="site-editor-body">
+          <div class="row-actions">
+            <label>
+              <span>Course</span>
+              <select id="depAdminAssignCourse">
+                <option value="">Select course</option>
+              </select>
+            </label>
+            <label>
+              <span>Account lookup</span>
+              <input type="text" id="depAdminAccountQuery" placeholder="UID, username, or email" />
+            </label>
+            <button type="button" class="secondary-button" id="searchDepAdminCandidates">Search accounts</button>
+          </div>
+          <p class="inline-message" id="depAdminMessage"></p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Candidate</th>
+                <th>UID</th>
+                <th>Course</th>
+                <th>Current role</th>
+                <th>Assigned courses</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="depAdminCandidatesTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Course</th>
+                <th>DepAdmin</th>
+                <th>Account role</th>
+                <th>Assigned by</th>
+                <th>Updated at</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="depAdminAssignmentsTableBody"></tbody>
           </table>
         </div>
       </div>
@@ -229,7 +665,7 @@
       <div class="panel-card">
         <div class="panel-head">
           <h2>Public pages content</h2>
-          <p class="subcopy">Edit what users see in FAQ and About pages.</p>
+          <p class="subcopy">Edit what users see in About, FAQ, and Mobile App modal content.</p>
         </div>
 
         <div class="site-pages-grid">
@@ -294,6 +730,47 @@
               <p class="inline-message" id="faqPageMessage"></p>
             </div>
           </article>
+
+          <article class="site-editor-card">
+            <div class="site-editor-head">
+              <h3>Mobile app modal</h3>
+              <button type="button" class="secondary-button" id="reloadMobileAppPage">Reload</button>
+            </div>
+            <div class="site-editor-body">
+              <label>
+                <span>Title</span>
+                <input type="text" id="mobileAppTitle" maxlength="180" />
+              </label>
+              <label>
+                <span>Subtitle</span>
+                <textarea id="mobileAppSubtitle" rows="2" maxlength="400"></textarea>
+              </label>
+              <label>
+                <span>Description</span>
+                <textarea id="mobileAppDescription" rows="5" maxlength="7000"></textarea>
+              </label>
+              <label>
+                <span>QR image URL</span>
+                <input type="url" id="mobileAppQrImageUrl" maxlength="2000" placeholder="https://..." />
+              </label>
+              <label>
+                <span>QR image alt text</span>
+                <input type="text" id="mobileAppQrAltText" maxlength="180" placeholder="Open Library Lite QR code" />
+              </label>
+              <label>
+                <span>Download URL (optional)</span>
+                <input type="url" id="mobileAppDownloadUrl" maxlength="2000" placeholder="https://..." />
+              </label>
+              <label>
+                <span>Download button label</span>
+                <input type="text" id="mobileAppDownloadLabel" maxlength="80" placeholder="Download APK" />
+              </label>
+              <div class="site-editor-actions">
+                <button type="button" class="primary-button" id="saveMobileAppPage">Save Mobile App</button>
+              </div>
+              <p class="inline-message" id="mobileAppPageMessage"></p>
+            </div>
+          </article>
         </div>
       </div>
     </section>
@@ -313,7 +790,7 @@
             </div>
             <div class="site-editor-body">
               <label>
-                <span>Community</span>
+                <span>Units</span>
                 <select id="spacesCommunitySelect">
                   <option value="">Select community</option>
                 </select>

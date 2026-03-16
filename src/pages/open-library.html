@@ -14,13 +14,14 @@
 <body>
   <header class="top-nav">
     <div class="nav-left">
-      <img src="/assets/newlogo.png" alt="Thesis logo" class="nav-logo" />
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
       <nav class="nav-links">
         <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
         <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
         <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
         <a href="/open-library" class="is-active" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
-        <a href="/community" aria-label="Community"><img src="/assets/community.svg" alt="" /><span class="nav-label">Community</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
         <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
       </nav>
     </div>
@@ -59,7 +60,7 @@
 
     <section class="library-controls">
       <form id="searchForm" class="search-bar">
-        <input type="text" id="searchInput" placeholder="Search for documents, articles, papers..." />
+        <input type="text" id="searchInput" placeholder="Search by document name or subject/lesson..." />
         <button type="submit">Search</button>
       </form>
       <div class="filters">
@@ -74,6 +75,11 @@
           <option value="az">A - Z</option>
           <option value="za">Z - A</option>
         </select>
+        <button type="button" class="ghost-button uploader-filter-button" id="uploaderFilterButton">Filter by uploader</button>
+      </div>
+      <div class="active-uploader-filter is-hidden" id="activeUploaderFilter">
+        <span id="activeUploaderFilterText"></span>
+        <button type="button" class="link-like-button" id="clearUploaderFilterButton">Clear</button>
       </div>
     </section>
 
@@ -215,19 +221,30 @@
         </label>
         <label>
           <span>Course</span>
-          <select name="course" id="uploadCourse" required>
-            <option value="">Select course</option>
-          </select>
+          <input
+            type="text"
+            name="course"
+            id="uploadCourse"
+            list="uploadCourseList"
+            placeholder="Type to search courses..."
+            autocomplete="off"
+            required
+          />
+          <datalist id="uploadCourseList"></datalist>
         </label>
         <label>
           <span>Subject/Lesson</span>
           <input type="text" name="subject" required />
         </label>
+        <label>
+          <span>Visibility</span>
+          <select name="visibility" required>
+            <option value="public">Public (all users)</option>
+            <option value="course_exclusive">Course exclusive (same course)</option>
+            <option value="private">Private (only me)</option>
+          </select>
+        </label>
         <div class="upload-toggles">
-          <label class="toggle">
-            <input type="checkbox" name="visibility" value="private" />
-            <span>Private (course members only)</span>
-          </label>
           <label class="toggle">
             <input type="checkbox" name="aiallowed" />
             <span>Allow AI conversation</span>
@@ -239,7 +256,22 @@
     </div>
   </div>
 
+  <div class="modal is-hidden" id="uploaderFilterModal">
+    <div class="modal-card uploader-filter-modal-card">
+      <button class="close-button" id="uploaderFilterClose" aria-label="Close uploader filter">×</button>
+      <h2>Filter by uploader</h2>
+      <p class="detail-description">Search users and view all their uploaded documents.</p>
+      <form class="uploader-filter-search" id="uploaderFilterSearchForm">
+        <input type="text" id="uploaderFilterSearchInput" placeholder="Search uploader name..." />
+        <button type="submit" class="primary-button">Search</button>
+      </form>
+      <div class="uploader-filter-results" id="uploaderFilterResults"></div>
+      <p class="form-message" id="uploaderFilterMessage"></p>
+    </div>
+  </div>
 
+
+  <script src="/src/js/report-dialog.js"></script>
   <script src="/src/js/library.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
 </body>

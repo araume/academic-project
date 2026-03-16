@@ -1,6 +1,91 @@
+const APP_THEME_STORAGE_KEY = 'thesis.theme';
+const APP_THEME_DARK = 'dark';
+const APP_THEME_LIGHT = 'light';
+const APP_THEME_CLASS = 'theme-dark';
+
+applyStoredThemePreference();
+initThemeToggle();
+
 (async function initNavEnhancements() {
-  await Promise.all([injectAdminNavLink(), initNotificationsMenu(), initGlobalSearchModal()]);
+  await Promise.all([
+    injectAdminNavLink(),
+    initMobileAppMenuEntry(),
+    initNotificationsMenu(),
+    initGlobalSearchModal(),
+  ]);
 })();
+
+function readStoredThemePreference() {
+  try {
+    const value = String(localStorage.getItem(APP_THEME_STORAGE_KEY) || '').trim().toLowerCase();
+    return value === APP_THEME_DARK ? APP_THEME_DARK : APP_THEME_LIGHT;
+  } catch (error) {
+    return APP_THEME_LIGHT;
+  }
+}
+
+function writeStoredThemePreference(theme) {
+  try {
+    localStorage.setItem(APP_THEME_STORAGE_KEY, theme === APP_THEME_DARK ? APP_THEME_DARK : APP_THEME_LIGHT);
+  } catch (error) {
+    // ignore persistence errors
+  }
+}
+
+function applyTheme(theme) {
+  const isDark = theme === APP_THEME_DARK;
+  if (document.body) {
+    document.body.classList.toggle(APP_THEME_CLASS, isDark);
+  }
+  if (document.documentElement) {
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+  }
+  syncThemeToggleButton(isDark);
+}
+
+function applyStoredThemePreference() {
+  applyTheme(readStoredThemePreference());
+}
+
+function syncThemeToggleButton(isDarkMode) {
+  const toggleButton = document.getElementById('themeToggleButton');
+  if (!toggleButton) return;
+  toggleButton.setAttribute('aria-pressed', isDarkMode ? 'true' : 'false');
+  toggleButton.setAttribute('aria-label', isDarkMode ? 'Switch to light mode' : 'Switch to dark mode');
+  toggleButton.title = isDarkMode ? 'Switch to light mode' : 'Switch to dark mode';
+  toggleButton.textContent = isDarkMode ? 'L' : 'D';
+}
+
+function initThemeToggle() {
+  const navActions = document.querySelector('.nav-actions');
+  const searchButton = navActions && navActions.querySelector('.icon-button[aria-label="Search"]');
+  if (!navActions || !searchButton) return;
+
+  let toggleButton = document.getElementById('themeToggleButton');
+  if (!toggleButton) {
+    toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.id = 'themeToggleButton';
+    toggleButton.className = 'icon-button theme-toggle-button';
+    toggleButton.setAttribute('aria-live', 'polite');
+    searchButton.insertAdjacentElement('afterend', toggleButton);
+  }
+
+  if (toggleButton.dataset.bound === '1') {
+    syncThemeToggleButton(document.body && document.body.classList.contains(APP_THEME_CLASS));
+    return;
+  }
+
+  toggleButton.dataset.bound = '1';
+  syncThemeToggleButton(document.body && document.body.classList.contains(APP_THEME_CLASS));
+
+  toggleButton.addEventListener('click', () => {
+    const isDark = Boolean(document.body && document.body.classList.contains(APP_THEME_CLASS));
+    const nextTheme = isDark ? APP_THEME_LIGHT : APP_THEME_DARK;
+    writeStoredThemePreference(nextTheme);
+    applyTheme(nextTheme);
+  });
+}
 
 async function injectAdminNavLink() {
   const profileMenu = document.getElementById('profileMenu');
@@ -31,6 +116,170 @@ async function injectAdminNavLink() {
   } catch (error) {
     // ignore; nav still works for non-admin users
   }
+}
+
+async function initMobileAppMenuEntry() {
+  const profileMenu = document.getElementById('profileMenu');
+  if (!profileMenu) return;
+
+  let mobileAppButton = profileMenu.querySelector('[data-action="open-mobile-app-modal"]');
+  if (!mobileAppButton) {
+    mobileAppButton = document.createElement('button');
+    mobileAppButton.type = 'button';
+    mobileAppButton.dataset.action = 'open-mobile-app-modal';
+    mobileAppButton.textContent = 'Mobile app';
+
+    const preferencesLink = profileMenu.querySelector('a[href="/preferences"]');
+    if (preferencesLink) {
+      profileMenu.insertBefore(mobileAppButton, preferencesLink);
+    } else {
+      profileMenu.appendChild(mobileAppButton);
+    }
+  }
+
+  if (mobileAppButton.dataset.bound === '1') return;
+  mobileAppButton.dataset.bound = '1';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mobile-app-overlay is-hidden';
+  overlay.innerHTML = `
+    <div class="mobile-app-modal" role="dialog" aria-modal="true" aria-labelledby="mobileAppModalTitle">
+      <div class="mobile-app-modal-head">
+        <h3 id="mobileAppModalTitle">Open Library Lite</h3>
+        <button type="button" class="mobile-app-modal-close" aria-label="Close mobile app modal">×</button>
+      </div>
+      <p class="mobile-app-modal-subtitle" id="mobileAppModalSubtitle">Scan the QR code to download the Android lite app.</p>
+      <p class="mobile-app-modal-description" id="mobileAppModalDescription"></p>
+      <div class="mobile-app-modal-qr-wrap">
+        <img class="mobile-app-modal-qr is-hidden" id="mobileAppModalQr" alt="Open Library Lite QR code" />
+        <p class="mobile-app-modal-qr-empty is-hidden" id="mobileAppModalQrEmpty">QR code is not configured yet.</p>
+      </div>
+      <div class="mobile-app-modal-actions" id="mobileAppModalActions"></div>
+      <p class="mobile-app-modal-message" id="mobileAppModalMessage"></p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const closeButton = overlay.querySelector('.mobile-app-modal-close');
+  const modalTitle = overlay.querySelector('#mobileAppModalTitle');
+  const modalSubtitle = overlay.querySelector('#mobileAppModalSubtitle');
+  const modalDescription = overlay.querySelector('#mobileAppModalDescription');
+  const qrImage = overlay.querySelector('#mobileAppModalQr');
+  const qrEmpty = overlay.querySelector('#mobileAppModalQrEmpty');
+  const actions = overlay.querySelector('#mobileAppModalActions');
+  const message = overlay.querySelector('#mobileAppModalMessage');
+
+  const closeModal = () => {
+    overlay.classList.add('is-hidden');
+  };
+
+  function showMessage(text) {
+    if (!message) return;
+    message.textContent = text || '';
+  }
+
+  function canRenderImageUrl(value) {
+    if (!value) return false;
+    return (
+      value.startsWith('http://') ||
+      value.startsWith('https://') ||
+      value.startsWith('/') ||
+      value.startsWith('data:image/')
+    );
+  }
+
+  function renderMobileAppPage(page) {
+    const payload = page || {};
+    const body = payload.body || {};
+    const title = String(payload.title || '').trim() || 'Open Library Lite';
+    const subtitle = String(payload.subtitle || '').trim() || 'Scan the QR code to download the Android lite app.';
+    const description = String(body.description || '').trim();
+    const qrImageUrl = String(body.qrImageUrl || '').trim();
+    const qrAltText = String(body.qrAltText || '').trim() || 'Open Library Lite QR code';
+    const downloadUrl = String(body.downloadUrl || '').trim();
+    const downloadLabel = String(body.downloadLabel || '').trim() || 'Download APK';
+
+    if (modalTitle) modalTitle.textContent = title;
+    if (modalSubtitle) modalSubtitle.textContent = subtitle;
+    if (modalDescription) {
+      modalDescription.textContent = description || 'Open Library Lite helps you stay connected on mobile.';
+    }
+
+    if (actions) {
+      actions.innerHTML = '';
+      if (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://')) {
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'mobile-app-download-link';
+        link.textContent = downloadLabel;
+        actions.appendChild(link);
+      }
+    }
+
+    if (qrImage && qrEmpty) {
+      if (canRenderImageUrl(qrImageUrl)) {
+        qrImage.src = qrImageUrl;
+        qrImage.alt = qrAltText;
+        qrImage.classList.remove('is-hidden');
+        qrEmpty.classList.add('is-hidden');
+      } else {
+        qrImage.classList.add('is-hidden');
+        qrImage.removeAttribute('src');
+        qrEmpty.classList.remove('is-hidden');
+      }
+    }
+  }
+
+  if (qrImage && qrEmpty) {
+    qrImage.addEventListener('error', () => {
+      qrImage.classList.add('is-hidden');
+      qrImage.removeAttribute('src');
+      qrEmpty.classList.remove('is-hidden');
+      qrEmpty.textContent = 'Unable to load QR code image. Check the configured URL.';
+    });
+  }
+
+  async function openModal() {
+    overlay.classList.remove('is-hidden');
+    showMessage('Loading mobile app details...');
+    try {
+      const response = await fetch('/api/site-pages/mobile-app');
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || !data.ok || !data.page) {
+        throw new Error(data && data.message ? data.message : 'Unable to load mobile app details.');
+      }
+      renderMobileAppPage(data.page);
+      showMessage('');
+    } catch (error) {
+      renderMobileAppPage(null);
+      showMessage(error.message || 'Unable to load mobile app details.');
+    }
+  }
+
+  mobileAppButton.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    profileMenu.classList.add('is-hidden');
+    await openModal();
+  });
+
+  if (closeButton) {
+    closeButton.addEventListener('click', closeModal);
+  }
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !overlay.classList.contains('is-hidden')) {
+      closeModal();
+    }
+  });
 }
 
 function escapeHtml(value) {
@@ -67,12 +316,17 @@ function extractPostIdFromTargetUrl(value) {
   if (!targetUrl) return '';
   try {
     const parsed = new URL(targetUrl, window.location.origin);
-    if (parsed.pathname !== '/home') return '';
-    const queryId = (parsed.searchParams.get('post') || '').trim();
-    if (queryId) return queryId;
-    const hash = (parsed.hash || '').trim();
-    if (hash.startsWith('#post-')) {
-      return hash.slice(6).trim();
+    if (parsed.pathname.startsWith('/posts/')) {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      return (parts[1] || '').trim();
+    }
+    if (parsed.pathname === '/home') {
+      const queryId = (parsed.searchParams.get('post') || '').trim();
+      if (queryId) return queryId;
+      const hash = (parsed.hash || '').trim();
+      if (hash.startsWith('#post-')) {
+        return hash.slice(6).trim();
+      }
     }
     return '';
   } catch (error) {
@@ -82,12 +336,8 @@ function extractPostIdFromTargetUrl(value) {
 
 function initialsFromName(name) {
   const safe = String(name || '').trim();
-  if (!safe) return 'ME';
-  return safe
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 async function initGlobalSearchModal() {
@@ -182,15 +432,7 @@ async function initGlobalSearchModal() {
 
   function goToPost(postId) {
     if (!postId) return;
-    if (window.location.pathname === '/home') {
-      window.dispatchEvent(
-        new CustomEvent('open-post-modal', {
-          detail: { postId },
-        })
-      );
-    } else {
-      window.location.href = `/home?post=${encodeURIComponent(postId)}&openPostModal=1`;
-    }
+    window.location.href = `/posts/${encodeURIComponent(postId)}`;
   }
 
   function renderPosts(items) {
@@ -238,7 +480,9 @@ async function initGlobalSearchModal() {
       const title = document.createElement('strong');
       title.textContent = item.displayName || 'Member';
       const subtitle = document.createElement('span');
-      subtitle.textContent = `${item.course || 'No course'}${item.relation && item.relation.isFollowing ? ' • Following' : ''}`;
+      const handle = item.username ? `@${item.username}` : '';
+      const courseLabel = item.course || 'No course';
+      subtitle.textContent = `${handle ? `${handle} • ` : ''}${courseLabel}${item.relation && item.relation.isFollowing ? ' • Following' : ''}`;
       const excerpt = document.createElement('small');
       excerpt.textContent = item.bio || '';
       body.appendChild(title);
@@ -520,7 +764,7 @@ async function initNotificationsMenu() {
           ${
             actorPhoto
               ? `<img src="${escapeHtml(actorPhoto)}" alt="${escapeHtml(actorName)}" />`
-              : `<span>${escapeHtml(actorName.slice(0, 2).toUpperCase())}</span>`
+              : `<span>${escapeHtml(actorName.slice(0, 1).toUpperCase())}</span>`
           }
         </span>
         <span class="notification-body">
@@ -540,16 +784,7 @@ async function initNotificationsMenu() {
         }
 
         if (postId) {
-          if (window.location.pathname === '/home') {
-            window.dispatchEvent(
-              new CustomEvent('open-post-modal', {
-                detail: { postId },
-              })
-            );
-          } else {
-            const destination = `/home?post=${encodeURIComponent(postId)}&openPostModal=1`;
-            window.location.href = destination;
-          }
+          window.location.href = `/posts/${encodeURIComponent(postId)}`;
           closePanel();
           return;
         }

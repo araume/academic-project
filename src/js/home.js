@@ -10,6 +10,9 @@ const createPostModal = document.getElementById('createPostModal');
 const createPostClose = document.getElementById('createPostClose');
 const createPostForm = document.getElementById('createPostForm');
 const createPostMessage = document.getElementById('createPostMessage');
+const createPostSubmitButton = createPostForm
+  ? createPostForm.querySelector('button[type="submit"]')
+  : null;
 const attachmentFile = document.getElementById('attachmentFile');
 const openLibraryPicker = document.getElementById('openLibraryPicker');
 const libraryPickerModal = document.getElementById('libraryPickerModal');
@@ -30,6 +33,9 @@ const commentsClose = document.getElementById('commentsClose');
 const postCommentList = document.getElementById('postCommentList');
 const postCommentForm = document.getElementById('postCommentForm');
 const postCommentInput = document.getElementById('postCommentInput');
+const postCommentSubmitButton = postCommentForm
+  ? postCommentForm.querySelector('button[type="submit"]')
+  : null;
 const postAiModal = document.getElementById('postAiModal');
 const postAiClose = document.getElementById('postAiClose');
 const postAiTitle = document.getElementById('postAiTitle');
@@ -54,6 +60,7 @@ const libraryDocOpenMessage = document.getElementById('libraryDocOpenMessage');
 const trendingDiscussionsList = document.getElementById('trendingDiscussionsList');
 const courseMaterialsList = document.getElementById('courseMaterialsList');
 const suggestedRoomsList = document.getElementById('suggestedRoomsList');
+const feedScopeToggle = document.getElementById('feedScopeToggle');
 
 let currentPostId = null;
 let currentLibraryDoc = null;
@@ -63,18 +70,29 @@ let libraryPickerSearchTimer = null;
 let postCache = new Map();
 let activePostAiPostId = null;
 let isSendingPostAi = false;
+let isCreatingPost = false;
+let isSubmittingPostComment = false;
 const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
+let postImageLightbox = null;
+let postImageLightboxImg = null;
 
 const state = {
   page: 1,
-  pageSize: 8,
+  pageSize: 500,
+  feedScope: 'global',
+  feedScopeEnabled: true,
 };
-const DEFAULT_AVATAR = '/assets/LOGO.png';
 
 function profileUrlForUid(uid) {
   const safeUid = typeof uid === 'string' ? uid.trim() : '';
   if (!safeUid) return '';
   return `/profile?uid=${encodeURIComponent(safeUid)}`;
+}
+
+function postUrlForId(postId) {
+  const safePostId = sanitizePostId(postId);
+  if (!safePostId) return '/home';
+  return `/posts/${encodeURIComponent(safePostId)}`;
 }
 
 function buildProfileNameNode(uid, displayName, className = 'post-author-link') {
@@ -170,7 +188,7 @@ function renderSpotlightPost(post) {
     </div>
   `;
   const postAvatar = header.querySelector('.post-avatar');
-  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`, uploaderName);
   const nameHeading = header.querySelector('.spotlight-header-meta h4');
   if (nameHeading) {
     nameHeading.textContent = '';
@@ -240,7 +258,7 @@ async function openPostSpotlight(postId, options = {}) {
 async function maybeOpenRequestedPost() {
   const postId = extractRequestedPostId();
   if (!postId) return;
-  await openPostSpotlight(postId, { clearUrl: true });
+  window.location.replace(postUrlForId(postId));
 }
 
 function setJoinButtonLoadingState(button, loading) {
@@ -293,34 +311,43 @@ async function directJoinSuggestedRoom(room, button) {
   }
 }
 
-function buildAvatarThumb(photoLink, altText) {
+function buildAvatarThumb(photoLink, displayName, altText) {
   const avatar = document.createElement('span');
   avatar.className = 'sidecard-avatar';
-  const img = document.createElement('img');
-  img.src = photoLink || DEFAULT_AVATAR;
-  img.alt = altText || 'Profile photo';
-  avatar.appendChild(img);
+  if (photoLink) {
+    const img = document.createElement('img');
+    img.src = photoLink;
+    img.alt = altText || 'Profile photo';
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = initialsFromName(displayName || 'Member');
+  }
   return avatar;
 }
 
-function setAvatarImage(container, photoLink, altText) {
+function setAvatarImage(container, photoLink, altText, displayName = '') {
   if (!container) return;
-  const image = container.querySelector('img') || document.createElement('img');
-  image.src = photoLink || DEFAULT_AVATAR;
-  image.alt = altText || 'Profile photo';
-  if (!image.parentElement) {
-    container.appendChild(image);
+  const existingImage = container.querySelector('img');
+  if (photoLink) {
+    const image = existingImage || document.createElement('img');
+    image.src = photoLink;
+    image.alt = altText || 'Profile photo';
+    if (!image.parentElement) {
+      container.textContent = '';
+      container.appendChild(image);
+    }
+    return;
   }
+  if (existingImage) {
+    existingImage.remove();
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function initialsFromName(name) {
-  const words = (name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!words.length) return 'ME';
-  return words.map((word) => word[0].toUpperCase()).join('');
+  const safe = String(name || '').trim();
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -334,6 +361,36 @@ function setNavAvatar(photoLink, displayName) {
     return;
   }
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setPostingState(button, isPosting) {
+  if (!button) return;
+  if (isPosting) {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText = button.textContent || 'Post';
+    }
+    button.disabled = true;
+    button.textContent = 'Posting...';
+    return;
+  }
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || button.textContent || 'Post';
+  delete button.dataset.originalText;
+}
+
+function updateFeedScopeUI() {
+  if (!feedScopeToggle) return;
+  feedScopeToggle.hidden = !state.feedScopeEnabled;
+  if (!state.feedScopeEnabled) {
+    return;
+  }
+  const buttons = feedScopeToggle.querySelectorAll('[data-feed-scope]');
+  buttons.forEach((button) => {
+    const scope = button.getAttribute('data-feed-scope');
+    const isActive = scope === state.feedScope;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -373,6 +430,51 @@ function closeModal(modal) {
   if (modal) {
     modal.classList.add('is-hidden');
   }
+}
+
+function ensurePostImageLightbox() {
+  if (postImageLightbox && postImageLightboxImg) return;
+
+  postImageLightbox = document.createElement('div');
+  postImageLightbox.className = 'image-lightbox is-hidden';
+  postImageLightbox.innerHTML = `
+    <div class="lightbox-card">
+      <button type="button" class="lightbox-close" aria-label="Close image">×</button>
+      <img alt="Expanded post image" />
+    </div>
+  `;
+  document.body.appendChild(postImageLightbox);
+  postImageLightboxImg = postImageLightbox.querySelector('img');
+
+  const closeButton = postImageLightbox.querySelector('.lightbox-close');
+  if (closeButton) {
+    closeButton.addEventListener('click', closePostImageLightbox);
+  }
+  postImageLightbox.addEventListener('click', (event) => {
+    if (event.target === postImageLightbox) {
+      closePostImageLightbox();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closePostImageLightbox();
+    }
+  });
+}
+
+function openPostImageLightbox(src, altText) {
+  if (!src) return;
+  ensurePostImageLightbox();
+  if (!postImageLightbox || !postImageLightboxImg) return;
+  postImageLightboxImg.src = src;
+  postImageLightboxImg.alt = altText || 'Expanded post image';
+  postImageLightbox.classList.remove('is-hidden');
+}
+
+function closePostImageLightbox() {
+  if (!postImageLightbox || !postImageLightboxImg) return;
+  postImageLightbox.classList.add('is-hidden');
+  postImageLightboxImg.removeAttribute('src');
 }
 
 function appendPostAiBubble(role, text, { pending = false } = {}) {
@@ -595,14 +697,20 @@ function renderTrendingSidecard(items) {
 
     const top = document.createElement('div');
     top.className = 'sidecard-top';
-    top.appendChild(buildAvatarThumb(item.uploader && item.uploader.photoLink, `${item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member'} profile photo`));
+    const uploader = item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member';
+    top.appendChild(
+      buildAvatarThumb(
+        item.uploader && item.uploader.photoLink,
+        uploader,
+        `${uploader} profile photo`
+      )
+    );
 
     const meta = document.createElement('div');
     meta.className = 'sidecard-meta';
     const title = document.createElement('h4');
     title.textContent = item.title || 'Untitled discussion';
     const info = document.createElement('p');
-    const uploader = item.uploader && item.uploader.displayName ? item.uploader.displayName : 'Member';
     info.textContent = `${uploader} • ${timeAgo(item.uploadDate)}`;
     meta.appendChild(title);
     meta.appendChild(info);
@@ -622,7 +730,7 @@ function renderTrendingSidecard(items) {
     open.textContent = 'Open discussion';
     open.addEventListener('click', async (event) => {
       event.stopPropagation();
-      await openPostSpotlight(item.id);
+      window.location.href = postUrlForId(item.id);
     });
 
     row.appendChild(top);
@@ -632,7 +740,7 @@ function renderTrendingSidecard(items) {
     row.appendChild(stat);
     row.appendChild(open);
     row.addEventListener('click', async () => {
-      await openPostSpotlight(item.id);
+      window.location.href = postUrlForId(item.id);
     });
     trendingDiscussionsList.appendChild(row);
   });
@@ -756,7 +864,7 @@ function renderPost(post, index) {
     </div>
   `;
   const postAvatar = header.querySelector('.post-avatar');
-  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`);
+  setAvatarImage(postAvatar, post.uploader?.photoLink, `${uploaderName} profile photo`, uploaderName);
   const nameHeading = header.querySelector('.post-meta h4');
   if (nameHeading) {
     nameHeading.textContent = '';
@@ -834,7 +942,13 @@ function renderAttachment(post) {
   if (type === 'image') {
     const media = document.createElement('div');
     media.className = 'post-media';
-    media.innerHTML = `<img src="${link}" alt="Attachment" />`;
+    const image = document.createElement('img');
+    image.src = link;
+    image.alt = title || 'Image attachment';
+    image.addEventListener('click', () => {
+      openPostImageLightbox(link, title || 'Image attachment');
+    });
+    media.appendChild(image);
     return media;
   }
   if (type === 'video') {
@@ -870,7 +984,7 @@ async function handleMenuAction(action, post) {
       replacePostCard(post);
     }
   } else if (action === 'share') {
-    const shareUrl = `${window.location.origin}/home?post=${encodeURIComponent(post.id)}`;
+    const shareUrl = `${window.location.origin}${postUrlForId(post.id)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
       alert('Post link copied.');
@@ -878,7 +992,34 @@ async function handleMenuAction(action, post) {
       prompt('Copy post link:', shareUrl);
     }
   } else if (action === 'report') {
-    await fetch(`/api/posts/${post.id}/report`, { method: 'POST' });
+    const reportPayload =
+      typeof window.showReportDialog === 'function'
+        ? await window.showReportDialog({
+            title: 'Report post',
+            subtitle: 'Select the reason and add optional details.',
+          })
+        : (() => {
+            const reason = window.prompt('Report reason:', '');
+            if (reason === null) return null;
+            const text = reason.trim();
+            return {
+              category: 'other',
+              customReason: text || 'Other',
+              details: null,
+              reason: text || 'Other',
+            };
+          })();
+    if (!reportPayload) return;
+    const response = await fetch(`/api/posts/${post.id}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reportPayload),
+    });
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (!response.ok || !data.ok) {
+      alert(data.message || 'Unable to submit report.');
+      return;
+    }
     alert('Report submitted. Thank you.');
   } else if (action === 'edit') {
     currentEditPost = post;
@@ -923,19 +1064,31 @@ async function handleAction(action, post) {
 
 async function fetchPosts() {
   try {
+    const requestedFeedScope = state.feedScopeEnabled ? state.feedScope : 'global';
     const params = new URLSearchParams({
       page: state.page,
       pageSize: state.pageSize,
+      feedScope: requestedFeedScope,
     });
     const response = await fetch(`/api/posts?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Failed to load posts.');
     }
+    if (typeof data.feedScopeEnabled === 'boolean') {
+      state.feedScopeEnabled = data.feedScopeEnabled;
+    }
+    if (typeof data.feedScope === 'string') {
+      state.feedScope = data.feedScope === 'course' ? 'course' : 'global';
+    }
+    updateFeedScopeUI();
     postCache = new Map(data.posts.map((post) => [post.id, post]));
     postsFeed.innerHTML = '';
     if (!data.posts.length) {
-      postsFeed.innerHTML = '<p>No posts yet. Be the first to share.</p>';
+      const emptyMessage = state.feedScope === 'course'
+        ? 'No course posts yet. Switch to Global feed or create a new post.'
+        : 'No posts yet. Be the first to share.';
+      postsFeed.innerHTML = `<p>${emptyMessage}</p>`;
       return;
     }
     data.posts.forEach((post, index) => {
@@ -948,8 +1101,22 @@ async function fetchPosts() {
   }
 }
 
+if (feedScopeToggle) {
+  feedScopeToggle.addEventListener('click', async (event) => {
+    if (!state.feedScopeEnabled) return;
+    const target = event.target instanceof Element ? event.target.closest('[data-feed-scope]') : null;
+    if (!target) return;
+    const scope = target.getAttribute('data-feed-scope');
+    if (!scope || scope === state.feedScope) return;
+    state.feedScope = scope === 'course' ? 'course' : 'global';
+    state.page = 1;
+    updateFeedScopeUI();
+    await fetchPosts();
+  });
+}
+
 async function loadCurrentProfile() {
-  setAvatarImage(composerAvatar, null, 'Your profile photo');
+  setAvatarImage(composerAvatar, null, 'Your profile photo', 'Me');
   setNavAvatar(null, '');
   try {
     const response = await fetch('/api/profile');
@@ -957,7 +1124,12 @@ async function loadCurrentProfile() {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Failed to load profile.');
     }
-    setAvatarImage(composerAvatar, data.profile?.photo_link || null, 'Your profile photo');
+    setAvatarImage(
+      composerAvatar,
+      data.profile?.photo_link || null,
+      'Your profile photo',
+      data.profile?.display_name || 'Me'
+    );
     setNavAvatar(data.profile?.photo_link || null, data.profile?.display_name || '');
   } catch (error) {
     // keep fallback avatar
@@ -966,10 +1138,12 @@ async function loadCurrentProfile() {
 
 async function createPost(event) {
   event.preventDefault();
+  if (isCreatingPost) return;
   createPostMessage.textContent = '';
 
   const formData = new FormData(createPostForm);
-  formData.set('visibility', 'public');
+  const targetFeedScope = state.feedScopeEnabled ? state.feedScope : 'global';
+  formData.set('feedScope', targetFeedScope === 'course' ? 'course' : 'global');
   formData.delete('course');
 
   const file = attachmentFile && attachmentFile.files ? attachmentFile.files[0] : null;
@@ -998,6 +1172,8 @@ async function createPost(event) {
   }
   formData.delete('attachmentLink');
 
+  isCreatingPost = true;
+  setPostingState(createPostSubmitButton, true);
   try {
     const response = await fetch('/api/posts', {
       method: 'POST',
@@ -1015,6 +1191,9 @@ async function createPost(event) {
     fetchHomeSidecards();
   } catch (error) {
     createPostMessage.textContent = error.message;
+  } finally {
+    isCreatingPost = false;
+    setPostingState(createPostSubmitButton, false);
   }
 }
 
@@ -1026,7 +1205,6 @@ async function savePost(event) {
   const payload = {
     title: editPostForm.elements.title.value,
     content: editPostForm.elements.content.value,
-    visibility: 'public',
   };
 
   try {
@@ -1041,8 +1219,6 @@ async function savePost(event) {
     }
     currentEditPost.title = payload.title;
     currentEditPost.content = payload.content;
-    currentEditPost.course = null;
-    currentEditPost.visibility = 'public';
     replacePostCard(currentEditPost);
     closeModal(editPostModal);
   } catch (error) {
@@ -1089,23 +1265,32 @@ async function loadPostComments(postId) {
 
 async function submitPostComment(event) {
   event.preventDefault();
+  if (isSubmittingPostComment) return;
   if (!currentPostId || !postCommentInput.value.trim()) {
     return;
   }
+
+  isSubmittingPostComment = true;
+  setPostingState(postCommentSubmitButton, true);
   const content = postCommentInput.value.trim();
-  const response = await fetch(`/api/posts/${currentPostId}/comments`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  const data = await response.json();
-  if (response.ok && data.ok) {
-    postCommentInput.value = '';
-    await loadPostComments(currentPostId);
-    const post = postCache.get(currentPostId);
-    if (post) {
-      post.commentsCount = Number(post.commentsCount || 0) + 1;
+  try {
+    const response = await fetch(`/api/posts/${currentPostId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (response.ok && data.ok) {
+      postCommentInput.value = '';
+      await loadPostComments(currentPostId);
+      const post = postCache.get(currentPostId);
+      if (post) {
+        post.commentsCount = Number(post.commentsCount || 0) + 1;
+      }
     }
+  } finally {
+    isSubmittingPostComment = false;
+    setPostingState(postCommentSubmitButton, false);
   }
 }
 
@@ -1271,11 +1456,12 @@ if (postAiModal) {
 window.addEventListener('open-post-modal', async (event) => {
   const postId = event && event.detail ? sanitizePostId(event.detail.postId || '') : '';
   if (!postId) return;
-  await openPostSpotlight(postId);
+  window.location.href = postUrlForId(postId);
 });
 
 async function initHome() {
   updateSelectedLibraryDocUI();
+  updateFeedScopeUI();
 
   await Promise.all([
     loadCurrentProfile(),

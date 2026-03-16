@@ -5,6 +5,8 @@ const requireAuthApi = require('../middleware/requireAuthApi');
 const { uploadToStorage, deleteFromStorage, getSignedUrl } = require('../services/storage');
 const { bootstrapCommunityForUser } = require('../services/communityService');
 const { createNotification } = require('../services/notificationService');
+const { parseReportPayload } = require('../services/reporting');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 
 const router = express.Router();
 const upload = multer({
@@ -1080,14 +1082,17 @@ router.post('/api/community/:id/posts', upload.single('file'), async (req, res) 
       }
 
       const docParams = [libraryDocumentUuid];
-      const docVisibilityFilters = ['uuid::text = $1'];
+      const docVisibilityFilters = ['uuid::text = $1', 'COALESCE(is_restricted, false) = false'];
       if (viewer && viewer.course) {
         docParams.push(viewer.course);
         const courseParam = docParams.length;
         docParams.push(req.user.uid);
         const uidParam = docParams.length;
+        const sharedVisibilityClause = isUnifiedVisibilityEnabled()
+          ? "visibility IN ('private', 'course_exclusive')"
+          : "visibility = 'private'";
         docVisibilityFilters.push(
-          `(visibility = 'public' OR (visibility = 'private' AND (course = $${courseParam} OR uploader_uid = $${uidParam})))`
+          `(visibility = 'public' OR (${sharedVisibilityClause} AND (course = $${courseParam} OR uploader_uid = $${uidParam})))`
         );
       } else {
         docParams.push(req.user.uid);
@@ -1982,7 +1987,8 @@ router.post('/api/community/:id/reports', async (req, res) => {
   const targetUid = sanitizeText(req.body && req.body.targetUid, 120) || null;
   const targetPostId = parsePositiveInt(req.body && req.body.targetPostId);
   const targetCommentId = parsePositiveInt(req.body && req.body.targetCommentId);
-  const reason = sanitizeText(req.body && req.body.reason, 1000);
+  const reportPayload = parseReportPayload(req.body || {});
+  const reason = sanitizeText(reportPayload.reason, 1000);
 
   if (!communityId) {
     return res.status(400).json({ ok: false, message: 'Invalid community id.' });

@@ -30,6 +30,14 @@ const openTaskModal = document.getElementById('openTaskModal');
 const taskModal = document.getElementById('taskModal');
 const taskModalClose = document.getElementById('taskModalClose');
 
+const openVaultModalButton = document.getElementById('openVaultModal');
+const vaultModal = document.getElementById('vaultModal');
+const vaultModalClose = document.getElementById('vaultModalClose');
+const vaultForm = document.getElementById('vaultForm');
+const vaultSubmitButton = document.getElementById('vaultSubmitButton');
+const vaultMessage = document.getElementById('vaultMessage');
+const vaultList = document.getElementById('vaultList');
+
 const conversationList = document.getElementById('conversationList');
 const newConversation = document.getElementById('newConversation');
 const messageList = document.getElementById('messageList');
@@ -57,6 +65,8 @@ let activeProposalId = null;
 const openFolders = new Set();
 let selectedContext = null;
 let isSendingMessage = false;
+let conversationCache = new Map();
+let vaultLoaded = false;
 
 function setConversationHeader(title, subtitle) {
   if (conversationTitle) {
@@ -273,10 +283,58 @@ function renderMarkdown(text) {
 function updateContextChip() {
   if (!contextChip || !contextLabel) return;
   if (selectedContext) {
-    contextLabel.textContent = selectedContext.title;
+    contextLabel.textContent = selectedContext.title || 'Context document';
     contextChip.classList.remove('is-hidden');
   } else {
     contextChip.classList.add('is-hidden');
+  }
+}
+
+function normalizeContextDoc(contextDoc) {
+  if (!contextDoc || typeof contextDoc !== 'object' || !contextDoc.uuid) {
+    return null;
+  }
+  return {
+    uuid: String(contextDoc.uuid),
+    title: String(contextDoc.title || 'Context document'),
+    course: contextDoc.course || null,
+    subject: contextDoc.subject || null,
+  };
+}
+
+async function persistConversationContext(context) {
+  if (!activeConversationId) return true;
+  try {
+    const response = await fetch(`/api/personal/conversations/${activeConversationId}/context`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contextDoc: context ? { uuid: context.uuid } : null,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to update context.');
+    }
+    const normalized = normalizeContextDoc(data.contextDoc);
+    selectedContext = normalized;
+    const cached = conversationCache.get(activeConversationId);
+    if (cached) {
+      cached.contextDoc = normalized
+        ? {
+            uuid: normalized.uuid,
+            title: normalized.title,
+            course: normalized.course,
+            subject: normalized.subject,
+          }
+        : null;
+      conversationCache.set(activeConversationId, cached);
+    }
+    updateContextChip();
+    return true;
+  } catch (error) {
+    aiMessage.textContent = error.message || 'Unable to update context.';
+    return false;
   }
 }
 
@@ -300,13 +358,9 @@ function closeMenuOnOutsideClick(event) {
 }
 
 function initialsFromName(name) {
-  const words = (name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!words.length) return 'ME';
-  return words.map((word) => word[0].toUpperCase()).join('');
+  const safe = String(name || '').trim();
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -360,6 +414,9 @@ tabButtons.forEach((button) => {
     tabPanels.forEach((panel) => {
       panel.classList.toggle('is-active', panel.id === `tab-${button.dataset.tab}`);
     });
+    if (button.dataset.tab === 'vault' && !vaultLoaded) {
+      loadVaultDocuments();
+    }
   });
 });
 
@@ -750,26 +807,215 @@ if (taskModalClose) {
   taskModalClose.addEventListener('click', () => closeModal(taskModal));
 }
 
+function visibilityLabel(value) {
+  if (value === 'course_exclusive') return 'Course-exclusive';
+  if (value === 'private') return 'Private';
+  return 'Public';
+}
+
+function formatVaultDate(value) {
+  if (!value) return 'Unknown date';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Unknown date';
+  return parsed.toLocaleString();
+}
+
+function createVaultItem(documentItem) {
+  const item = document.createElement('article');
+  item.className = 'vault-item';
+  const description = documentItem.description || 'No description provided.';
+  const filename = documentItem.filename || 'file';
+  const libraryState = documentItem.is_open_library_visible
+    ? 'Visible in Open Library'
+    : 'Hidden from Open Library';
+
+  item.innerHTML = `
+    <div class="vault-item-head">
+      <div>
+        <h3>${escapeHtml(documentItem.title || 'Untitled')}</h3>
+        <p class="vault-item-meta">${escapeHtml(documentItem.subject || 'No subject')} • ${formatVaultDate(documentItem.uploaddate)}</p>
+      </div>
+      <span class="vault-visibility-pill">${visibilityLabel(documentItem.visibility)}</span>
+    </div>
+    <p class="vault-item-description">${escapeHtml(description)}</p>
+    <p class="vault-item-filename">${escapeHtml(filename)}</p>
+    <p class="vault-item-library-state">${libraryState}</p>
+    <div class="vault-item-actions">
+      <label>
+        <span>Visibility</span>
+        <select data-action="visibility">
+          <option value="private" ${documentItem.visibility === 'private' ? 'selected' : ''}>Private</option>
+          <option value="course_exclusive" ${documentItem.visibility === 'course_exclusive' ? 'selected' : ''}>Course-exclusive</option>
+          <option value="public" ${documentItem.visibility === 'public' ? 'selected' : ''}>Public</option>
+        </select>
+      </label>
+      <button type="button" data-action="open" ${documentItem.link ? '' : 'disabled'}>Open file</button>
+      <button type="button" data-action="delete">Delete</button>
+    </div>
+  `;
+
+  const visibilitySelect = item.querySelector('[data-action="visibility"]');
+  visibilitySelect.addEventListener('change', async (event) => {
+    const nextVisibility = event.target.value;
+    event.target.disabled = true;
+    vaultMessage.textContent = '';
+    try {
+      const response = await fetch(`/api/personal/vault/documents/${documentItem.uuid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility: nextVisibility }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message || 'Unable to update visibility.');
+      }
+      vaultMessage.textContent = `Visibility updated to ${visibilityLabel(data.document.visibility)}.`;
+      await loadVaultDocuments();
+    } catch (error) {
+      vaultMessage.textContent = error.message || 'Unable to update visibility.';
+      event.target.value = documentItem.visibility;
+    } finally {
+      event.target.disabled = false;
+    }
+  });
+
+  item.querySelector('[data-action="open"]').addEventListener('click', () => {
+    if (!documentItem.link) return;
+    window.open(documentItem.link, '_blank', 'noopener');
+  });
+
+  item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+    const shouldDelete = window.confirm('Delete this document from your file vault?');
+    if (!shouldDelete) return;
+    vaultMessage.textContent = '';
+    try {
+      const response = await fetch(`/api/personal/vault/documents/${documentItem.uuid}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message || 'Unable to delete document.');
+      }
+      vaultMessage.textContent = 'Document deleted.';
+      await loadVaultDocuments();
+    } catch (error) {
+      vaultMessage.textContent = error.message || 'Unable to delete document.';
+    }
+  });
+
+  return item;
+}
+
+async function loadVaultDocuments() {
+  if (!vaultList) return;
+  vaultList.innerHTML = '<p class="hint">Loading vault documents...</p>';
+  try {
+    const response = await fetch('/api/personal/vault/documents');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to load vault documents.');
+    }
+    const documents = Array.isArray(data.documents) ? data.documents : [];
+    vaultList.innerHTML = '';
+    if (!documents.length) {
+      vaultList.innerHTML = '<p class="hint">No vault documents yet.</p>';
+      vaultLoaded = true;
+      return;
+    }
+    documents.forEach((documentItem) => {
+      vaultList.appendChild(createVaultItem(documentItem));
+    });
+    vaultLoaded = true;
+  } catch (error) {
+    vaultList.innerHTML = `<p class="form-message">${escapeHtml(error.message || 'Unable to load vault documents.')}</p>`;
+  }
+}
+
+async function uploadVaultDocument(event) {
+  event.preventDefault();
+  if (!vaultForm) return;
+  const formData = new FormData(vaultForm);
+  const file = vaultForm.elements.file && vaultForm.elements.file.files
+    ? vaultForm.elements.file.files[0]
+    : null;
+  if (!file) {
+    vaultMessage.textContent = 'Please choose a file to upload.';
+    return;
+  }
+
+  vaultMessage.textContent = '';
+  const originalLabel = vaultSubmitButton ? vaultSubmitButton.textContent : 'Upload';
+  if (vaultSubmitButton) {
+    vaultSubmitButton.disabled = true;
+    vaultSubmitButton.textContent = 'Uploading...';
+  }
+
+  try {
+    const response = await fetch('/api/personal/vault/documents', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Upload failed.');
+    }
+    vaultForm.reset();
+    closeModal(vaultModal);
+    vaultMessage.textContent = 'Document uploaded to your vault.';
+    vaultLoaded = false;
+    await loadVaultDocuments();
+  } catch (error) {
+    vaultMessage.textContent = error.message || 'Upload failed.';
+  } finally {
+    if (vaultSubmitButton) {
+      vaultSubmitButton.disabled = false;
+      vaultSubmitButton.textContent = originalLabel;
+    }
+  }
+}
+
+if (openVaultModalButton) {
+  openVaultModalButton.addEventListener('click', () => {
+    if (vaultForm) {
+      vaultForm.reset();
+    }
+    openModal(vaultModal);
+  });
+}
+
+if (vaultModalClose) {
+  vaultModalClose.addEventListener('click', () => closeModal(vaultModal));
+}
+
+if (vaultForm) {
+  vaultForm.addEventListener('submit', uploadVaultDocument);
+}
+
 async function loadConversations() {
   const response = await fetch('/api/personal/conversations');
   const data = await response.json();
+  const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+  conversationCache = new Map(conversations.map((conv) => [String(conv._id), conv]));
   conversationList.innerHTML = '';
   if (!response.ok || !data.ok) {
     conversationList.innerHTML = '<p>Unable to load conversations.</p>';
     return;
   }
-  if (!data.conversations.length) {
+  if (!conversations.length) {
     const empty = document.createElement('p');
     empty.textContent = 'No conversations yet.';
     conversationList.appendChild(empty);
     setConversationHeader('New conversation', 'Start a new chat to see responses.');
     renderEmptyChat('Start a new chat to see responses.');
+    selectedContext = null;
+    updateContextChip();
     return;
   }
-  data.conversations.forEach((conv) => {
+  conversations.forEach((conv) => {
+    const conversationId = String(conv._id);
     const item = document.createElement('div');
     item.className = 'conversation-item';
-    if (activeConversationId === conv._id) {
+    if (activeConversationId === conversationId) {
       item.classList.add('is-active');
     }
     item.innerHTML = `
@@ -781,17 +1027,21 @@ async function loadConversations() {
       </div>
     `;
     item.querySelector('[data-action="open"]').addEventListener('click', () => {
-      activeConversationId = conv._id;
-      loadMessages(conv._id);
+      activeConversationId = conversationId;
+      selectedContext = normalizeContextDoc(conv.contextDoc);
+      updateContextChip();
+      loadMessages(conversationId);
       setConversationHeader(conv.title || 'New conversation', 'Private conversation');
       loadConversations();
     });
     item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
-      await fetch(`/api/personal/conversations/${conv._id}`, { method: 'DELETE' });
-      if (activeConversationId === conv._id) {
+      await fetch(`/api/personal/conversations/${conversationId}`, { method: 'DELETE' });
+      if (activeConversationId === conversationId) {
         activeConversationId = null;
         renderEmptyChat('Start a new chat to see responses.');
         setConversationHeader('New conversation', 'Start a new chat to see responses.');
+        selectedContext = null;
+        updateContextChip();
       }
       loadConversations();
     });
@@ -799,9 +1049,11 @@ async function loadConversations() {
   });
 
   if (activeConversationId) {
-    const active = data.conversations.find((conv) => conv._id === activeConversationId);
+    const active = conversationCache.get(activeConversationId);
     if (active) {
       setConversationHeader(active.title || 'New conversation', 'Private conversation');
+      selectedContext = normalizeContextDoc(active.contextDoc);
+      updateContextChip();
     }
   }
 }
@@ -814,11 +1066,10 @@ async function createConversation() {
   });
   const data = await response.json();
   if (response.ok && data.ok) {
-    activeConversationId = data.conversation._id;
+    activeConversationId = String(data.conversation._id);
     renderEmptyChat();
     setConversationHeader('New conversation', 'Start a new chat to see responses.');
     aiMessage.textContent = '';
-    loadConversations();
   }
 }
 
@@ -841,6 +1092,10 @@ async function loadMessages(conversationId) {
   if (!response.ok || !data.ok) {
     messageList.innerHTML = '<p>Unable to load messages.</p>';
     return;
+  }
+  if (data.conversation) {
+    selectedContext = normalizeContextDoc(data.conversation.contextDoc);
+    updateContextChip();
   }
   if (!data.messages.length) {
     renderEmptyChat('Start the conversation with a question or a goal.');
@@ -1041,8 +1296,20 @@ async function loadContextDocs(query = '') {
       <p>${doc.course || 'No course'} • ${doc.subject || 'No subject'}</p>
       <button type="button">Use as context</button>
     `;
-    item.querySelector('button').addEventListener('click', () => {
-      selectedContext = { uuid: doc.uuid, title: doc.title };
+    item.querySelector('button').addEventListener('click', async () => {
+      const nextContext = {
+        uuid: String(doc.uuid),
+        title: doc.title || 'Context document',
+        course: doc.course || null,
+        subject: doc.subject || null,
+      };
+      if (activeConversationId) {
+        const persisted = await persistConversationContext(nextContext);
+        if (!persisted) return;
+      } else {
+        selectedContext = nextContext;
+        updateContextChip();
+      }
       updateContextChip();
       closeModal(contextModal);
     });
@@ -1075,9 +1342,14 @@ if (contextSearch) {
 }
 
 if (clearContext) {
-  clearContext.addEventListener('click', () => {
-    selectedContext = null;
-    updateContextChip();
+  clearContext.addEventListener('click', async () => {
+    if (activeConversationId) {
+      const persisted = await persistConversationContext(null);
+      if (!persisted) return;
+    } else {
+      selectedContext = null;
+      updateContextChip();
+    }
   });
 }
 

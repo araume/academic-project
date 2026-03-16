@@ -18,12 +18,78 @@ const reportsSource = document.getElementById('reportsSource');
 const reportsStatus = document.getElementById('reportsStatus');
 const refreshReports = document.getElementById('refreshReports');
 
+const restrictedTableBody = document.getElementById('restrictedTableBody');
+const restrictedQuery = document.getElementById('restrictedQuery');
+const restrictedStatus = document.getElementById('restrictedStatus');
+const restrictedSource = document.getElementById('restrictedSource');
+const refreshRestricted = document.getElementById('refreshRestricted');
+const purgeExpiredRestricted = document.getElementById('purgeExpiredRestricted');
+
+const appealsTableBody = document.getElementById('appealsTableBody');
+const appealsQuery = document.getElementById('appealsQuery');
+const appealsStatus = document.getElementById('appealsStatus');
+const appealsType = document.getElementById('appealsType');
+const refreshAppeals = document.getElementById('refreshAppeals');
+
+const customNotifyMode = document.getElementById('customNotifyMode');
+const customNotifyUids = document.getElementById('customNotifyUids');
+const customNotifyCourse = document.getElementById('customNotifyCourse');
+const customNotifyTitle = document.getElementById('customNotifyTitle');
+const customNotifyMessageBody = document.getElementById('customNotifyMessageBody');
+const customNotifyIncludeSelf = document.getElementById('customNotifyIncludeSelf');
+const customNotifyIncludeBanned = document.getElementById('customNotifyIncludeBanned');
+const sendCustomNotification = document.getElementById('sendCustomNotification');
+const customNotificationMessage = document.getElementById('customNotificationMessage');
+const aiUsageDays = document.getElementById('aiUsageDays');
+const refreshAiUsage = document.getElementById('refreshAiUsage');
+const aiTotalCalls = document.getElementById('aiTotalCalls');
+const aiOpenAiCalls = document.getElementById('aiOpenAiCalls');
+const aiMcpCalls = document.getElementById('aiMcpCalls');
+const aiRiskEvents = document.getElementById('aiRiskEvents');
+const aiUsageTableBody = document.getElementById('aiUsageTableBody');
+const aiEventsTableBody = document.getElementById('aiEventsTableBody');
+const aiReportsQuery = document.getElementById('aiReportsQuery');
+const aiReportsRisk = document.getElementById('aiReportsRisk');
+const aiReportsTargetType = document.getElementById('aiReportsTargetType');
+const aiReportsStatus = document.getElementById('aiReportsStatus');
+const aiReportsFlaggedOnly = document.getElementById('aiReportsFlaggedOnly');
+const refreshAiReports = document.getElementById('refreshAiReports');
+const aiReportsTableBody = document.getElementById('aiReportsTableBody');
+const reloadAiFeatures = document.getElementById('reloadAiFeatures');
+const saveAiFeatures = document.getElementById('saveAiFeatures');
+const aiFeatureToggleScan = document.getElementById('aiFeatureToggleScan');
+const aiFeatureToggleRoomSummary = document.getElementById('aiFeatureToggleRoomSummary');
+const aiFeatureToggleMcp = document.getElementById('aiFeatureToggleMcp');
+const aiFeatureToggleScanMeta = document.getElementById('aiFeatureToggleScanMeta');
+const aiFeatureToggleRoomSummaryMeta = document.getElementById('aiFeatureToggleRoomSummaryMeta');
+const aiFeatureToggleMcpMeta = document.getElementById('aiFeatureToggleMcpMeta');
+const aiFeaturesMessage = document.getElementById('aiFeaturesMessage');
+
 const accountsTableBody = document.getElementById('accountsTableBody');
 const accountsQuery = document.getElementById('accountsQuery');
 const accountsCourse = document.getElementById('accountsCourse');
 const accountsRoleFilter = document.getElementById('accountsRoleFilter');
 const accountsStatusFilter = document.getElementById('accountsStatusFilter');
 const refreshAccounts = document.getElementById('refreshAccounts');
+const professorCodesTableBody = document.getElementById('professorCodesTableBody');
+const professorCodesQuery = document.getElementById('professorCodesQuery');
+const professorCodesStatusFilter = document.getElementById('professorCodesStatusFilter');
+const refreshProfessorCodes = document.getElementById('refreshProfessorCodes');
+const professorCodeBatchCount = document.getElementById('professorCodeBatchCount');
+const professorCodeLength = document.getElementById('professorCodeLength');
+const professorCodeExpiresDays = document.getElementById('professorCodeExpiresDays');
+const generateProfessorCodes = document.getElementById('generateProfessorCodes');
+const generatedProfessorCodesOutput = document.getElementById('generatedProfessorCodesOutput');
+const professorCodesMessage = document.getElementById('professorCodesMessage');
+const depAdminAssignmentsQuery = document.getElementById('depAdminAssignmentsQuery');
+const depAdminCourseFilter = document.getElementById('depAdminCourseFilter');
+const refreshDepAdminAssignments = document.getElementById('refreshDepAdminAssignments');
+const depAdminAssignCourse = document.getElementById('depAdminAssignCourse');
+const depAdminAccountQuery = document.getElementById('depAdminAccountQuery');
+const searchDepAdminCandidates = document.getElementById('searchDepAdminCandidates');
+const depAdminMessage = document.getElementById('depAdminMessage');
+const depAdminCandidatesTableBody = document.getElementById('depAdminCandidatesTableBody');
+const depAdminAssignmentsTableBody = document.getElementById('depAdminAssignmentsTableBody');
 
 const moderatorCommunity = document.getElementById('moderatorCommunity');
 const moderatorTargetUid = document.getElementById('moderatorTargetUid');
@@ -53,6 +119,16 @@ const faqItems = document.getElementById('faqItems');
 const saveFaqPage = document.getElementById('saveFaqPage');
 const reloadFaqPage = document.getElementById('reloadFaqPage');
 const faqPageMessage = document.getElementById('faqPageMessage');
+const mobileAppTitle = document.getElementById('mobileAppTitle');
+const mobileAppSubtitle = document.getElementById('mobileAppSubtitle');
+const mobileAppDescription = document.getElementById('mobileAppDescription');
+const mobileAppQrImageUrl = document.getElementById('mobileAppQrImageUrl');
+const mobileAppQrAltText = document.getElementById('mobileAppQrAltText');
+const mobileAppDownloadUrl = document.getElementById('mobileAppDownloadUrl');
+const mobileAppDownloadLabel = document.getElementById('mobileAppDownloadLabel');
+const saveMobileAppPage = document.getElementById('saveMobileAppPage');
+const reloadMobileAppPage = document.getElementById('reloadMobileAppPage');
+const mobileAppPageMessage = document.getElementById('mobileAppPageMessage');
 const spacesCommunitySelect = document.getElementById('spacesCommunitySelect');
 const spacesCommunityDescription = document.getElementById('spacesCommunityDescription');
 const saveSpacesCommunity = document.getElementById('saveSpacesCommunity');
@@ -67,6 +143,7 @@ let viewerRole = 'member';
 let viewerUid = '';
 let currentContentTab = 'main-posts';
 let cachedCommunities = [];
+let cachedDepAdminCourses = [];
 
 function escapeHtml(value) {
   const stringValue = String(value ?? '');
@@ -115,6 +192,51 @@ function normalizeActionTargetUrl(value) {
     return '';
   }
   return trimmed.slice(0, 512);
+}
+
+function normalizeUidListFromText(value) {
+  return String(value || '')
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString();
+}
+
+function formatNumber(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return '0';
+  return parsed.toLocaleString();
+}
+
+function formatAiTargetType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'post') return 'Main feed post';
+  if (normalized === 'subject_post') return 'Unit post';
+  if (normalized === 'document') return 'Open Library document';
+  return normalized || '-';
+}
+
+function formatDeadlineLabel(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  const now = Date.now();
+  const diffMs = date.getTime() - now;
+  if (diffMs <= 0) {
+    return `Expired (${date.toLocaleString()})`;
+  }
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  if (hours < 24) {
+    return `${hours}h left (${date.toLocaleString()})`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days}d left (${date.toLocaleString()})`;
 }
 
 async function loadAdminContext() {
@@ -183,42 +305,577 @@ async function loadReports() {
   try {
     const data = await apiRequest(`/api/admin/reports?${params.toString()}`);
     if (!data.reports.length) {
-      renderEmptyRow(reportsTableBody, 7);
+      renderEmptyRow(reportsTableBody, 9);
       return;
     }
 
+    const reportStatusOptions = [
+      { value: 'open', label: 'Open' },
+      { value: 'under_review', label: 'Under review' },
+      { value: 'resolved_action_taken', label: 'Resolved (action taken)' },
+      { value: 'resolved_no_action', label: 'Resolved (no action)' },
+      { value: 'rejected', label: 'Rejected' },
+    ];
+    const reportActionOptionsBySource = {
+      profile: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      community: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'take_down_community_post', label: 'Restrict community post' },
+        { value: 'take_down_community_comment', label: 'Restrict community comment' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      main_post: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'delete_main_post', label: 'Restrict main post' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      library_document: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'delete_library_document', label: 'Restrict document' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+      chat_message: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'delete_chat_message', label: 'Delete chat message' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
+    };
+
+    const buildOptionMarkup = (options, selected) =>
+      options
+        .map(
+          (option) =>
+            `<option value="${escapeHtml(option.value)}" ${option.value === selected ? 'selected' : ''}>${escapeHtml(
+              option.label
+            )}</option>`
+        )
+        .join('');
+
     reportsTableBody.innerHTML = data.reports
-      .map(
-        (item) => `
+      .map((item) => {
+        const categoryLabel =
+          item.category === 'other'
+            ? item.customReason || 'Other'
+            : item.category
+              ? item.category.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
+              : '-';
+        const reasonText = item.reason || item.details || '';
+        const statusOptions = buildOptionMarkup(reportStatusOptions, item.status || 'open');
+        let sourceActions = reportActionOptionsBySource[item.source] || reportActionOptionsBySource.profile;
+        if (item.source === 'community' && item.targetType !== 'post') {
+          sourceActions = sourceActions.filter((option) => option.value !== 'take_down_community_post');
+        }
+        if (item.source === 'community' && item.targetType !== 'comment') {
+          sourceActions = sourceActions.filter((option) => option.value !== 'take_down_community_comment');
+        }
+        const selectedAction = item.moderationAction || 'none';
+        const actionOptions = buildOptionMarkup(sourceActions, selectedAction);
+        const reportKey = escapeHtml(item.id);
+        return `
           <tr>
             <td>${escapeHtml(item.id)}</td>
             <td>${escapeHtml(item.source)}</td>
             <td>${escapeHtml(item.targetName || item.targetId || '-')}</td>
             <td>${escapeHtml(item.reporterName || '-')}</td>
-            <td>${escapeHtml(item.status || 'open')}</td>
-            <td>${escapeHtml(item.reason || '-')}</td>
+            <td>${escapeHtml(categoryLabel)}</td>
+            <td>
+              <select class="small-select" data-report-status="${reportKey}">
+                ${statusOptions}
+              </select>
+            </td>
+            <td>${escapeHtml(reasonText || '-')}</td>
+            <td>
+              <div class="row-actions">
+                <select class="small-select" data-report-action="${reportKey}">
+                  ${actionOptions}
+                </select>
+                <button class="secondary-button" data-action="apply-report-action" data-report-id="${reportKey}">Apply</button>
+              </div>
+            </td>
             <td>${escapeHtml(new Date(item.createdAt).toLocaleString())}</td>
-          </tr>`
-      )
+          </tr>`;
+      })
       .join('');
   } catch (error) {
-    renderEmptyRow(reportsTableBody, 7, error.message);
+    renderEmptyRow(reportsTableBody, 9, error.message);
+  }
+}
+
+async function loadRestrictedContents() {
+  if (!restrictedTableBody) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+  });
+  if (restrictedQuery && restrictedQuery.value.trim()) params.set('q', restrictedQuery.value.trim());
+  if (restrictedStatus && restrictedStatus.value) params.set('status', restrictedStatus.value);
+  if (restrictedSource && restrictedSource.value) params.set('source', restrictedSource.value);
+
+  try {
+    const data = await apiRequest(`/api/admin/restricted-contents?${params.toString()}`);
+    const rows = Array.isArray(data.items) ? data.items : [];
+    if (!rows.length) {
+      renderEmptyRow(restrictedTableBody, 8);
+      return;
+    }
+
+    restrictedTableBody.innerHTML = rows
+      .map((item) => {
+        const actionButtons = [];
+        if (item.status === 'restricted') {
+          actionButtons.push(
+            `<button class="secondary-button" data-action="restore-restricted" data-id="${escapeHtml(item.id)}">Restore</button>`
+          );
+          actionButtons.push(
+            `<button class="danger-button" data-action="purge-restricted" data-id="${escapeHtml(item.id)}">Purge</button>`
+          );
+        } else if (item.status === 'restored') {
+          actionButtons.push(
+            `<button class="danger-button" data-action="purge-restricted" data-id="${escapeHtml(item.id)}">Purge</button>`
+          );
+        }
+
+        return `
+          <tr>
+            <td>${escapeHtml(item.id)}</td>
+            <td>${escapeHtml(item.source)}</td>
+            <td>${escapeHtml(item.targetType || '-')}<br /><small>${escapeHtml(item.targetId || '-')}</small></td>
+            <td>${escapeHtml(item.status)}</td>
+            <td>${escapeHtml(formatDateTime(item.hiddenAt))}</td>
+            <td>${escapeHtml(formatDeadlineLabel(item.restoreDeadlineAt))}</td>
+            <td>${escapeHtml(item.reason || '-')}</td>
+            <td><div class="row-actions">${actionButtons.join('') || '<span>-</span>'}</div></td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(restrictedTableBody, 8, error.message);
+  }
+}
+
+async function loadAppeals() {
+  if (!appealsTableBody) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+  });
+  if (appealsQuery && appealsQuery.value.trim()) params.set('q', appealsQuery.value.trim());
+  if (appealsStatus && appealsStatus.value) params.set('status', appealsStatus.value);
+  if (appealsType && appealsType.value) params.set('type', appealsType.value);
+
+  try {
+    const data = await apiRequest(`/api/admin/appeals?${params.toString()}`);
+    const rows = Array.isArray(data.appeals) ? data.appeals : [];
+    if (!rows.length) {
+      renderEmptyRow(appealsTableBody, 8);
+      return;
+    }
+
+    appealsTableBody.innerHTML = rows
+      .map((item) => {
+        const isClosed = ['accepted', 'denied', 'withdrawn'].includes(item.status);
+        const actionCell = isClosed
+          ? '<span>-</span>'
+          : `<div class="row-actions">
+               <select class="small-select" data-appeal-status="${escapeHtml(item.id)}">
+                 <option value="under_review" ${item.status === 'under_review' ? 'selected' : ''}>Under review</option>
+                 <option value="accepted">Accept</option>
+                 <option value="denied">Deny</option>
+               </select>
+               <button class="secondary-button" data-action="resolve-appeal" data-id="${escapeHtml(item.id)}">Apply</button>
+             </div>`;
+        const resolutionText = item.resolutionNote || (item.resolvedByName ? `Resolved by ${item.resolvedByName}` : '-');
+        return `
+          <tr>
+            <td>${escapeHtml(item.id)}</td>
+            <td>${escapeHtml(item.appellantName || item.appellantUid || '-')}</td>
+            <td>${escapeHtml(item.type)}</td>
+            <td>${escapeHtml(item.status)}</td>
+            <td>${escapeHtml(item.message || '-')}</td>
+            <td>${escapeHtml(resolutionText)}</td>
+            <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+            <td>${actionCell}</td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(appealsTableBody, 8, error.message);
+  }
+}
+
+async function sendCustomNotificationRequest() {
+  if (!sendCustomNotification) return;
+  setInlineMessage(customNotificationMessage, '');
+
+  const mode = customNotifyMode ? customNotifyMode.value : 'uids';
+  const uids = normalizeUidListFromText(customNotifyUids ? customNotifyUids.value : '');
+  const payload = {
+    mode,
+    uids,
+    course: customNotifyCourse ? customNotifyCourse.value.trim() : '',
+    title: customNotifyTitle ? customNotifyTitle.value.trim() : '',
+    message: customNotifyMessageBody ? customNotifyMessageBody.value.trim() : '',
+    includeSelf: Boolean(customNotifyIncludeSelf && customNotifyIncludeSelf.checked),
+    includeBanned: Boolean(customNotifyIncludeBanned && customNotifyIncludeBanned.checked),
+  };
+
+  if (!payload.title || !payload.message) {
+    setInlineMessage(customNotificationMessage, 'Title and message are required.');
+    return;
+  }
+  if (mode === 'uids' && !uids.length) {
+    setInlineMessage(customNotificationMessage, 'Provide at least one UID for user-targeted notifications.');
+    return;
+  }
+  if (mode === 'course' && !payload.course) {
+    setInlineMessage(customNotificationMessage, 'Course is required when mode is set to course.');
+    return;
+  }
+
+  try {
+    const data = await apiRequest('/api/admin/notifications/custom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setInlineMessage(
+      customNotificationMessage,
+      `Sent to ${Number(data.inserted || 0)} recipient(s).`,
+      'success'
+    );
+    setPageMessage('Custom notifications sent.', 'success');
+  } catch (error) {
+    setInlineMessage(customNotificationMessage, error.message);
+  }
+}
+
+function renderAiUsageSummary(dailyUsage, events) {
+  if (!aiTotalCalls || !aiOpenAiCalls || !aiMcpCalls || !aiRiskEvents) return;
+  let totalCalls = 0;
+  let openAiCalls = 0;
+  let mcpCalls = 0;
+  (dailyUsage || []).forEach((row) => {
+    const calls = Number(row.call_count || 0) || 0;
+    totalCalls += calls;
+    if (row.provider === 'mcp') {
+      mcpCalls += calls;
+    } else {
+      openAiCalls += calls;
+    }
+  });
+  const risky = (events || []).filter((event) => event.status === 'blocked' || event.status === 'error').length;
+  aiTotalCalls.textContent = formatNumber(totalCalls);
+  aiOpenAiCalls.textContent = formatNumber(openAiCalls);
+  aiMcpCalls.textContent = formatNumber(mcpCalls);
+  aiRiskEvents.textContent = formatNumber(risky);
+}
+
+async function loadAiUsage() {
+  if (!aiUsageTableBody || !aiEventsTableBody) return;
+  const days = aiUsageDays && aiUsageDays.value ? aiUsageDays.value : '14';
+  try {
+    const data = await apiRequest(`/api/admin/ai-usage?days=${encodeURIComponent(days)}`);
+    const dailyUsage = Array.isArray(data.dailyUsage) ? data.dailyUsage : [];
+    const recentEvents = Array.isArray(data.recentEvents) ? data.recentEvents : [];
+    renderAiUsageSummary(dailyUsage, recentEvents);
+
+    if (!dailyUsage.length) {
+      renderEmptyRow(aiUsageTableBody, 7);
+    } else {
+      aiUsageTableBody.innerHTML = dailyUsage
+        .map(
+          (row) => `
+            <tr>
+              <td>${escapeHtml(row.usage_date || '-')}</td>
+              <td>${escapeHtml(row.uid || '-')}</td>
+              <td>${escapeHtml(row.provider || '-')}</td>
+              <td>${escapeHtml(row.metric_key || '-')}</td>
+              <td>${escapeHtml(formatNumber(row.call_count))}</td>
+              <td>${escapeHtml(formatNumber(row.input_chars))}</td>
+              <td>${escapeHtml(formatNumber(row.output_chars))}</td>
+            </tr>`
+        )
+        .join('');
+    }
+
+    if (!recentEvents.length) {
+      renderEmptyRow(aiEventsTableBody, 7);
+      return;
+    }
+    aiEventsTableBody.innerHTML = recentEvents
+      .map((event) => {
+        const scope = event.scope_id ? `${event.scope_type}:${event.scope_id}` : (event.scope_type || '-');
+        const statusClass = event.status === 'success' ? 'success' : event.status === 'blocked' ? 'blocked' : 'error';
+        return `
+          <tr>
+            <td>${escapeHtml(formatDateTime(event.created_at))}</td>
+            <td>${escapeHtml(event.actor_uid || '-')}</td>
+            <td>${escapeHtml(event.provider || '-')}</td>
+            <td>${escapeHtml(event.event_type || '-')}</td>
+            <td>${escapeHtml(scope)}</td>
+            <td><span class="status-pill ${statusClass}">${escapeHtml(event.status || '-')}</span></td>
+            <td>${escapeHtml(event.latency_ms == null ? '-' : formatNumber(event.latency_ms))}</td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderAiUsageSummary([], []);
+    renderEmptyRow(aiUsageTableBody, 7, error.message);
+    renderEmptyRow(aiEventsTableBody, 7, error.message);
+  }
+}
+
+async function loadAiReports() {
+  if (!aiReportsTableBody) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+  });
+  if (aiReportsQuery && aiReportsQuery.value.trim()) params.set('q', aiReportsQuery.value.trim());
+  if (aiReportsRisk && aiReportsRisk.value) params.set('risk', aiReportsRisk.value);
+  if (aiReportsTargetType && aiReportsTargetType.value) params.set('targetType', aiReportsTargetType.value);
+  if (aiReportsStatus && aiReportsStatus.value) params.set('status', aiReportsStatus.value);
+  if (aiReportsFlaggedOnly) {
+    params.set('flaggedOnly', aiReportsFlaggedOnly.checked ? 'true' : 'false');
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/ai-reports?${params.toString()}`);
+    const reports = Array.isArray(data.reports) ? data.reports : [];
+    if (!reports.length) {
+      renderEmptyRow(aiReportsTableBody, 8);
+      return;
+    }
+
+    aiReportsTableBody.innerHTML = reports
+      .map((item) => {
+        const targetLabel = item.targetTitle || item.targetId || '-';
+        const targetMeta = [formatAiTargetType(item.targetType), item.targetCourse || '']
+          .filter(Boolean)
+          .join(' • ');
+        const targetLink = normalizeActionTargetUrl(item.targetUrl || '');
+        const targetCellMain = targetLink
+          ? `<a href="${escapeHtml(targetLink)}">${escapeHtml(targetLabel)}</a>`
+          : escapeHtml(targetLabel);
+        const flagsText = Array.isArray(item.flags) && item.flags.length
+          ? item.flags.join(', ')
+          : '-';
+        const recommendedAction = item.recommendedAction
+          ? String(item.recommendedAction).replace(/_/g, ' ')
+          : '-';
+        const summaryText = item.summary || '-';
+        const riskClass = item.flagged ? 'error' : item.riskLevel === 'low' ? 'success' : 'blocked';
+        const statusClass = item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'blocked';
+        return `
+          <tr>
+            <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${targetCellMain}</strong>
+                <small>${escapeHtml(targetMeta || '-')}</small>
+              </div>
+            </td>
+            <td>
+              <div class="stacked-cell">
+                <span class="status-pill ${riskClass}">${escapeHtml(item.riskLevel || 'unknown')}</span>
+                <small>Score: ${escapeHtml(item.riskScore == null ? '-' : formatNumber(item.riskScore))}</small>
+              </div>
+            </td>
+            <td>${escapeHtml(recommendedAction)}</td>
+            <td>${escapeHtml(flagsText)}</td>
+            <td>${escapeHtml(summaryText)}</td>
+            <td>${escapeHtml(item.requestedByName || item.requestedByUid || '-')}</td>
+            <td><span class="status-pill ${statusClass}">${escapeHtml(item.status || '-')}</span></td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(aiReportsTableBody, 8, error.message);
+  }
+}
+
+const aiFeatureToggleConfig = {
+  ai_scan: {
+    input: aiFeatureToggleScan,
+    meta: aiFeatureToggleScanMeta,
+  },
+  room_ai_summary: {
+    input: aiFeatureToggleRoomSummary,
+    meta: aiFeatureToggleRoomSummaryMeta,
+  },
+  gcloud_mcp: {
+    input: aiFeatureToggleMcp,
+    meta: aiFeatureToggleMcpMeta,
+  },
+};
+
+function setAiFeatureControlsDisabled(disabled) {
+  [reloadAiFeatures, saveAiFeatures].forEach((element) => {
+    if (element) element.disabled = disabled;
+  });
+  Object.values(aiFeatureToggleConfig).forEach((config) => {
+    if (config.input) {
+      config.input.disabled = disabled;
+    }
+  });
+}
+
+function renderAiFeatureStates(features) {
+  const featureMap = new Map((features || []).map((feature) => [feature.key, feature]));
+  Object.entries(aiFeatureToggleConfig).forEach(([key, config]) => {
+    const feature = featureMap.get(key);
+    if (config.input) {
+      config.input.checked = feature ? feature.enabled === true : false;
+    }
+    if (config.meta) {
+      if (!feature) {
+        config.meta.textContent = 'No data.';
+      } else {
+        const source = feature.source === 'admin_override' ? 'Admin override' : 'Environment default';
+        const defaultLabel = feature.defaultEnabled ? 'enabled' : 'disabled';
+        config.meta.textContent = `${source} • Env default: ${defaultLabel}`;
+      }
+    }
+  });
+}
+
+async function loadAiFeatureStates() {
+  if (!aiFeaturesMessage) return;
+  setInlineMessage(aiFeaturesMessage, '');
+  setAiFeatureControlsDisabled(true);
+  try {
+    const data = await apiRequest('/api/admin/ai-features');
+    renderAiFeatureStates(Array.isArray(data.features) ? data.features : []);
+  } catch (error) {
+    setInlineMessage(aiFeaturesMessage, error.message);
+  } finally {
+    setAiFeatureControlsDisabled(false);
+  }
+}
+
+async function saveAiFeatureStates() {
+  if (!aiFeaturesMessage) return;
+  setInlineMessage(aiFeaturesMessage, '');
+  const features = Object.entries(aiFeatureToggleConfig).map(([key, config]) => ({
+    key,
+    enabled: Boolean(config.input && config.input.checked),
+  }));
+  setAiFeatureControlsDisabled(true);
+  try {
+    const data = await apiRequest('/api/admin/ai-features', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ features }),
+    });
+    renderAiFeatureStates(Array.isArray(data.features) ? data.features : []);
+    setInlineMessage(aiFeaturesMessage, 'AI feature toggles saved.', 'success');
+  } catch (error) {
+    setInlineMessage(aiFeaturesMessage, error.message);
+  } finally {
+    setAiFeatureControlsDisabled(false);
   }
 }
 
 function buildRoleControl(uid, role) {
+  const normalizedRole = role || 'member';
   if (viewerRole !== 'owner') {
-    return `<span>${escapeHtml(role)}</span>`;
+    return `<span>${escapeHtml(formatRoleLabel(normalizedRole))}</span>`;
   }
   return `
     <div class="row-actions">
       <select class="small-select" data-role-select="${escapeHtml(uid)}">
-        <option value="member" ${role === 'member' ? 'selected' : ''}>member</option>
-        <option value="admin" ${role === 'admin' ? 'selected' : ''}>admin</option>
+        <option value="member" ${normalizedRole === 'member' ? 'selected' : ''}>student</option>
+        <option value="professor" ${normalizedRole === 'professor' ? 'selected' : ''}>professor</option>
+        <option value="depadmin" ${normalizedRole === 'depadmin' ? 'selected' : ''}>depadmin</option>
+        <option value="admin" ${normalizedRole === 'admin' ? 'selected' : ''}>admin</option>
       </select>
       <button class="secondary-button" data-action="save-role" data-uid="${escapeHtml(uid)}">Save role</button>
     </div>
   `;
+}
+
+function formatRoleLabel(role) {
+  const normalized = String(role || '').trim().toLowerCase();
+  if (normalized === 'owner') return 'Owner';
+  if (normalized === 'admin') return 'Admin';
+  if (normalized === 'depadmin') return 'DepAdmin';
+  if (normalized === 'professor') return 'Professor';
+  return 'Student';
+}
+
+function buildEmailVerificationPill(isVerified) {
+  if (isVerified) {
+    return '<span class="status-pill email-verified">Verified</span>';
+  }
+  return '<span class="status-pill email-pending">Pending</span>';
+}
+
+function normalizeIdVerificationStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (status === 'approved' || status === 'rejected') return status;
+  return 'pending';
+}
+
+function buildIdVerificationPill(status) {
+  const normalized = normalizeIdVerificationStatus(status);
+  if (normalized === 'approved') {
+    return '<span class="status-pill verification-approved">Approved</span>';
+  }
+  if (normalized === 'rejected') {
+    return '<span class="status-pill verification-rejected">Rejected</span>';
+  }
+  return '<span class="status-pill verification-pending">Pending</span>';
+}
+
+function buildIdVerificationControl(account) {
+  const status = normalizeIdVerificationStatus(account && account.idVerificationStatus);
+  const note = account && account.idVerificationNote ? String(account.idVerificationNote).trim() : '';
+  const reviewerName = account && account.idVerifiedByName ? String(account.idVerifiedByName).trim() : '';
+  const reviewedAt = account && account.idVerifiedAt ? formatDateTime(account.idVerifiedAt) : '';
+  const canReview = ['owner', 'admin', 'depadmin', 'professor'].includes(viewerRole) && account && account.uid && account.uid !== viewerUid;
+
+  const lines = [buildIdVerificationPill(status)];
+  if (reviewerName || reviewedAt) {
+    lines.push(`<small class="meta-note">By ${escapeHtml(reviewerName || account.idVerifiedByUid || 'Unknown')} • ${escapeHtml(reviewedAt || '-')}</small>`);
+  }
+  if (note) {
+    lines.push(`<small class="meta-note">${escapeHtml(note)}</small>`);
+  }
+  if (canReview && status !== 'approved') {
+    lines.push(
+      `<div class="row-actions">
+        <button class="secondary-button" data-action="review-id-verification" data-uid="${escapeHtml(account.uid)}" data-status="approved">Approve</button>
+        <button class="danger-button" data-action="review-id-verification" data-uid="${escapeHtml(account.uid)}" data-status="rejected">Reject</button>
+      </div>`
+    );
+  } else if (canReview && status === 'approved') {
+    lines.push(
+      `<div class="row-actions">
+        <button class="danger-button" data-action="review-id-verification" data-uid="${escapeHtml(account.uid)}" data-status="rejected">Reject</button>
+      </div>`
+    );
+  }
+  return `<div class="stacked-cell">${lines.join('')}</div>`;
+}
+
+function buildAccountStatusPill(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'banned') {
+    return '<span class="status-pill error">Banned</span>';
+  }
+  if (normalized === 'verified') {
+    return '<span class="status-pill success">Verified</span>';
+  }
+  if (normalized === 'verification-rejected') {
+    return '<span class="status-pill verification-rejected">ID rejected</span>';
+  }
+  if (normalized === 'verification-pending') {
+    return '<span class="status-pill verification-pending">ID pending</span>';
+  }
+  return '<span class="status-pill email-pending">Email pending</span>';
 }
 
 function buildBanControl(uid, status, userType) {
@@ -256,6 +913,278 @@ function buildTransferOwnershipControl(uid, userType, status) {
   return `<button class="secondary-button" data-action="transfer-ownership" data-uid="${escapeHtml(uid)}">Transfer owner</button>`;
 }
 
+function formatProfessorCodeStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'available') return 'Available';
+  if (normalized === 'consumed') return 'Consumed';
+  if (normalized === 'revoked') return 'Revoked';
+  if (normalized === 'expired') return 'Expired';
+  return '-';
+}
+
+function buildProfessorCodeActionControl(item) {
+  if (!item || !item.id) return '<span>-</span>';
+  if (item.status === 'available') {
+    return `<button class="danger-button" data-action="revoke-professor-code" data-id="${escapeHtml(item.id)}">Revoke</button>`;
+  }
+  if (item.status === 'revoked') {
+    return `<button class="secondary-button" data-action="reactivate-professor-code" data-id="${escapeHtml(item.id)}">Reactivate</button>`;
+  }
+  return '<span>-</span>';
+}
+
+async function loadProfessorCodes() {
+  if (!professorCodesTableBody) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+  });
+  if (professorCodesQuery && professorCodesQuery.value.trim()) params.set('q', professorCodesQuery.value.trim());
+  if (professorCodesStatusFilter && professorCodesStatusFilter.value) {
+    params.set('status', professorCodesStatusFilter.value);
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/professor-codes?${params.toString()}`);
+    const rows = Array.isArray(data.codes) ? data.codes : [];
+    if (!rows.length) {
+      renderEmptyRow(professorCodesTableBody, 9);
+      return;
+    }
+
+    professorCodesTableBody.innerHTML = rows
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(item.id)}</td>
+            <td>${escapeHtml(formatProfessorCodeStatus(item.status))}</td>
+            <td>${escapeHtml(item.source || '-')}</td>
+            <td>${escapeHtml(item.createdByName || item.createdByUid || '-')}</td>
+            <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+            <td>${escapeHtml(formatDateTime(item.expiresAt))}</td>
+            <td>${escapeHtml(item.consumedByName || item.consumedByUid || '-')}</td>
+            <td>${escapeHtml(formatDateTime(item.consumedAt))}</td>
+            <td><div class="row-actions">${buildProfessorCodeActionControl(item)}</div></td>
+          </tr>`
+      )
+      .join('');
+  } catch (error) {
+    renderEmptyRow(professorCodesTableBody, 9, error.message);
+  }
+}
+
+async function generateProfessorCodesBatch() {
+  if (!generateProfessorCodes) return;
+  setInlineMessage(professorCodesMessage, '');
+
+  const count = professorCodeBatchCount ? Number(professorCodeBatchCount.value) : 1;
+  const length = professorCodeLength ? Number(professorCodeLength.value) : 10;
+  const expiresInDays = professorCodeExpiresDays ? Number(professorCodeExpiresDays.value) : NaN;
+  const payload = {
+    count,
+    length,
+  };
+  if (Number.isInteger(expiresInDays) && expiresInDays > 0) {
+    payload.expiresInDays = expiresInDays;
+  }
+
+  generateProfessorCodes.disabled = true;
+  const originalLabel = generateProfessorCodes.textContent;
+  generateProfessorCodes.textContent = 'Generating...';
+  try {
+    const data = await apiRequest('/api/admin/professor-codes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const created = Array.isArray(data.created) ? data.created : [];
+    if (generatedProfessorCodesOutput) {
+      generatedProfessorCodesOutput.value = created.map((item) => item.code).join('\n');
+    }
+    setInlineMessage(
+      professorCodesMessage,
+      data.message || `Generated ${created.length} code${created.length === 1 ? '' : 's'}.`,
+      'success'
+    );
+    setPageMessage('Professor code(s) generated.', 'success');
+    await loadProfessorCodes();
+  } catch (error) {
+    setInlineMessage(professorCodesMessage, error.message);
+  } finally {
+    generateProfessorCodes.disabled = false;
+    generateProfessorCodes.textContent = originalLabel;
+  }
+}
+
+function populateDepAdminCourseSelectors(courses) {
+  cachedDepAdminCourses = Array.isArray(courses) ? courses : [];
+  const options = cachedDepAdminCourses
+    .map((course) => {
+      const code = course && course.courseCode ? `${course.courseCode} · ` : '';
+      const label = `${code}${course && course.courseName ? course.courseName : 'Unnamed course'}`;
+      return `<option value="${escapeHtml(course.courseName || '')}">${escapeHtml(label)}</option>`;
+    })
+    .join('');
+
+  if (depAdminCourseFilter) {
+    const previousValue = depAdminCourseFilter.value;
+    depAdminCourseFilter.innerHTML = `<option value="">All courses</option>${options}`;
+    if (previousValue) depAdminCourseFilter.value = previousValue;
+  }
+  if (depAdminAssignCourse) {
+    const previousValue = depAdminAssignCourse.value;
+    depAdminAssignCourse.innerHTML = `<option value="">Select course</option>${options}`;
+    if (previousValue) depAdminAssignCourse.value = previousValue;
+  }
+}
+
+async function loadDepAdminAssignments() {
+  if (!depAdminAssignmentsTableBody) return;
+  const params = new URLSearchParams();
+  if (depAdminAssignmentsQuery && depAdminAssignmentsQuery.value.trim()) {
+    params.set('q', depAdminAssignmentsQuery.value.trim());
+  }
+  if (depAdminCourseFilter && depAdminCourseFilter.value.trim()) {
+    params.set('course', depAdminCourseFilter.value.trim());
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/dep-admin/assignments?${params.toString()}`);
+    populateDepAdminCourseSelectors(Array.isArray(data.courses) ? data.courses : []);
+
+    const rows = Array.isArray(data.assignments) ? data.assignments : [];
+    if (!rows.length) {
+      renderEmptyRow(depAdminAssignmentsTableBody, 6);
+      return;
+    }
+
+    depAdminAssignmentsTableBody.innerHTML = rows
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(item.courseCode ? `${item.courseCode} · ${item.courseName || ''}` : item.courseName || '-')}</td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${escapeHtml(item.depAdminName || item.depAdminUid || '-')}</strong>
+                <small>${escapeHtml(item.depAdminUsername || item.depAdminEmail || item.depAdminUid || '-')}</small>
+              </div>
+            </td>
+            <td>${escapeHtml(formatRoleLabel(item.depAdminRole || 'member'))}</td>
+            <td>${escapeHtml(item.assignedByName || item.assignedByUid || '-')}</td>
+            <td>${escapeHtml(formatDateTime(item.updatedAt || item.createdAt))}</td>
+            <td>
+              <div class="row-actions">
+                <button class="danger-button" data-action="remove-dep-admin-assignment" data-id="${escapeHtml(item.id)}">
+                  Remove
+                </button>
+              </div>
+            </td>
+          </tr>`
+      )
+      .join('');
+  } catch (error) {
+    renderEmptyRow(depAdminAssignmentsTableBody, 6, error.message);
+  }
+}
+
+async function searchDepAdminCandidatesList() {
+  if (!depAdminCandidatesTableBody) return;
+  setInlineMessage(depAdminMessage, '');
+
+  const query = depAdminAccountQuery ? depAdminAccountQuery.value.trim() : '';
+  if (!query || query.length < 2) {
+    renderEmptyRow(depAdminCandidatesTableBody, 6, 'Type at least 2 characters to search accounts.');
+    return;
+  }
+
+  const params = new URLSearchParams();
+  params.set('q', query);
+  if (depAdminAssignCourse && depAdminAssignCourse.value.trim()) {
+    params.set('course', depAdminAssignCourse.value.trim());
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/dep-admin/candidates?${params.toString()}`);
+    const rows = Array.isArray(data.candidates) ? data.candidates : [];
+    if (!rows.length) {
+      renderEmptyRow(depAdminCandidatesTableBody, 6, 'No matching accounts.');
+      return;
+    }
+
+    depAdminCandidatesTableBody.innerHTML = rows
+      .map((item) => {
+        const assignedCourses = Array.isArray(item.assignedCourses) && item.assignedCourses.length
+          ? item.assignedCourses.join(', ')
+          : '-';
+        const actionDisabled = item.isBanned ? 'disabled' : '';
+        return `
+          <tr>
+            <td>${escapeHtml(item.displayName || item.username || item.email || item.uid || '-')}</td>
+            <td>${escapeHtml(item.uid || '-')}</td>
+            <td>${escapeHtml(item.course || '-')}</td>
+            <td>${escapeHtml(formatRoleLabel(item.role || 'member'))}</td>
+            <td>${escapeHtml(assignedCourses)}</td>
+            <td>
+              <div class="row-actions">
+                <button class="secondary-button" data-action="assign-dep-admin" data-uid="${escapeHtml(item.uid)}" ${actionDisabled}>
+                  Assign
+                </button>
+              </div>
+            </td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(depAdminCandidatesTableBody, 6, error.message);
+  }
+}
+
+async function assignDepAdmin(uid) {
+  const targetUid = String(uid || '').trim();
+  const courseName = depAdminAssignCourse ? depAdminAssignCourse.value.trim() : '';
+  if (!targetUid) return;
+  if (!courseName) {
+    setInlineMessage(depAdminMessage, 'Select a course first.');
+    return;
+  }
+
+  try {
+    const data = await apiRequest('/api/admin/dep-admin/assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUid,
+        courseName,
+        accountQuery: depAdminAccountQuery ? depAdminAccountQuery.value.trim() : '',
+      }),
+    });
+    setInlineMessage(depAdminMessage, data.message || 'DepAdmin assigned.', 'success');
+    setPageMessage('DepAdmin assignment updated.', 'success');
+    await loadDepAdminAssignments();
+    await searchDepAdminCandidatesList();
+    await loadAccounts();
+  } catch (error) {
+    setInlineMessage(depAdminMessage, error.message);
+  }
+}
+
+async function removeDepAdminAssignment(id) {
+  const assignmentId = String(id || '').trim();
+  if (!assignmentId) return;
+  if (!window.confirm('Remove this DepAdmin assignment?')) return;
+  try {
+    const data = await apiRequest(`/api/admin/dep-admin/assignments/${encodeURIComponent(assignmentId)}`, {
+      method: 'DELETE',
+    });
+    setInlineMessage(depAdminMessage, data.message || 'DepAdmin assignment removed.', 'success');
+    setPageMessage('DepAdmin assignment removed.', 'success');
+    await loadDepAdminAssignments();
+    await loadAccounts();
+  } catch (error) {
+    setInlineMessage(depAdminMessage, error.message);
+  }
+}
+
 async function loadAccounts() {
   const params = new URLSearchParams({
     page: '1',
@@ -269,7 +1198,7 @@ async function loadAccounts() {
   try {
     const data = await apiRequest(`/api/admin/accounts?${params.toString()}`);
     if (!data.accounts.length) {
-      renderEmptyRow(accountsTableBody, 9);
+      renderEmptyRow(accountsTableBody, 13);
       return;
     }
 
@@ -279,6 +1208,9 @@ async function loadAccounts() {
         const banControl = buildBanControl(account.uid, account.status, account.userType);
         const deleteControl = buildDeleteControl(account.uid, account.userType);
         const transferOwnershipControl = buildTransferOwnershipControl(account.uid, account.userType, account.status);
+        const idVerificationControl = buildIdVerificationControl(account);
+        const emailVerificationPill = buildEmailVerificationPill(account.emailVerified === true);
+        const accountStatusPill = buildAccountStatusPill(account.status);
         const actions = [banControl, deleteControl, transferOwnershipControl].filter(Boolean).join('');
         return `
           <tr>
@@ -286,17 +1218,21 @@ async function loadAccounts() {
             <td>${escapeHtml(account.username || '-')}</td>
             <td>${escapeHtml(account.displayName || '-')}</td>
             <td>${escapeHtml(account.email || '-')}</td>
+            <td>${emailVerificationPill}</td>
             <td>${roleControl}</td>
+            <td>${escapeHtml(account.course || '-')}</td>
+            <td>${escapeHtml(account.studentNumber || '-')}</td>
+            <td>${idVerificationControl}</td>
             <td>${escapeHtml(account.recoveryEmail || '-')}</td>
-            <td>${escapeHtml(account.status)}</td>
-            <td>${escapeHtml(new Date(account.dateRegistered).toLocaleString())}</td>
+            <td>${accountStatusPill}</td>
+            <td>${escapeHtml(formatDateTime(account.dateRegistered))}</td>
             <td><div class="row-actions">${actions || '<span>-</span>'}</div></td>
           </tr>
         `;
       })
       .join('');
   } catch (error) {
-    renderEmptyRow(accountsTableBody, 9, error.message);
+    renderEmptyRow(accountsTableBody, 13, error.message);
   }
 }
 
@@ -746,6 +1682,199 @@ async function saveFaqPageEditor() {
   }
 }
 
+async function loadMobileAppPageEditor() {
+  if (!mobileAppTitle) return;
+  try {
+    setInlineMessage(mobileAppPageMessage, '');
+    const data = await apiRequest('/api/admin/site-pages/mobile-app');
+    const page = data.page || {};
+    const body = page.body || {};
+    mobileAppTitle.value = page.title || '';
+    mobileAppSubtitle.value = page.subtitle || '';
+    mobileAppDescription.value = body.description || '';
+    mobileAppQrImageUrl.value = body.qrImageUrl || '';
+    mobileAppQrAltText.value = body.qrAltText || '';
+    mobileAppDownloadUrl.value = body.downloadUrl || '';
+    mobileAppDownloadLabel.value = body.downloadLabel || '';
+  } catch (error) {
+    setInlineMessage(mobileAppPageMessage, error.message);
+  }
+}
+
+async function saveMobileAppPageEditor() {
+  if (!mobileAppTitle) return;
+  try {
+    setInlineMessage(mobileAppPageMessage, '');
+    const payload = {
+      title: mobileAppTitle.value,
+      subtitle: mobileAppSubtitle.value,
+      body: {
+        description: mobileAppDescription.value,
+        qrImageUrl: mobileAppQrImageUrl.value,
+        qrAltText: mobileAppQrAltText.value,
+        downloadUrl: mobileAppDownloadUrl.value,
+        downloadLabel: mobileAppDownloadLabel.value,
+      },
+    };
+    await apiRequest('/api/admin/site-pages/mobile-app', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setInlineMessage(mobileAppPageMessage, 'Mobile app modal content updated.', 'success');
+    setPageMessage('Site page content updated.', 'success');
+    await loadMobileAppPageEditor();
+  } catch (error) {
+    setInlineMessage(mobileAppPageMessage, error.message);
+  }
+}
+
+if (reportsTableBody) {
+  reportsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="apply-report-action"][data-report-id]');
+    if (!button) return;
+    const reportId = button.dataset.reportId;
+    if (!reportId) return;
+
+    const statusSelect = Array.from(reportsTableBody.querySelectorAll('select[data-report-status]')).find(
+      (item) => item.dataset.reportStatus === reportId
+    );
+    const actionSelect = Array.from(reportsTableBody.querySelectorAll('select[data-report-action]')).find(
+      (item) => item.dataset.reportAction === reportId
+    );
+    const status = statusSelect ? statusSelect.value : 'open';
+    const moderationAction = actionSelect ? actionSelect.value : 'none';
+    const note = window.prompt('Resolution note (optional):', '') || '';
+
+    try {
+      await apiRequest('/api/admin/reports/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reportId,
+          status,
+          moderationAction,
+          note,
+        }),
+      });
+      setPageMessage('Report action applied.', 'success');
+      await Promise.all([loadReports(), loadContent(), loadAccounts()]);
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
+if (restrictedTableBody) {
+  restrictedTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action][data-id]');
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!action || !id) return;
+
+    try {
+      if (action === 'restore-restricted') {
+        if (!window.confirm('Restore this restricted content?')) return;
+        await apiRequest(`/api/admin/restricted-contents/${encodeURIComponent(id)}/restore`, {
+          method: 'POST',
+        });
+        setPageMessage('Restricted content restored.', 'success');
+        await Promise.all([loadRestrictedContents(), loadContent()]);
+        return;
+      }
+
+      if (action === 'purge-restricted') {
+        if (!window.confirm('Purge this content permanently? This cannot be undone.')) return;
+        await apiRequest(`/api/admin/restricted-contents/${encodeURIComponent(id)}/purge`, {
+          method: 'POST',
+        });
+        setPageMessage('Restricted content purged.', 'success');
+        await Promise.all([loadRestrictedContents(), loadContent()]);
+      }
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
+if (appealsTableBody) {
+  appealsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="resolve-appeal"][data-id]');
+    if (!button) return;
+    const id = button.dataset.id;
+    if (!id) return;
+    const select = Array.from(appealsTableBody.querySelectorAll('select[data-appeal-status]')).find(
+      (item) => item.dataset.appealStatus === id
+    );
+    const status = select ? select.value : '';
+    if (!status) return;
+    const note = window.prompt('Resolution note (optional):', '') || '';
+
+    try {
+      await apiRequest(`/api/admin/appeals/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, note }),
+      });
+      setPageMessage('Appeal updated.', 'success');
+      await Promise.all([loadAppeals(), loadAccounts()]);
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
+if (professorCodesTableBody) {
+  professorCodesTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action][data-id]');
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!action || !id) return;
+
+    try {
+      if (action === 'revoke-professor-code') {
+        if (!window.confirm('Revoke this professor code? It will no longer be usable.')) return;
+        await apiRequest(`/api/admin/professor-codes/${encodeURIComponent(id)}/revoke`, {
+          method: 'POST',
+        });
+        setPageMessage('Professor code revoked.', 'success');
+        await loadProfessorCodes();
+        return;
+      }
+
+      if (action === 'reactivate-professor-code') {
+        await apiRequest(`/api/admin/professor-codes/${encodeURIComponent(id)}/reactivate`, {
+          method: 'POST',
+        });
+        setPageMessage('Professor code reactivated.', 'success');
+        await loadProfessorCodes();
+      }
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
+if (depAdminCandidatesTableBody) {
+  depAdminCandidatesTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="assign-dep-admin"][data-uid]');
+    if (!button) return;
+    const uid = button.dataset.uid || '';
+    await assignDepAdmin(uid);
+  });
+}
+
+if (depAdminAssignmentsTableBody) {
+  depAdminAssignmentsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="remove-dep-admin-assignment"][data-id]');
+    if (!button) return;
+    const id = button.dataset.id || '';
+    await removeDepAdminAssignment(id);
+  });
+}
+
 accountsTableBody.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -767,6 +1896,44 @@ accountsTableBody.addEventListener('click', async (event) => {
       });
       setPageMessage('Role updated.', 'success');
       loadAccounts();
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+    return;
+  }
+
+  if (action === 'review-id-verification') {
+    const targetStatus = String(button.dataset.status || '').trim().toLowerCase();
+    if (!['approved', 'rejected'].includes(targetStatus)) {
+      setPageMessage('Invalid verification decision payload.');
+      return;
+    }
+    if (targetStatus === 'rejected') {
+      const confirmed = window.confirm('Reject this student ID verification?');
+      if (!confirmed) return;
+    }
+    const notePrompt =
+      targetStatus === 'approved'
+        ? 'Approval note (optional):'
+        : 'Rejection reason (optional):';
+    const note = window.prompt(notePrompt, '') || '';
+
+    try {
+      await apiRequest(`/api/id-verification/${encodeURIComponent(uid)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: targetStatus,
+          note,
+        }),
+      });
+      setPageMessage(
+        targetStatus === 'approved'
+          ? 'Student ID verification approved.'
+          : 'Student ID verification rejected.',
+        'success'
+      );
+      await loadAccounts();
     } catch (error) {
       setPageMessage(error.message);
     }
@@ -908,8 +2075,67 @@ contentTabButtons.forEach((button) => {
 
 if (refreshLogs) refreshLogs.addEventListener('click', loadLogs);
 if (refreshReports) refreshReports.addEventListener('click', loadReports);
+if (refreshRestricted) refreshRestricted.addEventListener('click', loadRestrictedContents);
+if (refreshAppeals) refreshAppeals.addEventListener('click', loadAppeals);
 if (refreshAccounts) refreshAccounts.addEventListener('click', loadAccounts);
+if (refreshProfessorCodes) refreshProfessorCodes.addEventListener('click', loadProfessorCodes);
+if (refreshDepAdminAssignments) refreshDepAdminAssignments.addEventListener('click', loadDepAdminAssignments);
 if (refreshContent) refreshContent.addEventListener('click', loadContent);
+if (refreshAiUsage) refreshAiUsage.addEventListener('click', loadAiUsage);
+if (aiUsageDays) aiUsageDays.addEventListener('change', loadAiUsage);
+if (refreshAiReports) refreshAiReports.addEventListener('click', loadAiReports);
+if (aiReportsFlaggedOnly) aiReportsFlaggedOnly.addEventListener('change', loadAiReports);
+if (aiReportsRisk) aiReportsRisk.addEventListener('change', loadAiReports);
+if (aiReportsTargetType) aiReportsTargetType.addEventListener('change', loadAiReports);
+if (aiReportsStatus) aiReportsStatus.addEventListener('change', loadAiReports);
+if (aiReportsQuery) {
+  aiReportsQuery.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadAiReports();
+    }
+  });
+}
+if (reloadAiFeatures) reloadAiFeatures.addEventListener('click', loadAiFeatureStates);
+if (saveAiFeatures) {
+  saveAiFeatures.addEventListener('click', () => {
+    saveAiFeatureStates();
+  });
+}
+if (generateProfessorCodes) generateProfessorCodes.addEventListener('click', generateProfessorCodesBatch);
+if (searchDepAdminCandidates) searchDepAdminCandidates.addEventListener('click', searchDepAdminCandidatesList);
+if (depAdminAccountQuery) {
+  depAdminAccountQuery.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      searchDepAdminCandidatesList();
+    }
+  });
+}
+
+if (purgeExpiredRestricted) {
+  purgeExpiredRestricted.addEventListener('click', async () => {
+    if (!window.confirm('Purge all expired restricted items now?')) return;
+    try {
+      const result = await apiRequest('/api/admin/restricted-contents/purge-expired', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 300 }),
+      });
+      setPageMessage(
+        `Expired purge complete. Processed ${Number(result.processed || 0)}, purged ${Number(result.purged || 0)}.`,
+        'success'
+      );
+      await Promise.all([loadRestrictedContents(), loadContent()]);
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
+if (sendCustomNotification) {
+  sendCustomNotification.addEventListener('click', sendCustomNotificationRequest);
+}
 
 if (assignModerator) {
   assignModerator.addEventListener('click', () => handleModeratorAction('assign'));
@@ -933,6 +2159,14 @@ if (saveFaqPage) {
 
 if (reloadFaqPage) {
   reloadFaqPage.addEventListener('click', loadFaqPageEditor);
+}
+
+if (saveMobileAppPage) {
+  saveMobileAppPage.addEventListener('click', saveMobileAppPageEditor);
+}
+
+if (reloadMobileAppPage) {
+  reloadMobileAppPage.addEventListener('click', loadMobileAppPageEditor);
 }
 
 if (spacesCommunitySelect) {
@@ -964,6 +2198,10 @@ if (reloadSpacesRooms) {
   });
 }
 
+if (depAdminCandidatesTableBody) {
+  renderEmptyRow(depAdminCandidatesTableBody, 6, 'Search accounts to assign as DepAdmin.');
+}
+
 async function init() {
   try {
     await loadAdminContext();
@@ -971,10 +2209,18 @@ async function init() {
       loadCommunities(),
       loadLogs(),
       loadReports(),
+      loadRestrictedContents(),
+      loadAppeals(),
       loadAccounts(),
+      loadProfessorCodes(),
+      loadDepAdminAssignments(),
       loadAboutPageEditor(),
       loadFaqPageEditor(),
+      loadMobileAppPageEditor(),
       loadRoomContextLabelEditor(),
+      loadAiFeatureStates(),
+      loadAiUsage(),
+      loadAiReports(),
     ]);
     setContentHeaders(currentContentTab);
     await loadContent();

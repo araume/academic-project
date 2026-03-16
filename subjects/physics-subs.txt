@@ -1,0 +1,32 @@
+University Physics I (Lecture)
+University Physics I (Laboratory)
+Computational Physics I (Lecture)
+Computational Physics I (Laboratory)
+University Physics II (Lecture)
+University Physics II (Laboratory)
+Computational Physics II (Lecture)
+Computational Physics II (Laboratory)
+University Physics III (Lecture)
+University Physics III (Laboratory)
+Computational Physics III (Lecture)
+Computational Physics III (Laboratory)
+University Physics IV (Lecture)
+University Physics IV (Laboratory)
+Mathematical Physics I
+Mathematical Physics II
+Mathematical Physics III
+Modern Physics
+Theoretical Mechanics I
+Theoretical Mechanics II
+Quantum Mechanics I
+Quantum Mechanics II
+Electromagnetism I
+Electromagnetism II
+Advanced Laboratory
+Electronics (Lecture)
+Electronics (Laboratory)
+Optics
+Statistical Mechanics
+Physics Research I
+Physics Research II
+Solid State Physics

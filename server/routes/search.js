@@ -3,6 +3,8 @@ const pool = require('../db/pool');
 const requireAuthApi = require('../middleware/requireAuthApi');
 const { getMongoDb } = require('../db/mongo');
 const { getSignedUrl } = require('../services/storage');
+const { hasAdminPrivileges } = require('../services/roleAccess');
+const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 
 const router = express.Router();
 
@@ -107,11 +109,23 @@ function enforceRateLimit(req, res, action, limitPerWindow) {
 function buildVisibilityFilter(user) {
   const userCourse = user && user.course;
   const userUid = user && user.uid;
+  const includeCourseExclusive = isUnifiedVisibilityEnabled();
   const filter = {
-    $or: [{ visibility: 'public' }],
+    moderationStatus: { $ne: 'restricted' },
+    $or: [{ visibility: 'public' }, { visibility: null }, { visibility: { $exists: false } }],
   };
   if (userCourse) {
-    filter.$or.push({ visibility: 'private', course: userCourse });
+    if (includeCourseExclusive) {
+      filter.$or.push({
+        visibility: { $in: ['private', 'course_exclusive'] },
+        course: userCourse,
+      });
+    } else {
+      filter.$or.push({
+        visibility: 'private',
+        course: userCourse,
+      });
+    }
   }
   if (userUid) {
     filter.$or.push({ uploaderUid: userUid });
@@ -240,7 +254,7 @@ async function searchPosts({ viewer, query, limit }) {
         displayName: profile?.displayName || post.uploader?.displayName || 'Member',
         photoLink: profile?.photoLink || post.uploader?.photoLink || null,
       },
-      targetUrl: `/home?post=${encodeURIComponent(post._id.toString())}`,
+      targetUrl: `/posts/${encodeURIComponent(post._id.toString())}`,
     };
   });
 }
@@ -261,6 +275,7 @@ async function searchUsers({ viewer, query, limit }) {
     values.push(`%${query.toLowerCase()}%`);
     where.push(`(
       lower(COALESCE(p.display_name, a.display_name, a.username, a.email)) LIKE $${values.length}
+      OR lower(COALESCE(a.username, '')) LIKE $${values.length}
       OR lower(COALESCE(a.course, '')) LIKE $${values.length}
       OR lower(COALESCE(p.bio, '')) LIKE $${values.length}
     )`);
@@ -298,6 +313,7 @@ async function searchUsers({ viewer, query, limit }) {
     result.rows.map(async (row) => ({
       uid: row.uid,
       displayName: row.profile_display_name || row.account_display_name || row.username || row.email || 'Member',
+      username: row.username || '',
       bio: row.bio || null,
       course: row.course || null,
       photoLink: await signIfNeeded(row.photo_link),
@@ -312,23 +328,29 @@ async function searchUsers({ viewer, query, limit }) {
 
 async function searchDocuments({ viewer, query, limit }) {
   const values = [];
-  const where = [];
+  const where = ['COALESCE(d.is_restricted, false) = false'];
   const userCourse = viewer && viewer.course ? String(viewer.course).trim() : '';
   const userUid = viewer && viewer.uid ? viewer.uid : '';
+  const isPrivilegedViewer = hasAdminPrivileges(viewer);
+  const sharedVisibilityClause = isUnifiedVisibilityEnabled()
+    ? "d.visibility IN ('private', 'course_exclusive')"
+    : "d.visibility = 'private'";
 
-  if (userCourse && userUid) {
-    values.push(userCourse);
-    const courseParam = values.length;
-    values.push(userUid);
-    const uidParam = values.length;
-    where.push(
-      `(d.visibility = 'public' OR (d.visibility = 'private' AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
-    );
-  } else if (userUid) {
-    values.push(userUid);
-    where.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
-  } else {
-    where.push(`d.visibility = 'public'`);
+  if (!isPrivilegedViewer) {
+    if (userCourse && userUid) {
+      values.push(userCourse);
+      const courseParam = values.length;
+      values.push(userUid);
+      const uidParam = values.length;
+      where.push(
+        `(d.visibility = 'public' OR (${sharedVisibilityClause} AND (d.course = $${courseParam} OR d.uploader_uid = $${uidParam})))`
+      );
+    } else if (userUid) {
+      values.push(userUid);
+      where.push(`(d.visibility = 'public' OR d.uploader_uid = $${values.length})`);
+    } else {
+      where.push(`d.visibility = 'public'`);
+    }
   }
 
   if (userUid) {

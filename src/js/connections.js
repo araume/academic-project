@@ -24,6 +24,12 @@ const requestList = document.getElementById('requestList');
 const conversationList = document.getElementById('conversationList');
 const activeConversationTitle = document.getElementById('activeConversationTitle');
 const activeConversationMeta = document.getElementById('activeConversationMeta');
+const conversationControls = document.getElementById('conversationControls');
+const toggleReadButton = document.getElementById('toggleReadButton');
+const toggleArchiveButton = document.getElementById('toggleArchiveButton');
+const toggleMuteButton = document.getElementById('toggleMuteButton');
+const deleteConversationButton = document.getElementById('deleteConversationButton');
+const leaveConversationButton = document.getElementById('leaveConversationButton');
 const messageList = document.getElementById('messageList');
 const typingIndicator = document.getElementById('typingIndicator');
 const messageForm = document.getElementById('messageForm');
@@ -39,8 +45,6 @@ const messageAttachmentInput = document.getElementById('messageAttachmentInput')
 const messageAttachmentPreview = document.getElementById('messageAttachmentPreview');
 const messageAttachmentName = document.getElementById('messageAttachmentName');
 const removeMessageAttachmentButton = document.getElementById('removeMessageAttachmentButton');
-const emojiToggleButton = document.getElementById('emojiToggleButton');
-const emojiPicker = document.getElementById('emojiPicker');
 
 const openGroupModal = document.getElementById('openGroupModal');
 const groupModal = document.getElementById('groupModal');
@@ -49,8 +53,6 @@ const groupForm = document.getElementById('groupForm');
 const groupTitle = document.getElementById('groupTitle');
 const groupMembers = document.getElementById('groupMembers');
 const groupMessage = document.getElementById('groupMessage');
-
-const DEFAULT_AVATAR = '/assets/LOGO.png';
 
 const state = {
   me: null,
@@ -72,13 +74,10 @@ let pollTimer = null;
 let typingStopTimer = null;
 let lastTypingPingAt = 0;
 
-const EMOJI_CHOICES = ['😀', '😁', '😂', '😊', '😍', '😎', '🤔', '👍', '👏', '🔥', '🎯', '📚', '✅', '🚀'];
-
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -94,6 +93,19 @@ function setNavAvatar(photoLink, displayName) {
   }
 
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setAvatarContent(container, photoLink, displayName, altText) {
+  if (!container) return;
+  container.textContent = '';
+  if (photoLink) {
+    const img = document.createElement('img');
+    img.src = photoLink;
+    img.alt = altText || `${displayName || 'User'} profile photo`;
+    container.appendChild(img);
+    return;
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function showMessage(target, text, type = 'error') {
@@ -147,19 +159,6 @@ function setChatFocusMode(enabled) {
   if (chatFocusToggle) {
     chatFocusToggle.textContent = state.chatFocus ? 'Exit expanded' : 'Expand chat';
   }
-}
-
-function renderEmojiPicker() {
-  if (!emojiPicker) return;
-  emojiPicker.innerHTML = '';
-  EMOJI_CHOICES.forEach((emoji) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'emoji-option';
-    button.dataset.emoji = emoji;
-    button.textContent = emoji;
-    emojiPicker.appendChild(button);
-  });
 }
 
 async function apiRequest(url, options = {}) {
@@ -299,10 +298,7 @@ function renderUserCards() {
 
     const avatar = document.createElement('div');
     avatar.className = 'person-avatar';
-    const avatarImg = document.createElement('img');
-    avatarImg.src = user.photoLink || DEFAULT_AVATAR;
-    avatarImg.alt = `${user.displayName || 'User'} profile photo`;
-    avatar.appendChild(avatarImg);
+    setAvatarContent(avatar, user.photoLink, user.displayName || 'User', `${user.displayName || 'User'} profile photo`);
 
     const head = document.createElement('div');
     head.className = 'person-head';
@@ -312,7 +308,8 @@ function renderUserCards() {
 
     const meta = document.createElement('p');
     meta.className = 'person-meta';
-    meta.textContent = `${user.course || 'No course set'} • ${relationLabel(user.relation)}`;
+    const usernameHandle = user.username ? `@${user.username}` : '';
+    meta.textContent = `${usernameHandle ? `${usernameHandle} • ` : ''}${user.course || 'No course set'} • ${relationLabel(user.relation)}`;
 
     const presenceInfo = describePresence(user.presence);
     const presence = document.createElement('div');
@@ -368,6 +365,7 @@ function renderUserCards() {
     } else {
       const followButton = document.createElement('button');
       followButton.type = 'button';
+      followButton.className = 'follow-primary';
       followButton.dataset.action = 'follow';
       followButton.dataset.uid = user.uid;
       followButton.textContent = 'Follow';
@@ -407,10 +405,12 @@ function renderRequests() {
 
     const avatar = document.createElement('div');
     avatar.className = 'person-avatar';
-    const img = document.createElement('img');
-    img.src = request.user.photoLink || DEFAULT_AVATAR;
-    img.alt = `${request.user.displayName || 'User'} profile photo`;
-    avatar.appendChild(img);
+    setAvatarContent(
+      avatar,
+      request.user.photoLink,
+      request.user.displayName || 'User',
+      `${request.user.displayName || 'User'} profile photo`
+    );
 
     const metaWrap = document.createElement('div');
     const title = document.createElement('h4');
@@ -421,7 +421,10 @@ function renderRequests() {
       )
     );
     const meta = document.createElement('p');
-    meta.textContent = request.user.course || 'No course';
+    const requestUsernameHandle = request.user && request.user.username
+      ? `@${request.user.username}`
+      : '';
+    meta.textContent = `${requestUsernameHandle ? `${requestUsernameHandle} • ` : ''}${request.user.course || 'No course'}`;
 
     metaWrap.appendChild(title);
     metaWrap.appendChild(meta);
@@ -473,9 +476,16 @@ function renderConversationList() {
 
     const title = document.createElement('h4');
     title.textContent = conversation.title || 'Conversation';
+    if (conversation.unreadCount > 0) {
+      title.textContent = `(${conversation.unreadCount}) ${title.textContent}`;
+    }
 
     const preview = document.createElement('p');
-    preview.textContent = conversation.lastMessage ? conversation.lastMessage.body.slice(0, 72) : 'No messages yet';
+    const previewBody = conversation.lastMessage ? conversation.lastMessage.body.slice(0, 72) : 'No messages yet';
+    const badges = [];
+    if (conversation.isMuted) badges.push('Muted');
+    if (conversation.isArchived) badges.push('Archived');
+    preview.textContent = badges.length ? `${badges.join(' • ')} • ${previewBody}` : previewBody;
 
     button.appendChild(title);
     button.appendChild(preview);
@@ -511,6 +521,39 @@ function renderTypingIndicator() {
   typingIndicator.textContent = `${names[0]}, ${names[1]} and others are typing...`;
 }
 
+function getActiveConversation() {
+  if (!state.activeConversationId) return null;
+  return state.conversations.find((item) => item.id === state.activeConversationId) || null;
+}
+
+function renderConversationControls() {
+  const conversation = getActiveConversation();
+  const hasConversation = Boolean(conversation);
+
+  if (conversationControls) {
+    conversationControls.classList.toggle('is-hidden', !hasConversation);
+  }
+
+  if (toggleReadButton) {
+    toggleReadButton.disabled = !hasConversation;
+    toggleReadButton.textContent = conversation && conversation.isRead ? 'Mark unread' : 'Mark read';
+  }
+  if (toggleArchiveButton) {
+    toggleArchiveButton.disabled = !hasConversation;
+    toggleArchiveButton.textContent = conversation && conversation.isArchived ? 'Unarchive' : 'Archive';
+  }
+  if (toggleMuteButton) {
+    toggleMuteButton.disabled = !hasConversation;
+    toggleMuteButton.textContent = conversation && conversation.isMuted ? 'Unmute' : 'Mute';
+  }
+  if (deleteConversationButton) {
+    deleteConversationButton.disabled = !hasConversation;
+  }
+  if (leaveConversationButton) {
+    leaveConversationButton.disabled = !hasConversation || !(conversation && conversation.canLeave);
+  }
+}
+
 function renderMessages() {
   if (!messageList || !activeConversationTitle || !activeConversationMeta) return;
 
@@ -526,12 +569,11 @@ function renderMessages() {
     messageInput.value = '';
     messageInput.disabled = true;
     messageSend.disabled = true;
-    if (emojiToggleButton) emojiToggleButton.disabled = true;
     if (messageAttachmentInput) messageAttachmentInput.disabled = true;
-    if (emojiPicker) emojiPicker.classList.add('is-hidden');
     clearReplySelection();
     clearMessageAttachment();
     renderTypingIndicator();
+    renderConversationControls();
     renderEmptyState(messageList, 'Pick a conversation to start messaging.');
     return;
   }
@@ -541,11 +583,11 @@ function renderMessages() {
     messageInput.value = '';
     messageInput.disabled = true;
     messageSend.disabled = true;
-    if (emojiToggleButton) emojiToggleButton.disabled = true;
     if (messageAttachmentInput) messageAttachmentInput.disabled = true;
     clearReplySelection();
     clearMessageAttachment();
     renderTypingIndicator();
+    renderConversationControls();
     renderEmptyState(messageList, 'Conversation not found.');
     return;
   }
@@ -555,9 +597,9 @@ function renderMessages() {
 
   messageInput.disabled = false;
   messageSend.disabled = false;
-  if (emojiToggleButton) emojiToggleButton.disabled = false;
   if (messageAttachmentInput) messageAttachmentInput.disabled = false;
   renderTypingIndicator();
+  renderConversationControls();
 
   const messages = state.messagesByConversation.get(state.activeConversationId) || [];
   if (!messages.length) {
@@ -627,15 +669,17 @@ function renderMessages() {
     const actions = document.createElement('div');
     actions.className = 'message-actions';
 
-    const replyButton = document.createElement('button');
-    replyButton.type = 'button';
-    replyButton.className = 'message-action-button';
-    replyButton.dataset.action = 'reply-message';
-    replyButton.dataset.id = String(message.id);
-    replyButton.textContent = 'Reply';
-    actions.appendChild(replyButton);
+    if (!message.isDeleted) {
+      const replyButton = document.createElement('button');
+      replyButton.type = 'button';
+      replyButton.className = 'message-action-button';
+      replyButton.dataset.action = 'reply-message';
+      replyButton.dataset.id = String(message.id);
+      replyButton.textContent = 'Reply';
+      actions.appendChild(replyButton);
+    }
 
-    if (message.senderUid !== state.me?.uid) {
+    if (!message.isDeleted && message.senderUid !== state.me?.uid) {
       const reportButton = document.createElement('button');
       reportButton.type = 'button';
       reportButton.className = 'message-action-button warn';
@@ -645,7 +689,19 @@ function renderMessages() {
       actions.appendChild(reportButton);
     }
 
-    bubble.appendChild(actions);
+    if (!message.isDeleted && message.senderUid === state.me?.uid) {
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'message-action-button delete';
+      deleteButton.dataset.action = 'delete-message';
+      deleteButton.dataset.id = String(message.id);
+      deleteButton.textContent = 'Delete';
+      actions.appendChild(deleteButton);
+    }
+
+    if (actions.children.length) {
+      bubble.appendChild(actions);
+    }
     messageList.appendChild(bubble);
   });
 
@@ -699,7 +755,7 @@ async function loadRequests() {
 }
 
 async function refreshConversationList(keepSelection = true) {
-  const data = await apiRequest('/api/connections/conversations?page=1&pageSize=40');
+  const data = await apiRequest('/api/connections/conversations?page=1&pageSize=40&scope=all');
   state.conversations = data.conversations || [];
 
   if (!keepSelection || !state.activeConversationId) {
@@ -726,6 +782,12 @@ async function loadConversations(keepSelection = true) {
 async function loadMessages(conversationId) {
   const data = await apiRequest(`/api/connections/conversations/${conversationId}/messages?page=1&pageSize=80`);
   state.messagesByConversation.set(conversationId, data.messages || []);
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (conversation) {
+    conversation.unreadCount = 0;
+    conversation.isRead = true;
+  }
+  renderConversationList();
   renderMessages();
 }
 
@@ -912,6 +974,92 @@ async function handleRequestAction(action, requestId) {
     if (data.threadId) {
       await openConversation(Number(data.threadId));
     }
+  }
+}
+
+async function handleConversationAction(action) {
+  const conversation = getActiveConversation();
+  if (!conversation || !state.activeConversationId) {
+    showMessage(messageFeedback, 'Select a conversation first.');
+    return;
+  }
+
+  const threadId = state.activeConversationId;
+
+  if (action === 'toggle-read') {
+    const endpoint = conversation.isRead ? 'mark-unread' : 'mark-read';
+    await apiRequest(`/api/connections/conversations/${threadId}/${endpoint}`, {
+      method: 'POST',
+    });
+    conversation.isRead = !conversation.isRead;
+    conversation.unreadCount = conversation.isRead ? 0 : Math.max(1, Number(conversation.unreadCount || 0));
+    renderConversationList();
+    renderConversationControls();
+    showMessage(messageFeedback, conversation.isRead ? 'Conversation marked as read.' : 'Conversation marked as unread.', 'success');
+    return;
+  }
+
+  if (action === 'toggle-archive') {
+    const endpoint = conversation.isArchived ? 'unarchive' : 'archive';
+    await apiRequest(`/api/connections/conversations/${threadId}/${endpoint}`, {
+      method: 'POST',
+    });
+    await refreshConversationList(true);
+    showMessage(messageFeedback, conversation.isArchived ? 'Conversation unarchived.' : 'Conversation archived.', 'success');
+    return;
+  }
+
+  if (action === 'toggle-mute') {
+    const endpoint = conversation.isMuted ? 'unmute' : 'mute';
+    await apiRequest(`/api/connections/conversations/${threadId}/${endpoint}`, {
+      method: 'POST',
+    });
+    conversation.isMuted = !conversation.isMuted;
+    renderConversationList();
+    renderConversationControls();
+    showMessage(messageFeedback, conversation.isMuted ? 'Conversation muted.' : 'Conversation unmuted.', 'success');
+    return;
+  }
+
+  if (action === 'delete-conversation') {
+    const confirmed = window.confirm('Delete this conversation from your list? New messages can make it appear again.');
+    if (!confirmed) return;
+    await apiRequest(`/api/connections/conversations/${threadId}`, {
+      method: 'DELETE',
+    });
+    state.messagesByConversation.delete(threadId);
+    state.typingByConversation.delete(threadId);
+    state.activeConversationId = null;
+    await refreshConversationList(false);
+    if (state.activeConversationId) {
+      await Promise.all([loadMessages(state.activeConversationId), loadTypingUsers(state.activeConversationId)]);
+    } else {
+      renderMessages();
+    }
+    showMessage(messageFeedback, 'Conversation deleted from your view.', 'success');
+    return;
+  }
+
+  if (action === 'leave-conversation') {
+    if (!conversation.canLeave) {
+      showMessage(messageFeedback, 'Only group conversations can be left.');
+      return;
+    }
+    const confirmed = window.confirm('Leave this group conversation?');
+    if (!confirmed) return;
+    await apiRequest(`/api/connections/conversations/${threadId}/leave`, {
+      method: 'POST',
+    });
+    state.messagesByConversation.delete(threadId);
+    state.typingByConversation.delete(threadId);
+    state.activeConversationId = null;
+    await refreshConversationList(false);
+    if (state.activeConversationId) {
+      await Promise.all([loadMessages(state.activeConversationId), loadTypingUsers(state.activeConversationId)]);
+    } else {
+      renderMessages();
+    }
+    showMessage(messageFeedback, 'You left the group conversation.', 'success');
   }
 }
 
@@ -1169,15 +1317,52 @@ if (messageList) {
     }
 
     if (action === 'report-message') {
-      const reasonInput = window.prompt('Report this message? Optional reason:', '');
-      if (reasonInput === null) return;
+      const reportPayload =
+        typeof window.showReportDialog === 'function'
+          ? await window.showReportDialog({
+              title: 'Report message',
+              subtitle: 'Select a reason and include optional details.',
+            })
+          : (() => {
+              const reason = window.prompt('Report reason:', '');
+              if (reason === null) return null;
+              const text = reason.trim();
+              return {
+                category: 'other',
+                customReason: text || 'Other',
+                details: null,
+                reason: text || 'Other',
+              };
+            })();
+      if (!reportPayload) return;
       try {
         await apiRequest(`/api/connections/messages/${messageId}/report`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: reasonInput.trim() }),
+          body: JSON.stringify(reportPayload),
         });
         showMessage(messageFeedback, 'Message reported.', 'success');
+      } catch (error) {
+        showMessage(messageFeedback, error.message);
+      }
+    }
+
+    if (action === 'delete-message') {
+      const confirmed = window.confirm('Delete this message for everyone in the conversation?');
+      if (!confirmed) return;
+      try {
+        const data = await apiRequest(`/api/connections/messages/${messageId}`, {
+          method: 'DELETE',
+        });
+        const activeMessages = state.messagesByConversation.get(state.activeConversationId) || [];
+        const index = activeMessages.findIndex((item) => Number(item.id) === messageId);
+        if (index !== -1) {
+          activeMessages[index] = data.message || activeMessages[index];
+          state.messagesByConversation.set(state.activeConversationId, activeMessages);
+          renderMessages();
+        }
+        await refreshConversationList(true);
+        showMessage(messageFeedback, 'Message deleted.', 'success');
       } catch (error) {
         showMessage(messageFeedback, error.message);
       }
@@ -1217,25 +1402,59 @@ if (clearReplyButton) {
   });
 }
 
-if (emojiToggleButton && emojiPicker) {
-  emojiToggleButton.addEventListener('click', () => {
-    emojiPicker.classList.toggle('is-hidden');
-  });
-}
-
-if (emojiPicker) {
-  emojiPicker.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-emoji]');
-    if (!button || !messageInput) return;
-    messageInput.value = `${messageInput.value || ''}${button.dataset.emoji || ''}`;
-    messageInput.focus();
-    queueTypingHeartbeat();
-  });
-}
-
 if (chatFocusToggle) {
   chatFocusToggle.addEventListener('click', () => {
     setChatFocusMode(!state.chatFocus);
+  });
+}
+
+if (toggleReadButton) {
+  toggleReadButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('toggle-read');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (toggleArchiveButton) {
+  toggleArchiveButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('toggle-archive');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (toggleMuteButton) {
+  toggleMuteButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('toggle-mute');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (deleteConversationButton) {
+  deleteConversationButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('delete-conversation');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
+  });
+}
+
+if (leaveConversationButton) {
+  leaveConversationButton.addEventListener('click', async () => {
+    try {
+      await handleConversationAction('leave-conversation');
+    } catch (error) {
+      showMessage(messageFeedback, error.message);
+    }
   });
 }
 
@@ -1286,8 +1505,8 @@ window.addEventListener('beforeunload', () => {
 
 async function init() {
   try {
-    renderEmojiPicker();
     setChatFocusMode(false);
+    renderConversationControls();
     await loadBootstrap();
     renderUserCards();
     setActiveRequestTab(state.activeRequestTab);

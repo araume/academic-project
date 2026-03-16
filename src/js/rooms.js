@@ -12,6 +12,11 @@ const workspaceMessage = document.getElementById('workspaceMessage');
 
 const stateFilter = document.getElementById('stateFilter');
 const mineOnlyToggle = document.getElementById('mineOnlyToggle');
+const meetSearchForm = document.getElementById('meetSearchForm');
+const meetIdSearchInput = document.getElementById('meetIdSearchInput');
+const meetIdSearchPasswordInput = document.getElementById('meetIdSearchPasswordInput');
+const searchMeetIdButton = document.getElementById('searchMeetIdButton');
+const meetSearchResult = document.getElementById('meetSearchResult');
 const refreshRoomsButton = document.getElementById('refreshRoomsButton');
 const openCreateRoomButton = document.getElementById('openCreateRoomButton');
 const roomsList = document.getElementById('roomsList');
@@ -42,8 +47,26 @@ const submitRoomButton = document.getElementById('submitRoomButton');
 const roomFormMessage = document.getElementById('roomFormMessage');
 const inviteResult = document.getElementById('inviteResult');
 const inviteResultLink = document.getElementById('inviteResultLink');
+const forwardRoomModal = document.getElementById('forwardRoomModal');
+const forwardRoomModalClose = document.getElementById('forwardRoomModalClose');
+const forwardRoomMeta = document.getElementById('forwardRoomMeta');
+const forwardRoomSearchInput = document.getElementById('forwardRoomSearchInput');
+const forwardRoomMessage = document.getElementById('forwardRoomMessage');
+const forwardRoomList = document.getElementById('forwardRoomList');
 const callPanelCard = document.getElementById('callPanelCard');
 const callPanelStatus = document.getElementById('callPanelStatus');
+const roomAiFeaturePill = document.getElementById('roomAiFeaturePill');
+const callAiPanel = document.getElementById('callAiPanel');
+const callAiFeaturePill = document.getElementById('callAiFeaturePill');
+const callAiConsentToggle = document.getElementById('callAiConsentToggle');
+const callAiTranscriptInput = document.getElementById('callAiTranscriptInput');
+const callAiSummaryButton = document.getElementById('callAiSummaryButton');
+const callAiSummaryClearButton = document.getElementById('callAiSummaryClearButton');
+const callAiSummaryMessage = document.getElementById('callAiSummaryMessage');
+const callAiResult = document.getElementById('callAiResult');
+const callAiSummaryText = document.getElementById('callAiSummaryText');
+const callAiKeyPoints = document.getElementById('callAiKeyPoints');
+const callAiActionItems = document.getElementById('callAiActionItems');
 const callFrameWrap = document.getElementById('callFrameWrap');
 const callFrame = document.getElementById('callFrame');
 const callPlaceholder = document.getElementById('callPlaceholder');
@@ -54,14 +77,23 @@ const initialSearchParams = new URLSearchParams(window.location.search);
 const inviteTokenFromUrl = (initialSearchParams.get('invite') || '').trim();
 const inviteRoomMeetIdFromUrl = (initialSearchParams.get('room') || '').trim().toUpperCase();
 const ROOMS_PREJOIN_KEY = 'rooms-prejoin';
+const CALL_HEARTBEAT_MS = 4000;
 
 const state = {
   viewer: null,
+  availableCommunities: [],
+  requestHostCommunities: [],
   contexts: [],
   selectedContextKey: 'public',
   rooms: [],
   pendingRequests: [],
+  searchedRoom: null,
+  forwardRoom: null,
+  forwardConversations: [],
   currentCall: null,
+  callHeartbeatTimer: null,
+  callHeartbeatInFlight: false,
+  roomAiSummaryEnabled: false,
 };
 
 function consumePrejoinedRoom() {
@@ -91,12 +123,8 @@ function consumePrejoinedRoom() {
 
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  return safe
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -145,6 +173,109 @@ function showMessage(target, text, type = 'error') {
   target.classList.toggle('success', type === 'success');
 }
 
+function setAiFeaturePills() {
+  const enabled = state.roomAiSummaryEnabled === true;
+  if (roomAiFeaturePill) {
+    roomAiFeaturePill.textContent = enabled ? 'AI summary: enabled' : 'AI summary: disabled';
+    roomAiFeaturePill.classList.toggle('is-active', enabled);
+    roomAiFeaturePill.classList.toggle('is-inactive', !enabled);
+  }
+  if (callAiFeaturePill) {
+    if (!enabled) {
+      callAiFeaturePill.textContent = 'Disabled';
+      callAiFeaturePill.classList.remove('is-active');
+      callAiFeaturePill.classList.add('is-inactive');
+      return;
+    }
+    const inCall = Boolean(state.currentCall && state.currentCall.roomId);
+    callAiFeaturePill.textContent = inCall ? 'Ready' : 'Inactive';
+    callAiFeaturePill.classList.toggle('is-active', inCall);
+    callAiFeaturePill.classList.toggle('is-inactive', !inCall);
+  }
+}
+
+function clearRoomAiSummaryResult() {
+  if (callAiResult) {
+    callAiResult.classList.add('is-hidden');
+  }
+  if (callAiSummaryText) {
+    callAiSummaryText.textContent = '';
+  }
+  if (callAiKeyPoints) {
+    callAiKeyPoints.innerHTML = '';
+  }
+  if (callAiActionItems) {
+    callAiActionItems.innerHTML = '';
+  }
+}
+
+function renderRoomAiSummaryResult(summary) {
+  if (!callAiResult || !summary) return;
+  if (callAiSummaryText) {
+    callAiSummaryText.textContent = summary.summary || 'No summary generated.';
+  }
+
+  const keyPoints = Array.isArray(summary.keyPoints) ? summary.keyPoints : [];
+  if (callAiKeyPoints) {
+    callAiKeyPoints.innerHTML = '';
+    if (!keyPoints.length) {
+      const item = document.createElement('li');
+      item.textContent = 'No key points generated.';
+      callAiKeyPoints.appendChild(item);
+    } else {
+      keyPoints.forEach((point) => {
+        const item = document.createElement('li');
+        item.textContent = String(point || '');
+        callAiKeyPoints.appendChild(item);
+      });
+    }
+  }
+
+  const actionItems = Array.isArray(summary.actionItems) ? summary.actionItems : [];
+  if (callAiActionItems) {
+    callAiActionItems.innerHTML = '';
+    if (!actionItems.length) {
+      const item = document.createElement('li');
+      item.textContent = 'No action items generated.';
+      callAiActionItems.appendChild(item);
+    } else {
+      actionItems.forEach((point) => {
+        const item = document.createElement('li');
+        item.textContent = String(point || '');
+        callAiActionItems.appendChild(item);
+      });
+    }
+  }
+  callAiResult.classList.remove('is-hidden');
+}
+
+function updateRoomAiControls() {
+  const enabled = state.roomAiSummaryEnabled === true;
+  const inCall = Boolean(state.currentCall && state.currentCall.roomId);
+  if (callAiPanel) {
+    callAiPanel.classList.toggle('is-hidden', !enabled);
+  }
+  if (callAiConsentToggle) {
+    callAiConsentToggle.disabled = !enabled || !inCall;
+  }
+  if (callAiTranscriptInput) {
+    callAiTranscriptInput.disabled = !enabled || !inCall;
+  }
+  if (callAiSummaryButton) {
+    callAiSummaryButton.disabled = !enabled || !inCall;
+  }
+  if (callAiSummaryClearButton) {
+    callAiSummaryClearButton.disabled = !enabled;
+  }
+  if (!enabled) {
+    showMessage(callAiSummaryMessage, 'AI meeting summary is disabled by configuration.');
+    clearRoomAiSummaryResult();
+  } else if (!inCall) {
+    showMessage(callAiSummaryMessage, 'Join a live call to enable AI summary.');
+  }
+  setAiFeaturePills();
+}
+
 function renderEmpty(target, text) {
   target.innerHTML = '';
   const node = document.createElement('div');
@@ -175,6 +306,13 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function normalizeMeetId(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '');
+}
+
 function selectedContext() {
   return state.contexts.find((context) => context.key === state.selectedContextKey) || state.contexts[0] || null;
 }
@@ -182,6 +320,119 @@ function selectedContext() {
 function isViewerRoomCreator(room) {
   if (!room || !room.creator || !room.creator.uid || !state.viewer || !state.viewer.uid) return false;
   return String(room.creator.uid).trim().toLowerCase() === String(state.viewer.uid).trim().toLowerCase();
+}
+
+function applyCallUrlOverrides(joinUrl) {
+  if (!joinUrl) return '';
+  try {
+    const url = new URL(joinUrl);
+    const hashValue = url.hash ? url.hash.replace(/^#/, '') : '';
+    const hashParams = new URLSearchParams(hashValue);
+    if (!hashParams.has('config.prejoinPageEnabled')) {
+      hashParams.set('config.prejoinPageEnabled', 'false');
+    }
+    if (!hashParams.has('config.disableDeepLinking')) {
+      hashParams.set('config.disableDeepLinking', 'true');
+    }
+    if (!hashParams.has('config.enableClosePage')) {
+      hashParams.set('config.enableClosePage', 'false');
+    }
+    if (!hashParams.has('interfaceConfig.SHOW_PROMOTIONAL_CLOSE_PAGE')) {
+      hashParams.set('interfaceConfig.SHOW_PROMOTIONAL_CLOSE_PAGE', 'false');
+    }
+    url.hash = hashParams.toString() ? `#${hashParams.toString()}` : '';
+    return url.toString();
+  } catch (error) {
+    return joinUrl;
+  }
+}
+
+function stopCallHeartbeat() {
+  if (state.callHeartbeatTimer) {
+    window.clearInterval(state.callHeartbeatTimer);
+    state.callHeartbeatTimer = null;
+  }
+  state.callHeartbeatInFlight = false;
+}
+
+async function syncCurrentCallSession() {
+  const currentCall = state.currentCall;
+  if (!currentCall || !currentCall.roomId || state.callHeartbeatInFlight) return;
+
+  state.callHeartbeatInFlight = true;
+  try {
+    const data = await apiRequest(`/api/rooms/${currentCall.roomId}/session`);
+    if (!state.currentCall || Number(state.currentCall.roomId) !== Number(currentCall.roomId)) {
+      return;
+    }
+    const roomState = data && data.room ? String(data.room.state || '') : '';
+    const participantStatus = data && data.participant ? String(data.participant.status || 'none') : 'none';
+    if (roomState !== 'live') {
+      await closeCallPanel({ notifyServer: false });
+      showMessage(workspaceMessage, 'This room has ended. All participants were removed from the call.', 'success');
+      await loadRooms();
+      return;
+    }
+    if (participantStatus !== 'active') {
+      await closeCallPanel({ notifyServer: false });
+      showMessage(workspaceMessage, 'You are no longer in this call.', 'success');
+      await loadRooms();
+    }
+  } catch (error) {
+    const message = error && error.message ? String(error.message).toLowerCase() : '';
+    if (message.includes('room not found') || message.includes('not allowed') || message.includes('unauthorized')) {
+      await closeCallPanel({ notifyServer: false });
+      showMessage(workspaceMessage, 'Call session is no longer available.');
+      await loadRooms();
+    }
+  } finally {
+    state.callHeartbeatInFlight = false;
+  }
+}
+
+function startCallHeartbeat() {
+  stopCallHeartbeat();
+  if (!state.currentCall || !state.currentCall.roomId) return;
+  state.callHeartbeatTimer = window.setInterval(() => {
+    syncCurrentCallSession();
+  }, CALL_HEARTBEAT_MS);
+  syncCurrentCallSession();
+}
+
+function handleCallWindowMessage(event) {
+  if (!state.currentCall) return;
+
+  let expectedOrigin = '';
+  try {
+    expectedOrigin = new URL(state.currentCall.joinUrl).origin;
+  } catch (error) {
+    expectedOrigin = '';
+  }
+  if (!expectedOrigin || event.origin !== expectedOrigin) return;
+
+  const payload = event && event.data ? event.data : null;
+  if (!payload || typeof payload !== 'object') return;
+
+  const eventName = String(
+    payload.name ||
+      payload.event ||
+      payload.type ||
+      payload.action ||
+      (payload.data && payload.data.event) ||
+      ''
+  ).toLowerCase();
+
+  if (
+    eventName.includes('videoconferenceleft') ||
+    eventName.includes('video_conference_left') ||
+    eventName.includes('readytoclose') ||
+    eventName.includes('conferenceleft')
+  ) {
+    closeCallPanel({ notifyServer: true }).then(() => {
+      showMessage(workspaceMessage, 'You left the call.', 'success');
+      loadRooms();
+    });
+  }
 }
 
 function openCallPanel(joinUrl, room) {
@@ -195,7 +446,8 @@ function openCallPanel(joinUrl, room) {
   if (workspaceCard) {
     workspaceCard.classList.add('is-hidden');
   }
-  callFrame.src = joinUrl;
+  const embedUrl = applyCallUrlOverrides(joinUrl);
+  callFrame.src = embedUrl;
   callFrameWrap.classList.remove('is-hidden');
   callPlaceholder.classList.add('is-hidden');
   if (leaveCallButton) {
@@ -208,13 +460,21 @@ function openCallPanel(joinUrl, room) {
   state.currentCall = {
     roomId: room && room.id ? Number(room.id) : null,
     meetId: room && room.meetId ? String(room.meetId) : '',
-    joinUrl,
+    joinUrl: embedUrl,
   };
+  showMessage(callAiSummaryMessage, '');
+  clearRoomAiSummaryResult();
+  updateRoomAiControls();
+  startCallHeartbeat();
   const roomLabel = room && room.meetName ? room.meetName : 'room';
   callPanelStatus.textContent = `Connected to ${roomLabel}.`;
 }
 
-function closeCallPanel() {
+async function closeCallPanel(options = {}) {
+  const notifyServer = options && options.notifyServer !== false;
+  const previousCall = state.currentCall;
+  stopCallHeartbeat();
+
   if (callPanelCard) {
     callPanelCard.classList.add('is-hidden');
   }
@@ -244,6 +504,22 @@ function closeCallPanel() {
     callPanelStatus.textContent = 'Join a room to start the call on this page.';
   }
   state.currentCall = null;
+  clearRoomAiSummaryResult();
+  if (callAiConsentToggle) {
+    callAiConsentToggle.checked = false;
+  }
+  if (callAiTranscriptInput) {
+    callAiTranscriptInput.value = '';
+  }
+  updateRoomAiControls();
+
+  if (notifyServer && previousCall && previousCall.roomId) {
+    try {
+      await apiRequest(`/api/rooms/${previousCall.roomId}/leave`, { method: 'POST' });
+    } catch (error) {
+      // Best effort: local call panel should still close even if leave sync fails.
+    }
+  }
 }
 
 function closeRoomModal() {
@@ -316,7 +592,9 @@ async function apiRequest(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json().catch(() => ({ ok: false, message: 'Unexpected response.' }));
   if (!response.ok || !data.ok) {
-    throw new Error(data.message || 'Request failed.');
+    const error = new Error(data.message || 'Request failed.');
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -412,6 +690,9 @@ function applyContextToWorkspace() {
 async function loadBootstrap() {
   const data = await apiRequest('/api/rooms/bootstrap');
   state.viewer = data.viewer;
+  state.availableCommunities = data.communities || [];
+  state.requestHostCommunities = data.requestHostCommunities || [];
+  state.roomAiSummaryEnabled = Boolean(data.features && data.features.roomAiSummaryEnabled);
   setNavAvatar(data.viewer.photoLink, data.viewer.displayName);
 
   const contexts = [
@@ -450,7 +731,7 @@ async function loadBootstrap() {
 
   renderContexts();
   applyContextToWorkspace();
-  populateCommunitySelect(data.communities || []);
+  populateCommunitySelect(state.availableCommunities, { emptyLabel: 'No specific course' });
   syncVisibilityOptions(false);
 
   if (state.viewer.canReviewRequests) {
@@ -461,12 +742,23 @@ async function loadBootstrap() {
   } else {
     requestsCard.classList.add('is-hidden');
   }
+  updateRoomAiControls();
 }
 
-function populateCommunitySelect(communities) {
+function populateCommunitySelect(communities, options = {}) {
   if (!communityInput) return;
-  communityInput.innerHTML = '<option value="">No specific course</option>';
-  communities.forEach((community) => {
+  const emptyLabel = typeof options.emptyLabel === 'string' ? options.emptyLabel : 'No specific course';
+  communityInput.innerHTML = `<option value="">${emptyLabel}</option>`;
+  const safeCommunities = Array.isArray(communities) ? communities : [];
+  if (!safeCommunities.length) {
+    const none = document.createElement('option');
+    none.value = '';
+    none.disabled = true;
+    none.textContent = 'No eligible courses available';
+    communityInput.appendChild(none);
+    return;
+  }
+  safeCommunities.forEach((community) => {
     const option = document.createElement('option');
     option.value = String(community.id);
     const code = community.courseCode ? `${community.courseCode} - ` : '';
@@ -481,6 +773,238 @@ function roomHostAvatar(room) {
     return `<span class="room-host-avatar"><img src="${escapeHtml(host.photoLink)}" alt="${escapeHtml(host.displayName || 'Host')}" /></span>`;
   }
   return `<span class="room-host-avatar">${escapeHtml(initialsFromName(host.displayName || 'Host'))}</span>`;
+}
+
+function clearMeetSearchResult() {
+  state.searchedRoom = null;
+  if (!meetSearchResult) return;
+  meetSearchResult.innerHTML = '';
+  const node = document.createElement('div');
+  node.className = 'meet-search-empty';
+  node.textContent = 'Search by Meet ID to show a room result here.';
+  meetSearchResult.appendChild(node);
+}
+
+function formatConversationSubtitle(conversation) {
+  if (!conversation) return 'Conversation';
+  const participants = Array.isArray(conversation.participants) ? conversation.participants : [];
+  if (conversation.threadType === 'group') {
+    return `${participants.length} participants • Group chat`;
+  }
+  return 'Private conversation';
+}
+
+function buildForwardRoomMessage(room) {
+  const meetName = String((room && room.meetName) || 'Live room').trim() || 'Live room';
+  const meetId = String((room && room.meetId) || '').trim();
+  const baseRoomUrl = `${window.location.origin}/rooms`;
+  const roomUrl = meetId ? `${baseRoomUrl}?room=${encodeURIComponent(meetId)}` : baseRoomUrl;
+  const visibility = room && room.visibility ? formatStateLabel(room.visibility) : 'Public';
+  return [
+    `Join this room: ${meetName}`,
+    meetId ? `Meet ID: ${meetId}` : '',
+    `Visibility: ${visibility}`,
+    `Open in Rooms: ${roomUrl}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function closeForwardRoomModal() {
+  if (!forwardRoomModal) return;
+  forwardRoomModal.classList.add('is-hidden');
+  state.forwardRoom = null;
+  state.forwardConversations = [];
+  if (forwardRoomSearchInput) {
+    forwardRoomSearchInput.value = '';
+  }
+  if (forwardRoomMeta) {
+    forwardRoomMeta.textContent = 'Select a conversation to send this room.';
+  }
+  showMessage(forwardRoomMessage, '');
+}
+
+function renderForwardConversationList() {
+  if (!forwardRoomList) return;
+  const query = (forwardRoomSearchInput && forwardRoomSearchInput.value ? forwardRoomSearchInput.value : '')
+    .trim()
+    .toLowerCase();
+  const conversations = state.forwardConversations.filter((conversation) => {
+    if (!query) return true;
+    const participantNames = Array.isArray(conversation.participants)
+      ? conversation.participants.map((entry) => entry.displayName).join(' ')
+      : '';
+    const haystack = `${conversation.title || ''} ${participantNames}`.toLowerCase();
+    return haystack.includes(query);
+  });
+
+  forwardRoomList.innerHTML = '';
+  if (!conversations.length) {
+    renderEmpty(forwardRoomList, query ? 'No matching conversations.' : 'No conversations available.');
+    return;
+  }
+
+  conversations.forEach((conversation) => {
+    const row = document.createElement('article');
+    row.className = 'forward-room-item';
+
+    const main = document.createElement('div');
+    main.className = 'forward-room-item-main';
+    const title = document.createElement('strong');
+    title.textContent = conversation.title || 'Conversation';
+    const subtitle = document.createElement('p');
+    subtitle.textContent = formatConversationSubtitle(conversation);
+    main.appendChild(title);
+    main.appendChild(subtitle);
+
+    const sendButton = document.createElement('button');
+    sendButton.type = 'button';
+    sendButton.className = 'forward-room-send';
+    sendButton.textContent = 'Forward';
+    sendButton.addEventListener('click', () => forwardRoomToConversation(conversation, sendButton));
+
+    row.appendChild(main);
+    row.appendChild(sendButton);
+    forwardRoomList.appendChild(row);
+  });
+}
+
+async function openForwardRoomModal(room) {
+  if (!forwardRoomModal || !room) return;
+  state.forwardRoom = room;
+  showMessage(forwardRoomMessage, 'Loading conversations...');
+  forwardRoomModal.classList.remove('is-hidden');
+  if (forwardRoomMeta) {
+    const safeMeetName = String(room.meetName || 'Live room').trim() || 'Live room';
+    const safeMeetId = String(room.meetId || '').trim();
+    forwardRoomMeta.textContent = safeMeetId
+      ? `Forward "${safeMeetName}" (Meet ID: ${safeMeetId})`
+      : `Forward "${safeMeetName}"`;
+  }
+
+  try {
+    const data = await apiRequest('/api/connections/conversations?scope=all&page=1&pageSize=80');
+    state.forwardConversations = Array.isArray(data.conversations) ? data.conversations : [];
+    showMessage(forwardRoomMessage, '');
+    renderForwardConversationList();
+    if (forwardRoomSearchInput) {
+      forwardRoomSearchInput.focus();
+    }
+  } catch (error) {
+    state.forwardConversations = [];
+    renderEmpty(forwardRoomList, error.message || 'Failed to load conversations.');
+    showMessage(forwardRoomMessage, error.message || 'Failed to load conversations.');
+  }
+}
+
+async function forwardRoomToConversation(conversation, button) {
+  if (!conversation || !conversation.id || !state.forwardRoom) return;
+  const room = state.forwardRoom;
+  const payload = {
+    body: buildForwardRoomMessage(room),
+  };
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Sending...';
+  }
+  showMessage(forwardRoomMessage, 'Sending room link...');
+
+  try {
+    await apiRequest(`/api/connections/conversations/${conversation.id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    showMessage(forwardRoomMessage, 'Room link forwarded.', 'success');
+    window.setTimeout(() => {
+      closeForwardRoomModal();
+    }, 500);
+  } catch (error) {
+    showMessage(forwardRoomMessage, error.message || 'Failed to forward room link.');
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Forward';
+    }
+  }
+}
+
+function renderMeetSearchEmpty(message) {
+  if (!meetSearchResult) return;
+  state.searchedRoom = null;
+  meetSearchResult.innerHTML = '';
+  const node = document.createElement('div');
+  node.className = 'meet-search-empty';
+  node.textContent = message || 'No room found.';
+  meetSearchResult.appendChild(node);
+}
+
+function renderMeetSearchResult(room) {
+  if (!meetSearchResult || !room) return;
+  state.searchedRoom = room;
+  meetSearchResult.innerHTML = '';
+
+  const card = document.createElement('article');
+  card.className = 'meet-search-card';
+  const safeMeetName = escapeHtml(room.meetName || 'Untitled room');
+  const safeMeetId = escapeHtml(room.meetId || '');
+  const safeCreatorName = escapeHtml((room.creator && room.creator.displayName) || 'Member');
+  const safeCourseName = room.courseName ? escapeHtml(room.courseName) : '';
+  card.innerHTML = `
+    <div class="meet-search-result-head">
+      <div>
+        <h3>${safeMeetName}</h3>
+        <p class="meet-search-meta">Meet ID: ${safeMeetId} • Max ${room.maxParticipants} participants</p>
+      </div>
+      <div class="room-badges">
+        <span class="badge state-${room.state}">${formatStateLabel(room.state)}</span>
+        <span class="badge visibility-${room.visibility}">${formatStateLabel(room.visibility)}</span>
+      </div>
+    </div>
+    <div class="room-host">
+      ${roomHostAvatar(room)}
+      <span>Host: ${safeCreatorName}</span>
+    </div>
+    <p class="meet-search-meta">
+      ${room.courseName ? `Course: ${safeCourseName} • ` : ''}
+      Scheduled: ${formatDateTime(room.scheduledAt)}
+    </p>
+    <div class="meet-search-actions"></div>
+  `;
+
+  const actions = card.querySelector('.meet-search-actions');
+  const canManage = room.canManage || isViewerRoomCreator(room);
+  const canJoinLive = room.state === 'live';
+  const canStartAndJoin = room.state === 'scheduled' && canManage;
+  if (canJoinLive || canStartAndJoin) {
+    const joinButton = document.createElement('button');
+    joinButton.type = 'button';
+    joinButton.className = 'primary';
+    joinButton.textContent = canStartAndJoin ? 'Start & join' : 'Join call';
+    joinButton.addEventListener('click', () => handleJoinSearchedRoom(room));
+    actions.appendChild(joinButton);
+    if (canJoinLive) {
+      const forwardButton = document.createElement('button');
+      forwardButton.type = 'button';
+      forwardButton.textContent = 'Forward';
+      forwardButton.addEventListener('click', () => openForwardRoomModal(room));
+      actions.appendChild(forwardButton);
+    }
+  } else if (room.state === 'scheduled') {
+    const waitingButton = document.createElement('button');
+    waitingButton.type = 'button';
+    waitingButton.textContent = 'Waiting for host';
+    waitingButton.disabled = true;
+    actions.appendChild(waitingButton);
+  } else {
+    const unavailableButton = document.createElement('button');
+    unavailableButton.type = 'button';
+    unavailableButton.textContent = 'Unavailable';
+    unavailableButton.disabled = true;
+    actions.appendChild(unavailableButton);
+  }
+
+  meetSearchResult.appendChild(card);
 }
 
 function renderRooms() {
@@ -531,6 +1055,13 @@ function renderRooms() {
       joinButton.className = 'primary';
       joinButton.addEventListener('click', () => handleJoinRoom(room));
       actions.appendChild(joinButton);
+      if (canJoinLive) {
+        const forwardButton = document.createElement('button');
+        forwardButton.type = 'button';
+        forwardButton.textContent = 'Forward';
+        forwardButton.addEventListener('click', () => openForwardRoomModal(room));
+        actions.appendChild(forwardButton);
+      }
     } else if (room.state === 'scheduled') {
       const waitingButton = document.createElement('button');
       waitingButton.type = 'button';
@@ -597,6 +1128,83 @@ async function loadRooms() {
   } catch (error) {
     state.rooms = [];
     renderEmpty(roomsList, error.message || 'Failed to load rooms.');
+  }
+}
+
+async function handleSearchRoomByMeetId(event) {
+  event.preventDefault();
+  const meetId = normalizeMeetId(meetIdSearchInput ? meetIdSearchInput.value : '');
+  if (meetIdSearchInput) {
+    meetIdSearchInput.value = meetId;
+  }
+  if (!meetId) {
+    renderMeetSearchEmpty('Enter a Meet ID to search.');
+    showMessage(workspaceMessage, 'Enter a Meet ID to search.');
+    return;
+  }
+
+  if (searchMeetIdButton) {
+    searchMeetIdButton.disabled = true;
+  }
+
+  showMessage(workspaceMessage, 'Searching room...');
+  try {
+    const data = await apiRequest(`/api/rooms/search?meetId=${encodeURIComponent(meetId)}`);
+    const room = data && data.room ? data.room : null;
+    if (!room) {
+      renderMeetSearchEmpty('Room not found.');
+      showMessage(workspaceMessage, 'Room not found.');
+      return;
+    }
+    renderMeetSearchResult(room);
+    showMessage(workspaceMessage, 'Room found. You can join from the search result.', 'success');
+  } catch (error) {
+    renderMeetSearchEmpty(error.message || 'Room not found.');
+    showMessage(workspaceMessage, error.message || 'Room not found.');
+  } finally {
+    if (searchMeetIdButton) {
+      searchMeetIdButton.disabled = false;
+    }
+  }
+}
+
+async function handleJoinSearchedRoom(room) {
+  if (!room || !room.id) return;
+  const payload = {};
+  const canManage = room.canManage || isViewerRoomCreator(room);
+  if (room.visibility === 'private' && !canManage) {
+    const inviteFromUrl =
+      inviteRoomMeetIdFromUrl === String(room.meetId || '').toUpperCase() && inviteTokenFromUrl
+        ? inviteTokenFromUrl
+        : '';
+    const typedPassword = meetIdSearchPasswordInput ? meetIdSearchPasswordInput.value : '';
+    if (inviteFromUrl) {
+      payload.invite_token = inviteFromUrl;
+    }
+    if (typedPassword && typedPassword.trim()) {
+      payload.meet_password = typedPassword.trim();
+    }
+    if (room.hasPassword && !payload.meet_password && !payload.invite_token) {
+      showMessage(workspaceMessage, 'This private room requires a password.');
+      return;
+    }
+  }
+
+  try {
+    showMessage(workspaceMessage, room.state === 'scheduled' ? 'Starting room and joining...' : 'Joining room...');
+    const data = await apiRequest(`/api/rooms/${room.id}/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (data.joinUrl) {
+      openCallPanel(data.joinUrl, room);
+    }
+    showMessage(workspaceMessage, 'Joined room. Group call loaded on the right panel.', 'success');
+    await loadRooms();
+  } catch (error) {
+    showMessage(workspaceMessage, error.message || 'Unable to join room.');
   }
 }
 
@@ -668,6 +1276,13 @@ async function loadPendingRequests() {
 async function handleRoomStateChange(roomId, action) {
   try {
     await apiRequest(`/api/rooms/${roomId}/${action}`, { method: 'POST' });
+    if (
+      action === 'end' &&
+      state.currentCall &&
+      Number(state.currentCall.roomId || 0) === Number(roomId)
+    ) {
+      await closeCallPanel({ notifyServer: false });
+    }
     showMessage(workspaceMessage, `Room ${action === 'start' ? 'started' : 'ended'} successfully.`, 'success');
     await loadRooms();
   } catch (error) {
@@ -683,13 +1298,10 @@ async function handleJoinRoom(room) {
     const inviteToken =
       inviteRoomMeetIdFromUrl === String(room.meetId || '').toUpperCase() && inviteTokenFromUrl
         ? inviteTokenFromUrl
-        : window.prompt('Enter your private invite token:', '') || '';
-    if (!inviteToken.trim()) {
-      showMessage(workspaceMessage, 'Private rooms require an invite token.');
-      return;
+        : '';
+    if (inviteToken) {
+      payload.invite_token = inviteToken.trim();
     }
-    payload.invite_token = inviteToken.trim();
-
     if (room.hasPassword) {
       const meetPassword = window.prompt('Enter the room password:', '') || '';
       if (!meetPassword) {
@@ -715,6 +1327,59 @@ async function handleJoinRoom(room) {
     await loadRooms();
   } catch (error) {
     showMessage(workspaceMessage, error.message || 'Unable to join room.');
+  }
+}
+
+async function handleGenerateRoomAiSummary() {
+  if (!state.roomAiSummaryEnabled) {
+    showMessage(callAiSummaryMessage, 'AI meeting summary is disabled by configuration.');
+    return;
+  }
+  const roomId = state.currentCall && state.currentCall.roomId ? Number(state.currentCall.roomId) : 0;
+  if (!roomId) {
+    showMessage(callAiSummaryMessage, 'Join a room first.');
+    return;
+  }
+  const transcript = callAiTranscriptInput ? callAiTranscriptInput.value.trim() : '';
+  if (transcript.length < 40) {
+    showMessage(callAiSummaryMessage, 'Provide at least 40 characters of transcript or notes.');
+    return;
+  }
+  const consentConfirmed = Boolean(callAiConsentToggle && callAiConsentToggle.checked);
+  if (!consentConfirmed) {
+    showMessage(callAiSummaryMessage, 'Participant consent is required before summarization.');
+    return;
+  }
+
+  if (callAiSummaryButton) {
+    callAiSummaryButton.disabled = true;
+    callAiSummaryButton.textContent = 'Generating...';
+  }
+  showMessage(callAiSummaryMessage, 'Generating AI summary...');
+  clearRoomAiSummaryResult();
+
+  try {
+    const data = await apiRequest(`/api/rooms/${encodeURIComponent(roomId)}/ai-summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcript,
+        consentConfirmed: true,
+      }),
+    });
+    renderRoomAiSummaryResult(data.summary || null);
+    showMessage(callAiSummaryMessage, 'AI summary generated.', 'success');
+  } catch (error) {
+    if (Number(error && error.status) === 404) {
+      state.roomAiSummaryEnabled = false;
+      updateRoomAiControls();
+    }
+    showMessage(callAiSummaryMessage, error.message || 'Unable to generate AI summary.');
+  } finally {
+    if (callAiSummaryButton) {
+      callAiSummaryButton.disabled = false;
+      callAiSummaryButton.textContent = 'Generate summary';
+    }
   }
 }
 
@@ -758,9 +1423,16 @@ function openCreateOrRequestModal() {
   const context = selectedContext();
   if (!context) return;
 
-  resetRoomForm();
-  contextForRoomDefaults();
   const directMode = context.canCreate;
+  const hostCommunities = directMode ? state.availableCommunities : state.requestHostCommunities;
+  resetRoomForm();
+  populateCommunitySelect(hostCommunities, {
+    emptyLabel: directMode ? 'No specific course' : 'Select course',
+  });
+  contextForRoomDefaults();
+  if (!directMode && communityInput && !communityInput.value && hostCommunities.length === 1) {
+    communityInput.value = String(hostCommunities[0].id);
+  }
   syncVisibilityOptions(directMode);
   submitRoomButton.classList.remove('is-hidden');
 
@@ -854,6 +1526,16 @@ if (mineOnlyToggle) {
   });
 }
 
+if (meetSearchForm) {
+  meetSearchForm.addEventListener('submit', handleSearchRoomByMeetId);
+}
+
+if (meetIdSearchInput) {
+  meetIdSearchInput.addEventListener('input', () => {
+    clearMeetSearchResult();
+  });
+}
+
 if (visibilityInput) {
   visibilityInput.addEventListener('change', togglePrivateField);
 }
@@ -870,17 +1552,63 @@ if (roomModal) {
   });
 }
 
+if (forwardRoomModalClose) {
+  forwardRoomModalClose.addEventListener('click', closeForwardRoomModal);
+}
+
+if (forwardRoomModal) {
+  forwardRoomModal.addEventListener('click', (event) => {
+    if (event.target === forwardRoomModal) {
+      closeForwardRoomModal();
+    }
+  });
+}
+
+if (forwardRoomSearchInput) {
+  forwardRoomSearchInput.addEventListener('input', () => {
+    renderForwardConversationList();
+  });
+}
+
 if (roomForm) {
   roomForm.addEventListener('submit', handleRoomFormSubmit);
 }
 
-if (leaveCallButton) {
-  leaveCallButton.addEventListener('click', closeCallPanel);
+if (callAiSummaryButton) {
+  callAiSummaryButton.addEventListener('click', handleGenerateRoomAiSummary);
 }
+
+if (callAiSummaryClearButton) {
+  callAiSummaryClearButton.addEventListener('click', () => {
+    if (callAiTranscriptInput) {
+      callAiTranscriptInput.value = '';
+    }
+    if (callAiConsentToggle) {
+      callAiConsentToggle.checked = false;
+    }
+    clearRoomAiSummaryResult();
+    showMessage(
+      callAiSummaryMessage,
+      state.roomAiSummaryEnabled ? 'Cleared.' : 'AI meeting summary is disabled by configuration.',
+      state.roomAiSummaryEnabled ? 'success' : 'error'
+    );
+  });
+}
+
+if (leaveCallButton) {
+  leaveCallButton.addEventListener('click', async () => {
+    await closeCallPanel({ notifyServer: true });
+    showMessage(workspaceMessage, 'You left the call.', 'success');
+    await loadRooms();
+  });
+}
+
+window.addEventListener('message', handleCallWindowMessage);
 
 async function init() {
   const prejoinedRoom = consumePrejoinedRoom();
   try {
+    clearMeetSearchResult();
     await loadRoomsContentSettings();
     await loadBootstrap();
     await loadRooms();

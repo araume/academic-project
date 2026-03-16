@@ -6,13 +6,10 @@ const navAvatarLabel = document.getElementById('navAvatarLabel');
 const blockedList = document.getElementById('blockedList');
 const blockedMessage = document.getElementById('blockedMessage');
 
-const DEFAULT_AVATAR = '/assets/LOGO.png';
-
 function initialsFromName(name) {
   const safe = (name || '').trim();
-  if (!safe) return 'ME';
-  const parts = safe.split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('');
+  if (!safe) return 'M';
+  return safe[0].toUpperCase();
 }
 
 function setNavAvatar(photoLink, displayName) {
@@ -28,6 +25,19 @@ function setNavAvatar(photoLink, displayName) {
   }
 
   navAvatarLabel.textContent = initialsFromName(displayName);
+}
+
+function setAvatarContent(container, photoLink, displayName, altText) {
+  if (!container) return;
+  container.textContent = '';
+  if (photoLink) {
+    const img = document.createElement('img');
+    img.src = photoLink;
+    img.alt = altText || `${displayName || 'User'} profile photo`;
+    container.appendChild(img);
+    return;
+  }
+  container.textContent = initialsFromName(displayName || 'Member');
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -94,10 +104,7 @@ function renderBlockedUsers(users) {
 
     const avatar = document.createElement('div');
     avatar.className = 'blocked-avatar';
-    const img = document.createElement('img');
-    img.src = user.photoLink || DEFAULT_AVATAR;
-    img.alt = `${user.displayName || 'User'} profile photo`;
-    avatar.appendChild(img);
+    setAvatarContent(avatar, user.photoLink, user.displayName || 'User', `${user.displayName || 'User'} profile photo`);
 
     const meta = document.createElement('div');
     const title = document.createElement('h3');
