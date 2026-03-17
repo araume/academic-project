@@ -33,6 +33,7 @@ const commentsClose = document.getElementById('commentsClose');
 const postCommentList = document.getElementById('postCommentList');
 const postCommentForm = document.getElementById('postCommentForm');
 const postCommentInput = document.getElementById('postCommentInput');
+const postCommentMessage = document.getElementById('postCommentMessage');
 const postCommentSubmitButton = postCommentForm
   ? postCommentForm.querySelector('button[type="submit"]')
   : null;
@@ -61,8 +62,13 @@ const trendingDiscussionsList = document.getElementById('trendingDiscussionsList
 const courseMaterialsList = document.getElementById('courseMaterialsList');
 const suggestedRoomsList = document.getElementById('suggestedRoomsList');
 const feedScopeToggle = document.getElementById('feedScopeToggle');
+const feedScopeTabs = document.getElementById('feedScopeTabs');
+const feedCoursePicker = document.getElementById('feedCoursePicker');
+const feedCourseSearchInput = document.getElementById('feedCourseSearchInput');
+const feedCourseSearchResults = document.getElementById('feedCourseSearchResults');
 
 let currentPostId = null;
+let currentPostForComments = null;
 let currentLibraryDoc = null;
 let currentEditPost = null;
 let selectedLibraryDocument = null;
@@ -81,7 +87,59 @@ const state = {
   pageSize: 500,
   feedScope: 'global',
   feedScopeEnabled: true,
+  mainCourse: '',
+  joinedCourses: [],
+  allCourses: [],
+  activeCourse: '',
+  canPostToSelectedCourse: true,
+  feedSearchQuery: '',
+  feedSearchOpen: false,
+  feedOverflowOpen: false,
 };
+
+let feedChipMeasureContainer = null;
+let feedScopeResizeFrame = null;
+
+function normalizeCourseName(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function uniqueCourseNames(values) {
+  const seen = new Map();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    const normalized = normalizeCourseName(trimmed);
+    if (!normalized || seen.has(normalized)) return;
+    seen.set(normalized, trimmed);
+  });
+  return Array.from(seen.values());
+}
+
+function getAllAccessibleCourseNames() {
+  return uniqueCourseNames([state.mainCourse, ...(Array.isArray(state.joinedCourses) ? state.joinedCourses : [])]);
+}
+
+function getSelectedCourseName() {
+  if (state.feedScope !== 'course') return '';
+  const accessible = getAllAccessibleCourseNames();
+  const normalizedActive = normalizeCourseName(state.activeCourse);
+  if (normalizedActive) {
+    const match = accessible.find((courseName) => normalizeCourseName(courseName) === normalizedActive);
+    if (match) return match;
+  }
+  return state.mainCourse || accessible[0] || '';
+}
+
+function isSelectedMainCourse() {
+  return normalizeCourseName(getSelectedCourseName()) !== ''
+    && normalizeCourseName(getSelectedCourseName()) === normalizeCourseName(state.mainCourse);
+}
+
+function isJoinedSubcourseSelected() {
+  return state.feedScope === 'course'
+    && normalizeCourseName(getSelectedCourseName()) !== ''
+    && !isSelectedMainCourse();
+}
 
 function profileUrlForUid(uid) {
   const safeUid = typeof uid === 'string' ? uid.trim() : '';
@@ -116,6 +174,65 @@ function clearElement(el) {
   while (el.firstChild) {
     el.removeChild(el.firstChild);
   }
+}
+
+function ensureFeedChipMeasureContainer() {
+  if (feedChipMeasureContainer) return feedChipMeasureContainer;
+  const container = document.createElement('div');
+  container.style.position = 'absolute';
+  container.style.visibility = 'hidden';
+  container.style.pointerEvents = 'none';
+  container.style.left = '-9999px';
+  container.style.top = '-9999px';
+  container.style.whiteSpace = 'nowrap';
+  document.body.appendChild(container);
+  feedChipMeasureContainer = container;
+  return container;
+}
+
+function createFeedScopeChipButton(chip, isActive) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `feed-scope-chip${chip.variant === 'main' ? ' is-main' : ''}${chip.variant === 'joined' ? ' is-joined' : ''}`;
+  button.dataset.feedScope = chip.scope;
+  if (chip.courseName) {
+    button.dataset.feedCourse = chip.courseName;
+    button.title = chip.courseName;
+  }
+  button.classList.toggle('is-active', Boolean(isActive));
+  button.setAttribute('role', 'tab');
+  button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  button.textContent = chip.label;
+  return button;
+}
+
+function measureFeedScopeChipWidth(chip, isActive = false) {
+  const container = ensureFeedChipMeasureContainer();
+  const button = createFeedScopeChipButton(chip, isActive);
+  container.appendChild(button);
+  const width = Math.ceil(button.getBoundingClientRect().width);
+  button.remove();
+  return width;
+}
+
+function measureFeedOverflowToggleWidth(count = 1) {
+  const container = ensureFeedChipMeasureContainer();
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'feed-scope-overflow-toggle';
+  button.textContent = count > 0 ? `More (${count})` : 'More';
+  container.appendChild(button);
+  const width = Math.ceil(button.getBoundingClientRect().width);
+  button.remove();
+  return width;
+}
+
+function requestFeedScopeLayoutRefresh() {
+  if (feedScopeResizeFrame) return;
+  feedScopeResizeFrame = window.requestAnimationFrame(() => {
+    feedScopeResizeFrame = null;
+    updateFeedScopeUI();
+  });
 }
 
 function renderSidecardEmpty(container, message) {
@@ -378,19 +495,236 @@ function setPostingState(button, isPosting) {
   delete button.dataset.originalText;
 }
 
+function updateComposerAvailability() {
+  if (!createPostToggle) return;
+  const baseLabel = isJoinedSubcourseSelected()
+    ? 'Joined subcourse is view-only'
+    : state.feedScope === 'course' && getSelectedCourseName()
+      ? `Create post in ${getSelectedCourseName()}`
+      : 'Create post';
+
+  createPostToggle.disabled = isJoinedSubcourseSelected() || state.canPostToSelectedCourse === false;
+  createPostToggle.title = createPostToggle.disabled
+    ? 'You can like posts in joined subcourses, but you cannot create or comment there.'
+    : '';
+  const labelNode = createPostToggle.childNodes[createPostToggle.childNodes.length - 1];
+  if (labelNode && labelNode.nodeType === Node.TEXT_NODE) {
+    labelNode.textContent = ` ${baseLabel}`;
+  } else {
+    createPostToggle.append(document.createTextNode(` ${baseLabel}`));
+  }
+}
+
+function updateCommentComposerAvailability(post) {
+  if (!postCommentInput || !postCommentSubmitButton || !postCommentMessage) return;
+  const canComment = Boolean(post && post.canComment !== false);
+  postCommentInput.disabled = !canComment;
+  postCommentSubmitButton.disabled = !canComment;
+  postCommentInput.placeholder = canComment
+    ? 'Write a comment...'
+    : 'Joined subcourse feeds are view-only.';
+  postCommentMessage.textContent = canComment
+    ? ''
+    : 'You can like posts in joined subcourses, but you cannot comment there.';
+}
+
+function setFeedCourseSearchOpen(open) {
+  state.feedSearchOpen = Boolean(open);
+  if (feedCoursePicker) {
+    feedCoursePicker.classList.toggle('is-open', state.feedSearchOpen);
+  }
+  if (!state.feedSearchOpen && feedCourseSearchResults) {
+    feedCourseSearchResults.classList.add('is-hidden');
+  }
+  if (state.feedSearchOpen) {
+    renderFeedCourseSearchResults();
+  }
+}
+
+function renderFeedCourseSearchResults() {
+  if (!feedCourseSearchResults) return;
+  clearElement(feedCourseSearchResults);
+
+  if (!state.feedSearchOpen) {
+    feedCourseSearchResults.classList.add('is-hidden');
+    return;
+  }
+
+  const query = normalizeCourseName(state.feedSearchQuery);
+  const joinableCourses = uniqueCourseNames(state.allCourses).filter((courseName) => {
+    const normalized = normalizeCourseName(courseName);
+    if (!normalized) return false;
+    if (getAllAccessibleCourseNames().some((joined) => normalizeCourseName(joined) === normalized)) {
+      return false;
+    }
+    if (!query) return true;
+    return normalized.includes(query);
+  });
+
+  if (!joinableCourses.length) {
+    const empty = document.createElement('p');
+    empty.className = 'feed-course-search-empty';
+    empty.textContent = query
+      ? 'No joinable course matches your search.'
+      : 'No more joinable courses available.';
+    feedCourseSearchResults.appendChild(empty);
+    feedCourseSearchResults.classList.remove('is-hidden');
+    return;
+  }
+
+  joinableCourses.slice(0, 12).forEach((courseName) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'feed-course-search-item';
+    const name = document.createElement('span');
+    name.className = 'feed-course-search-name';
+    name.textContent = courseName;
+    const action = document.createElement('span');
+    action.className = 'feed-course-search-action';
+    action.textContent = 'Join';
+    row.appendChild(name);
+    row.appendChild(action);
+    row.addEventListener('click', async () => {
+      await joinSubcourse(courseName);
+    });
+    feedCourseSearchResults.appendChild(row);
+  });
+  feedCourseSearchResults.classList.remove('is-hidden');
+}
+
 function updateFeedScopeUI() {
-  if (!feedScopeToggle) return;
+  if (!feedScopeToggle || !feedScopeTabs) return;
   feedScopeToggle.hidden = !state.feedScopeEnabled;
   if (!state.feedScopeEnabled) {
     return;
   }
-  const buttons = feedScopeToggle.querySelectorAll('[data-feed-scope]');
-  buttons.forEach((button) => {
-    const scope = button.getAttribute('data-feed-scope');
-    const isActive = scope === state.feedScope;
-    button.classList.toggle('is-active', isActive);
-    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+
+  clearElement(feedScopeTabs);
+
+  const chips = [
+    {
+      label: 'Global feed',
+      scope: 'global',
+      courseName: '',
+      variant: 'global',
+    },
+  ];
+
+  if (state.mainCourse) {
+    chips.push({
+      label: `Course exclusive · ${state.mainCourse}`,
+      scope: 'course',
+      courseName: state.mainCourse,
+      variant: 'main',
+    });
+  }
+
+  uniqueCourseNames(state.joinedCourses).forEach((courseName) => {
+    chips.push({
+      label: courseName,
+      scope: 'course',
+      courseName,
+      variant: 'joined',
+    });
   });
+
+  const mandatoryChips = chips.filter((chip) => chip.variant !== 'joined');
+  const joinedChips = chips.filter((chip) => chip.variant === 'joined');
+  const selectedCourseName = getSelectedCourseName();
+  const normalizedSelectedCourse = normalizeCourseName(selectedCourseName);
+  const prioritizedJoinedChips = [...joinedChips].sort((left, right) => {
+    const leftSelected = normalizeCourseName(left.courseName) === normalizedSelectedCourse;
+    const rightSelected = normalizeCourseName(right.courseName) === normalizedSelectedCourse;
+    if (leftSelected === rightSelected) return 0;
+    return leftSelected ? -1 : 1;
+  });
+
+  const availableWidth = Math.floor(feedScopeTabs.getBoundingClientRect().width || 0);
+  const gapWidth = 10;
+  const mandatoryWidth = mandatoryChips.reduce((sum, chip, index) => {
+    const isActive = chip.scope === 'global'
+      ? state.feedScope === 'global'
+      : state.feedScope === 'course'
+        && normalizeCourseName(selectedCourseName) === normalizeCourseName(chip.courseName);
+    return sum + measureFeedScopeChipWidth(chip, isActive) + (index > 0 ? gapWidth : 0);
+  }, 0);
+
+  let visibleJoinedChips = [...joinedChips];
+  let overflowJoinedChips = [];
+
+  if (joinedChips.length && availableWidth > 0) {
+    visibleJoinedChips = [];
+    let usedWidth = mandatoryWidth;
+    prioritizedJoinedChips.forEach((chip, index) => {
+      const isActive = normalizeCourseName(chip.courseName) === normalizedSelectedCourse;
+      const chipWidth = measureFeedScopeChipWidth(chip, isActive);
+      const remainingCount = prioritizedJoinedChips.length - index - 1;
+      const projectedWidth = usedWidth + (usedWidth > 0 ? gapWidth : 0) + chipWidth;
+      const overflowToggleWidth = remainingCount > 0
+        ? gapWidth + measureFeedOverflowToggleWidth(remainingCount)
+        : 0;
+      if (projectedWidth + overflowToggleWidth <= availableWidth) {
+        visibleJoinedChips.push(chip);
+        usedWidth = projectedWidth;
+      } else {
+        overflowJoinedChips.push(chip);
+      }
+    });
+  }
+
+  [...mandatoryChips, ...visibleJoinedChips].forEach((chip) => {
+    const isActive = chip.scope === 'global'
+      ? state.feedScope === 'global'
+      : state.feedScope === 'course'
+        && normalizeCourseName(selectedCourseName) === normalizeCourseName(chip.courseName);
+    feedScopeTabs.appendChild(createFeedScopeChipButton(chip, isActive));
+  });
+
+  if (overflowJoinedChips.length) {
+    const overflowWrap = document.createElement('div');
+    overflowWrap.className = 'feed-scope-overflow';
+
+    const overflowToggle = document.createElement('button');
+    overflowToggle.type = 'button';
+    overflowToggle.className = 'feed-scope-overflow-toggle';
+    overflowToggle.setAttribute('aria-haspopup', 'menu');
+    overflowToggle.setAttribute('aria-expanded', state.feedOverflowOpen ? 'true' : 'false');
+    overflowToggle.textContent = `More (${overflowJoinedChips.length})`;
+    overflowToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      state.feedOverflowOpen = !state.feedOverflowOpen;
+      updateFeedScopeUI();
+    });
+
+    const overflowMenu = document.createElement('div');
+    overflowMenu.className = `feed-scope-overflow-menu${state.feedOverflowOpen ? '' : ' is-hidden'}`;
+    overflowMenu.setAttribute('role', 'menu');
+
+    overflowJoinedChips.forEach((chip) => {
+      const isActive = normalizeCourseName(chip.courseName) === normalizedSelectedCourse;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `feed-scope-overflow-item${isActive ? ' is-active' : ''}`;
+      item.dataset.feedScope = chip.scope;
+      item.dataset.feedCourse = chip.courseName;
+      item.setAttribute('role', 'menuitem');
+      item.textContent = chip.label;
+      overflowMenu.appendChild(item);
+    });
+
+    overflowWrap.appendChild(overflowToggle);
+    overflowWrap.appendChild(overflowMenu);
+    feedScopeTabs.appendChild(overflowWrap);
+  } else {
+    state.feedOverflowOpen = false;
+  }
+
+  if (feedCoursePicker) {
+    feedCoursePicker.classList.toggle('is-hidden', !state.feedScopeEnabled);
+  }
+
+  renderFeedCourseSearchResults();
+  updateComposerAvailability();
 }
 
 function closeMenuOnOutsideClick(event) {
@@ -819,7 +1153,14 @@ function renderSuggestedRoomsSidecard(items) {
 
 async function fetchHomeSidecards() {
   try {
-    const response = await fetch('/api/home/sidecards?limit=6');
+    const params = new URLSearchParams({ limit: '6' });
+    if (state.feedScopeEnabled) {
+      params.set('feedScope', state.feedScope);
+      if (state.feedScope === 'course' && getSelectedCourseName()) {
+        params.set('feedCourse', getSelectedCourseName());
+      }
+    }
+    const response = await fetch(`/api/home/sidecards?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Unable to load sidecards.');
@@ -887,6 +1228,13 @@ function renderPost(post, index) {
     <button data-action="comments"><img src="/assets/comment-discussion.svg" alt="" />Discussion</button>
     <button data-action="ask-ai"><img src="/assets/AI-star.svg" alt="" />Ask AI</button>
   `;
+
+  if (post.visibility === 'course_exclusive' || post.visibility === 'private') {
+    const visibilityTag = document.createElement('span');
+    visibilityTag.className = 'post-visibility-badge';
+    visibilityTag.textContent = post.course ? `${post.course} exclusive` : 'Course exclusive';
+    content.appendChild(visibilityTag);
+  }
 
   article.appendChild(header);
   article.appendChild(content);
@@ -1055,6 +1403,8 @@ async function handleAction(action, post) {
     }
   } else if (action === 'comments') {
     currentPostId = post.id;
+    currentPostForComments = post;
+    updateCommentComposerAvailability(post);
     await loadPostComments(post.id);
     openModal(commentsModal);
   } else if (action === 'ask-ai') {
@@ -1070,6 +1420,9 @@ async function fetchPosts() {
       pageSize: state.pageSize,
       feedScope: requestedFeedScope,
     });
+    if (requestedFeedScope === 'course' && getSelectedCourseName()) {
+      params.set('feedCourse', getSelectedCourseName());
+    }
     const response = await fetch(`/api/posts?${params.toString()}`);
     const data = await response.json();
     if (!response.ok || !data.ok) {
@@ -1081,12 +1434,22 @@ async function fetchPosts() {
     if (typeof data.feedScope === 'string') {
       state.feedScope = data.feedScope === 'course' ? 'course' : 'global';
     }
+    if (typeof data.selectedCourse === 'string' && data.selectedCourse.trim()) {
+      state.activeCourse = data.selectedCourse.trim();
+    }
+    if (typeof data.mainCourse === 'string' && data.mainCourse.trim()) {
+      state.mainCourse = data.mainCourse.trim();
+    }
+    if (Array.isArray(data.joinedCourses)) {
+      state.joinedCourses = uniqueCourseNames(data.joinedCourses);
+    }
+    state.canPostToSelectedCourse = data.canPostToSelectedCourse !== false;
     updateFeedScopeUI();
     postCache = new Map(data.posts.map((post) => [post.id, post]));
     postsFeed.innerHTML = '';
     if (!data.posts.length) {
       const emptyMessage = state.feedScope === 'course'
-        ? 'No course posts yet. Switch to Global feed or create a new post.'
+        ? `No posts yet in ${getSelectedCourseName() || 'this course feed'}.`
         : 'No posts yet. Be the first to share.';
       postsFeed.innerHTML = `<p>${emptyMessage}</p>`;
       return;
@@ -1107,12 +1470,92 @@ if (feedScopeToggle) {
     const target = event.target instanceof Element ? event.target.closest('[data-feed-scope]') : null;
     if (!target) return;
     const scope = target.getAttribute('data-feed-scope');
-    if (!scope || scope === state.feedScope) return;
-    state.feedScope = scope === 'course' ? 'course' : 'global';
+    const nextScope = scope === 'course' ? 'course' : 'global';
+    const nextCourse = nextScope === 'course'
+      ? (target.getAttribute('data-feed-course') || '').trim()
+      : '';
+    const sameSelection = nextScope === state.feedScope
+      && (nextScope === 'global'
+        || normalizeCourseName(nextCourse) === normalizeCourseName(getSelectedCourseName()));
+    if (!scope || sameSelection) return;
+    state.feedScope = nextScope;
+    state.activeCourse = nextCourse;
+    state.feedOverflowOpen = false;
     state.page = 1;
     updateFeedScopeUI();
-    await fetchPosts();
+    await Promise.all([fetchPosts(), fetchHomeSidecards()]);
   });
+}
+
+if (feedCourseSearchInput) {
+  feedCourseSearchInput.addEventListener('focus', () => {
+    setFeedCourseSearchOpen(true);
+  });
+
+  feedCourseSearchInput.addEventListener('input', () => {
+    state.feedSearchQuery = feedCourseSearchInput.value.trim();
+    if (!state.feedSearchOpen) {
+      setFeedCourseSearchOpen(true);
+      return;
+    }
+    renderFeedCourseSearchResults();
+  });
+
+  feedCourseSearchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setFeedCourseSearchOpen(false);
+      feedCourseSearchInput.blur();
+    }
+  });
+}
+
+document.addEventListener('click', (event) => {
+  if (!feedCoursePicker) return;
+  if (feedCoursePicker.contains(event.target)) return;
+  setFeedCourseSearchOpen(false);
+});
+
+document.addEventListener('click', (event) => {
+  if (!(event.target instanceof Element)) {
+    state.feedOverflowOpen = false;
+    updateFeedScopeUI();
+    return;
+  }
+  if (event.target.closest('.feed-scope-overflow')) return;
+  if (!state.feedOverflowOpen) return;
+  state.feedOverflowOpen = false;
+  updateFeedScopeUI();
+});
+
+function applyProfileCourseState(profile) {
+  const mainCourse = typeof profile?.main_course === 'string' && profile.main_course.trim()
+    ? profile.main_course.trim()
+    : '';
+  const joinedCourses = uniqueCourseNames(profile && Array.isArray(profile.sub_courses) ? profile.sub_courses : [])
+    .filter((courseName) => normalizeCourseName(courseName) !== normalizeCourseName(mainCourse));
+
+  state.mainCourse = mainCourse;
+  state.joinedCourses = joinedCourses;
+
+  if (state.feedScope === 'course' && !getSelectedCourseName()) {
+    state.feedScope = 'global';
+    state.activeCourse = '';
+  }
+}
+
+async function loadJoinableCourses() {
+  try {
+    const response = await fetch('/api/library/courses');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Failed to load courses.');
+    }
+    state.allCourses = uniqueCourseNames((data.courses || []).map((course) => course.course_name || ''))
+      .sort((left, right) => left.localeCompare(right));
+  } catch (error) {
+    state.allCourses = [];
+  }
+  renderFeedCourseSearchResults();
 }
 
 async function loadCurrentProfile() {
@@ -1131,9 +1574,40 @@ async function loadCurrentProfile() {
       data.profile?.display_name || 'Me'
     );
     setNavAvatar(data.profile?.photo_link || null, data.profile?.display_name || '');
+    applyProfileCourseState(data.profile || {});
+    updateFeedScopeUI();
   } catch (error) {
     // keep fallback avatar
   }
+}
+
+async function joinSubcourse(courseName) {
+  const trimmedCourse = typeof courseName === 'string' ? courseName.trim() : '';
+  if (!trimmedCourse) return;
+
+  const nextSubCourses = uniqueCourseNames([...state.joinedCourses, trimmedCourse]);
+  const response = await fetch('/api/profile', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sub_courses: nextSubCourses }),
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    alert(data.message || 'Unable to join this course.');
+    return;
+  }
+
+  applyProfileCourseState(data.profile || {});
+  state.feedScope = 'course';
+  state.activeCourse = trimmedCourse;
+  state.feedSearchQuery = '';
+  state.feedOverflowOpen = false;
+  if (feedCourseSearchInput) {
+    feedCourseSearchInput.value = '';
+  }
+  setFeedCourseSearchOpen(false);
+  updateFeedScopeUI();
+  await Promise.all([fetchPosts(), fetchHomeSidecards()]);
 }
 
 async function createPost(event) {
@@ -1141,9 +1615,18 @@ async function createPost(event) {
   if (isCreatingPost) return;
   createPostMessage.textContent = '';
 
+  if (isJoinedSubcourseSelected()) {
+    createPostMessage.textContent =
+      'Joined subcourse feeds are view-only. You can like posts there, but you cannot create or comment.';
+    return;
+  }
+
   const formData = new FormData(createPostForm);
   const targetFeedScope = state.feedScopeEnabled ? state.feedScope : 'global';
   formData.set('feedScope', targetFeedScope === 'course' ? 'course' : 'global');
+  if (targetFeedScope === 'course' && getSelectedCourseName()) {
+    formData.set('feedCourse', getSelectedCourseName());
+  }
   formData.delete('course');
 
   const file = attachmentFile && attachmentFile.files ? attachmentFile.files[0] : null;
@@ -1228,6 +1711,9 @@ async function savePost(event) {
 
 async function loadPostComments(postId) {
   postCommentList.innerHTML = '';
+  if (postCommentMessage) {
+    postCommentMessage.textContent = '';
+  }
   try {
     const response = await fetch(`/api/posts/${postId}/comments`);
     const data = await response.json();
@@ -1266,6 +1752,10 @@ async function loadPostComments(postId) {
 async function submitPostComment(event) {
   event.preventDefault();
   if (isSubmittingPostComment) return;
+  if (currentPostForComments && currentPostForComments.canComment === false) {
+    updateCommentComposerAvailability(currentPostForComments);
+    return;
+  }
   if (!currentPostId || !postCommentInput.value.trim()) {
     return;
   }
@@ -1286,7 +1776,11 @@ async function submitPostComment(event) {
       const post = postCache.get(currentPostId);
       if (post) {
         post.commentsCount = Number(post.commentsCount || 0) + 1;
+        post.canComment = true;
+        replacePostCard(post);
       }
+    } else if (postCommentMessage) {
+      postCommentMessage.textContent = data.message || 'Unable to add comment.';
     }
   } finally {
     isSubmittingPostComment = false;
@@ -1359,7 +1853,13 @@ if (libraryDocClose) {
 }
 
 if (commentsClose) {
-  commentsClose.addEventListener('click', () => closeModal(commentsModal));
+  commentsClose.addEventListener('click', () => {
+    currentPostForComments = null;
+    if (postCommentMessage) {
+      postCommentMessage.textContent = '';
+    }
+    closeModal(commentsModal);
+  });
 }
 
 if (postCommentForm) {
@@ -1380,8 +1880,13 @@ if (postAiForm) {
 }
 
 if (createPostToggle) {
-  createPostToggle.addEventListener('click', () => openModal(createPostModal));
+  createPostToggle.addEventListener('click', () => {
+    if (createPostToggle.disabled) return;
+    openModal(createPostModal);
+  });
 }
+
+window.addEventListener('resize', requestFeedScopeLayoutRefresh);
 
 if (createPostClose) {
   createPostClose.addEventListener('click', () => closeModal(createPostModal));
@@ -1465,9 +1970,11 @@ async function initHome() {
 
   await Promise.all([
     loadCurrentProfile(),
-    fetchPosts(),
-    fetchHomeSidecards(),
+    loadJoinableCourses(),
   ]);
+
+  updateFeedScopeUI();
+  await Promise.all([fetchPosts(), fetchHomeSidecards()]);
 
   await maybeOpenRequestedPost();
 }

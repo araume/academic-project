@@ -35,7 +35,6 @@ const toggleEditMode = document.getElementById('toggleEditMode');
 const photoUploadLabel = document.getElementById('photoUploadLabel');
 const photoInput = document.getElementById('photoInput');
 const mainCourseSelect = document.getElementById('mainCourseSelect');
-const subCoursesSelect = document.getElementById('subCoursesSelect');
 const bookmarksModal = document.getElementById('bookmarksModal');
 const bookmarksModalClose = document.getElementById('bookmarksModalClose');
 const bookmarksMessage = document.getElementById('bookmarksMessage');
@@ -136,11 +135,6 @@ function populateCourses(courses) {
     option.value = course.course_name;
     option.textContent = course.course_name;
     mainCourseSelect.appendChild(option);
-
-    const subOption = document.createElement('option');
-    subOption.value = course.course_name;
-    subOption.textContent = course.course_name;
-    subCoursesSelect.appendChild(subOption);
   });
 }
 
@@ -513,9 +507,6 @@ function setProfileFields(profile) {
   profileForm.elements.portfolio.value = profile.portfolio || '';
 
   const subs = Array.isArray(profile.sub_courses) ? profile.sub_courses : [];
-  Array.from(subCoursesSelect.options).forEach((option) => {
-    option.selected = subs.includes(option.value);
-  });
 
   profileName.textContent = profile.display_name || 'Profile';
   if (profileUsername) {
@@ -597,12 +588,10 @@ async function saveProfile(event) {
   if (!isOwnProfile) return;
   profileMessage.textContent = '';
 
-  const selectedSubs = Array.from(subCoursesSelect.selectedOptions).map((option) => option.value);
   const payload = {
     display_name: profileForm.elements.display_name.value,
     bio: profileForm.elements.bio.value,
     main_course: profileForm.elements.main_course.value,
-    sub_courses: selectedSubs,
     facebook: profileForm.elements.facebook.value,
     linkedin: profileForm.elements.linkedin.value,
     instagram: profileForm.elements.instagram.value,

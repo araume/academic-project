@@ -16,6 +16,7 @@ const {
   isBlockedEitherDirection,
 } = require('../services/notificationService');
 const { autoScanIncomingContent } = require('../services/aiContentScanService');
+const { hasAdminPrivileges } = require('../services/roleAccess');
 
 const router = express.Router();
 const upload = multer({
@@ -30,27 +31,35 @@ const FEED_SCOPE_COURSE = 'course';
 
 router.use('/api/posts', requireAuthApi);
 router.use('/api/home', requireAuthApi);
+router.use(['/api/posts', '/api/home'], async (req, res, next) => {
+  try {
+    req.viewerCourseAccess = await loadViewerCourseAccess(req.user && req.user.uid ? req.user.uid : '');
+    return next();
+  } catch (error) {
+    console.error('Viewer course access load failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to resolve course access.' });
+  }
+});
 
-function buildVisibilityFilter(user) {
-  const userCourse = user && user.course;
+function buildVisibilityFilter(user, accessibleCourseNames = []) {
   const userUid = user && user.uid;
   const includeCourseExclusive = isUnifiedVisibilityEnabled();
+  const courseNames = dedupeCourseNames(
+    accessibleCourseNames.length
+      ? accessibleCourseNames
+      : [user && user.course ? user.course : '']
+  );
   const filter = {
     moderationStatus: { $ne: 'restricted' },
     $or: [{ visibility: 'public' }, { visibility: null }, { visibility: { $exists: false } }],
   };
-  if (userCourse) {
-    if (includeCourseExclusive) {
-      filter.$or.push({
-        visibility: { $in: ['private', 'course_exclusive'] },
-        course: userCourse,
-      });
-    } else {
-      filter.$or.push({
-        visibility: 'private',
-        course: userCourse,
-      });
-    }
+  if (courseNames.length) {
+    filter.$or.push({
+      visibility: includeCourseExclusive
+        ? { $in: ['private', 'course_exclusive'] }
+        : 'private',
+      course: courseNames.length === 1 ? courseNames[0] : { $in: courseNames },
+    });
   }
   if (userUid) {
     filter.$or.push({ uploaderUid: userUid });
@@ -62,6 +71,126 @@ function normalizeFeedScope(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (normalized === FEED_SCOPE_COURSE) return FEED_SCOPE_COURSE;
   return FEED_SCOPE_GLOBAL;
+}
+
+function normalizeCourseName(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function dedupeCourseNames(values) {
+  const unique = new Map();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    const normalized = normalizeCourseName(trimmed);
+    if (!normalized || unique.has(normalized)) return;
+    unique.set(normalized, trimmed);
+  });
+  return Array.from(unique.values());
+}
+
+async function loadViewerCourseAccess(uid) {
+  if (!uid) {
+    return { mainCourse: '', subCourses: [], accessibleCourses: [] };
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         a.course AS account_course,
+         p.main_course,
+         p.sub_courses
+       FROM accounts a
+       LEFT JOIN profiles p ON p.uid = a.uid
+       WHERE a.uid = $1
+       LIMIT 1`,
+      [uid]
+    );
+
+    if (!result.rows.length) {
+      return { mainCourse: '', subCourses: [], accessibleCourses: [] };
+    }
+
+    const row = result.rows[0];
+    const mainCourse = dedupeCourseNames([row.main_course, row.account_course])[0] || '';
+    const subCourses = dedupeCourseNames(Array.isArray(row.sub_courses) ? row.sub_courses : [])
+      .filter((courseName) => normalizeCourseName(courseName) !== normalizeCourseName(mainCourse));
+    const accessibleCourses = dedupeCourseNames([mainCourse, ...subCourses]);
+
+    return {
+      mainCourse,
+      subCourses,
+      accessibleCourses,
+    };
+  } catch (error) {
+    if (error && error.code === '42P01') {
+      return { mainCourse: '', subCourses: [], accessibleCourses: [] };
+    }
+    throw error;
+  }
+}
+
+function resolveRequestedFeedCourse(requestedCourse, viewerCourseAccess) {
+  const accessibleCourses = dedupeCourseNames(
+    viewerCourseAccess && Array.isArray(viewerCourseAccess.accessibleCourses)
+      ? viewerCourseAccess.accessibleCourses
+      : []
+  );
+  if (!accessibleCourses.length) return '';
+
+  const requestedNormalized = normalizeCourseName(requestedCourse);
+  if (!requestedNormalized) {
+    return viewerCourseAccess && viewerCourseAccess.mainCourse
+      ? viewerCourseAccess.mainCourse
+      : accessibleCourses[0];
+  }
+
+  const match = accessibleCourses.find(
+    (courseName) => normalizeCourseName(courseName) === requestedNormalized
+  );
+  return match || '';
+}
+
+function canUserFullyInteractWithCourse(viewer, viewerCourseAccess, courseName, ownerUid = '') {
+  if (viewer && ownerUid && viewer.uid === ownerUid) return true;
+  if (hasAdminPrivileges(viewer)) return true;
+  const mainCourse = viewerCourseAccess && viewerCourseAccess.mainCourse
+    ? viewerCourseAccess.mainCourse
+    : '';
+  return normalizeCourseName(mainCourse) !== ''
+    && normalizeCourseName(mainCourse) === normalizeCourseName(courseName);
+}
+
+function canUserCommentOnPost(viewer, viewerCourseAccess, post) {
+  if (!post || typeof post !== 'object') return false;
+  const visibility = typeof post.visibility === 'string' ? post.visibility.trim().toLowerCase() : '';
+  if (!visibility || visibility === 'public') return true;
+  return canUserFullyInteractWithCourse(viewer, viewerCourseAccess, post.course || '', post.uploaderUid || '');
+}
+
+function appendPublicOnlyFilter(filter) {
+  if (!Array.isArray(filter.$and)) {
+    filter.$and = [];
+  }
+  filter.$and.push({
+    $or: [
+      { visibility: 'public' },
+      { visibility: null },
+      { visibility: { $exists: false } },
+    ],
+  });
+}
+
+function appendCourseFeedFilter(filter, selectedCourse) {
+  if (!selectedCourse) return;
+  if (!Array.isArray(filter.$and)) {
+    filter.$and = [];
+  }
+  filter.$and.push({
+    course: selectedCourse,
+    visibility: isUnifiedVisibilityEnabled()
+      ? { $in: ['private', 'course_exclusive'] }
+      : 'private',
+  });
 }
 
 const SIGNED_TTL = Number(process.env.GCS_SIGNED_URL_TTL_MINUTES || 60);
@@ -209,7 +338,12 @@ async function getAccessiblePostForUser(req, postId) {
   const db = await getMongoDb();
   const postsCollection = db.collection('posts');
   const filter = {
-    ...buildVisibilityFilter(req.user),
+    ...buildVisibilityFilter(
+      req.user,
+      req.viewerCourseAccess && Array.isArray(req.viewerCourseAccess.accessibleCourses)
+        ? req.viewerCourseAccess.accessibleCourses
+        : []
+    ),
     _id: postId,
   };
   const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
@@ -674,7 +808,13 @@ function summarizeContent(value, max = 140) {
 router.get('/api/home/sidecards', async (req, res) => {
   const limit = parseSidecardLimit(req.query.limit, 5, 10);
   const userUid = req.user && req.user.uid ? req.user.uid : null;
-  const userCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
+  const requestedFeedScope = normalizeFeedScope(req.query.feedScope);
+  const feedScopeEnabled = isGlobalCourseFeedEnabled();
+  const feedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
+  const viewerCourseAccess = req.viewerCourseAccess || { mainCourse: '', subCourses: [], accessibleCourses: [] };
+  const selectedCourse = feedScope === FEED_SCOPE_COURSE
+    ? resolveRequestedFeedCourse(req.query.feedCourse, viewerCourseAccess)
+    : '';
   const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
 
   try {
@@ -684,9 +824,15 @@ router.get('/api/home/sidecards', async (req, res) => {
           const db = await getMongoDb();
           const postsCollection = db.collection('posts');
           const filter = {
-            ...buildVisibilityFilter(req.user),
+            ...buildVisibilityFilter(req.user, viewerCourseAccess.accessibleCourses || []),
             uploadDate: { $gte: since },
           };
+          if (feedScope === FEED_SCOPE_COURSE) {
+            if (!selectedCourse) return [];
+            appendCourseFeedFilter(filter, selectedCourse);
+          } else {
+            appendPublicOnlyFilter(filter);
+          }
 
           const excludedAuthors = await loadExcludedAuthorUids(userUid);
           if (excludedAuthors.length) {
@@ -731,8 +877,8 @@ router.get('/api/home/sidecards', async (req, res) => {
         const sharedVisibilityClause = isUnifiedVisibilityEnabled()
           ? "d.visibility IN ('private', 'course_exclusive')"
           : "d.visibility = 'private'";
-        if (userCourse && userUid) {
-          values.push(userCourse);
+        if (feedScope === FEED_SCOPE_COURSE && selectedCourse && userUid) {
+          values.push(selectedCourse);
           const courseParam = values.length;
           values.push(userUid);
           const uidParam = values.length;
@@ -789,8 +935,8 @@ router.get('/api/home/sidecards', async (req, res) => {
         const values = [];
         const filters = [`r.state = 'live'`, `(r.visibility = 'public'`];
 
-        if (userCourse) {
-          values.push(userCourse);
+        if (feedScope === FEED_SCOPE_COURSE && selectedCourse) {
+          values.push(selectedCourse);
           filters[1] += ` OR (r.visibility = 'course_exclusive' AND r.course_name = $${values.length})`;
         }
         filters[1] += `)`;
@@ -864,9 +1010,14 @@ router.get('/api/posts', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize || 50), 1), 500);
   const course = (req.query.course || '').trim();
+  const requestedFeedCourse = typeof req.query.feedCourse === 'string' ? req.query.feedCourse.trim() : '';
   const requestedFeedScope = normalizeFeedScope(req.query.feedScope);
   const feedScopeEnabled = isGlobalCourseFeedEnabled();
   const feedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
+  const viewerCourseAccess = req.viewerCourseAccess || { mainCourse: '', subCourses: [], accessibleCourses: [] };
+  const selectedCourse = feedScope === FEED_SCOPE_COURSE
+    ? resolveRequestedFeedCourse(requestedFeedCourse, viewerCourseAccess)
+    : '';
   const now = new Date();
 
   try {
@@ -875,21 +1026,24 @@ router.get('/api/posts', async (req, res) => {
     const likesCollection = db.collection('post_likes');
     const bookmarksCollection = db.collection('post_bookmarks');
 
-    const filter = buildVisibilityFilter(req.user);
+    const filter = buildVisibilityFilter(req.user, viewerCourseAccess.accessibleCourses || []);
     const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
     if (excludedAuthors.length) {
       filter.uploaderUid = { $nin: excludedAuthors };
     }
 
     if (feedScope === FEED_SCOPE_COURSE) {
-      const viewerCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
-      if (!viewerCourse) {
+      if (!selectedCourse) {
         return res.json({
           ok: true,
           total: 0,
           page,
           pageSize,
           feedScope,
+          selectedCourse: '',
+          mainCourse: viewerCourseAccess.mainCourse || '',
+          joinedCourses: viewerCourseAccess.subCourses || [],
+          canPostToSelectedCourse: false,
           feedScopeEnabled,
           requestedFeedScope,
           unifiedVisibilityEnabled: isUnifiedVisibilityEnabled(),
@@ -902,29 +1056,11 @@ router.get('/api/posts', async (req, res) => {
           posts: [],
         });
       }
-      const scopedVisibility = isUnifiedVisibilityEnabled()
-        ? ['private', 'course_exclusive']
-        : ['private'];
-      if (!Array.isArray(filter.$and)) {
-        filter.$and = [];
-      }
-      filter.$and.push({
-        course: viewerCourse,
-        visibility: { $in: scopedVisibility },
-      });
+      appendCourseFeedFilter(filter, selectedCourse);
     }
 
     if (feedScope === FEED_SCOPE_GLOBAL) {
-      if (!Array.isArray(filter.$and)) {
-        filter.$and = [];
-      }
-      filter.$and.push({
-        $or: [
-          { visibility: 'public' },
-          { visibility: null },
-          { visibility: { $exists: false } },
-        ],
-      });
+      appendPublicOnlyFilter(filter);
     }
 
     if (course && course !== 'all') {
@@ -995,6 +1131,7 @@ router.get('/api/posts', async (req, res) => {
           liked: likedSet.has(post._id.toString()),
           bookmarked: bookmarkSet.has(post._id.toString()),
           isOwner: post.uploaderUid === userUid,
+          canComment: canUserCommentOnPost(req.user, viewerCourseAccess, post),
         };
       })
     );
@@ -1005,6 +1142,12 @@ router.get('/api/posts', async (req, res) => {
       page,
       pageSize,
       feedScope,
+      selectedCourse: feedScope === FEED_SCOPE_COURSE ? selectedCourse : '',
+      mainCourse: viewerCourseAccess.mainCourse || '',
+      joinedCourses: viewerCourseAccess.subCourses || [],
+      canPostToSelectedCourse: feedScope === FEED_SCOPE_COURSE
+        ? canUserFullyInteractWithCourse(req.user, viewerCourseAccess, selectedCourse)
+        : true,
       feedScopeEnabled,
       requestedFeedScope,
       unifiedVisibilityEnabled: isUnifiedVisibilityEnabled(),
@@ -1046,7 +1189,7 @@ router.get('/api/posts/bookmarks', async (req, res) => {
     }
 
     const filter = {
-      ...buildVisibilityFilter(req.user),
+      ...buildVisibilityFilter(req.user, req.viewerCourseAccess?.accessibleCourses || []),
       _id: { $in: bookmarkedPostIds },
     };
 
@@ -1103,6 +1246,7 @@ router.get('/api/posts/bookmarks', async (req, res) => {
           liked: likedSet.has(post._id.toString()),
           bookmarked: true,
           isOwner: post.uploaderUid === req.user.uid,
+          canComment: canUserCommentOnPost(req.user, req.viewerCourseAccess, post),
         };
       })
     );
@@ -1128,7 +1272,7 @@ router.get('/api/posts/:id', async (req, res) => {
     const postId = new ObjectId(id);
 
     const filter = {
-      ...buildVisibilityFilter(req.user),
+      ...buildVisibilityFilter(req.user, req.viewerCourseAccess?.accessibleCourses || []),
       _id: postId,
     };
     const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
@@ -1169,6 +1313,7 @@ router.get('/api/posts/:id', async (req, res) => {
         liked: Boolean(likedResult),
         bookmarked: Boolean(bookmarkedResult),
         isOwner: post.uploaderUid === req.user.uid,
+        canComment: canUserCommentOnPost(req.user, req.viewerCourseAccess, post),
       },
     });
   } catch (error) {
@@ -1393,6 +1538,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     title,
     content,
     feedScope: requestedFeedScopeRaw,
+    feedCourse: requestedFeedCourseRaw,
     attachmentType,
     attachmentLink,
     attachmentTitle,
@@ -1407,14 +1553,28 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
   const requestedFeedScope = normalizeFeedScope(requestedFeedScopeRaw);
   const feedScopeEnabled = isGlobalCourseFeedEnabled();
   const effectiveFeedScope = feedScopeEnabled ? requestedFeedScope : FEED_SCOPE_GLOBAL;
+  const viewerCourseAccess = req.viewerCourseAccess || { mainCourse: '', subCourses: [], accessibleCourses: [] };
+  const selectedCourse = effectiveFeedScope === FEED_SCOPE_COURSE
+    ? resolveRequestedFeedCourse(requestedFeedCourseRaw, viewerCourseAccess)
+    : '';
   const visibilityValue = effectiveFeedScope === FEED_SCOPE_COURSE
     ? (isUnifiedVisibilityEnabled() ? 'course_exclusive' : 'private')
     : 'public';
-  const userCourse = req.user && req.user.course ? String(req.user.course).trim() : '';
-  if (visibilityValue !== 'public' && !userCourse) {
+  const mainCourse = viewerCourseAccess.mainCourse
+    || (req.user && req.user.course ? String(req.user.course).trim() : '');
+  if (visibilityValue !== 'public' && !selectedCourse) {
     return res.status(400).json({
       ok: false,
       message: 'Your account must have a course to post in the course feed.',
+    });
+  }
+  if (
+    visibilityValue !== 'public'
+    && !canUserFullyInteractWithCourse(req.user, viewerCourseAccess, selectedCourse)
+  ) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Joined subcourse feeds are view-only. You can like posts there, but you cannot post or comment.',
     });
   }
 
@@ -1492,7 +1652,9 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     const postDoc = {
       title: title.trim(),
       content: content.trim(),
-      course: userCourse || null,
+      course: visibilityValue === 'public'
+        ? (mainCourse || null)
+        : (selectedCourse || null),
       visibility: visibilityValue,
       attachment,
       uploadDate: now,
@@ -1531,14 +1693,23 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
     });
 
     try {
-      const followerFilterByCourse = visibilityValue !== 'public' && userCourse;
+      const followerFilterByCourse = visibilityValue !== 'public' && selectedCourse;
       const followerQuery = followerFilterByCourse
         ? `SELECT f.follower_uid AS uid
            FROM follows f
            JOIN accounts follower ON follower.uid = f.follower_uid
+           LEFT JOIN profiles fp ON fp.uid = follower.uid
            WHERE f.target_uid = $1
              AND f.follower_uid <> $1
-             AND follower.course = $2
+             AND (
+               lower(COALESCE(follower.course, '')) = lower($2)
+               OR lower(COALESCE(fp.main_course, '')) = lower($2)
+               OR EXISTS (
+                 SELECT 1
+                 FROM unnest(COALESCE(fp.sub_courses, ARRAY[]::text[])) AS joined_course(course_name)
+                 WHERE lower(joined_course.course_name) = lower($2)
+               )
+             )
              AND NOT EXISTS (
                SELECT 1
                FROM blocked_users bu
@@ -1555,7 +1726,7 @@ router.post('/api/posts', upload.single('file'), async (req, res) => {
                WHERE (bu.blocker_uid = f.follower_uid AND bu.blocked_uid = $1)
                   OR (bu.blocker_uid = $1 AND bu.blocked_uid = f.follower_uid)
              )`;
-      const followerParams = followerFilterByCourse ? [req.user.uid, userCourse] : [req.user.uid];
+      const followerParams = followerFilterByCourse ? [req.user.uid, selectedCourse] : [req.user.uid];
       const followersResult = await pool.query(followerQuery, followerParams);
       const followerUids = followersResult.rows.map((row) => row.uid).filter(Boolean);
       if (followerUids.length) {
@@ -1665,7 +1836,7 @@ router.post('/api/posts/:id/like', async (req, res) => {
     const likesCollection = db.collection('post_likes');
     const postsCollection = db.collection('posts');
     const filter = {
-      ...buildVisibilityFilter(req.user),
+      ...buildVisibilityFilter(req.user, req.viewerCourseAccess?.accessibleCourses || []),
       _id: postId,
     };
     const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
@@ -1738,7 +1909,7 @@ router.get('/api/posts/:id/comments', async (req, res) => {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
     const filter = {
-      ...buildVisibilityFilter(req.user),
+      ...buildVisibilityFilter(req.user, req.viewerCourseAccess?.accessibleCourses || []),
       _id: postId,
     };
     const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
@@ -1779,7 +1950,7 @@ router.post('/api/posts/:id/comments', async (req, res) => {
     const db = await getMongoDb();
     const postId = new ObjectId(id);
     const filter = {
-      ...buildVisibilityFilter(req.user),
+      ...buildVisibilityFilter(req.user, req.viewerCourseAccess?.accessibleCourses || []),
       _id: postId,
     };
     const excludedAuthors = await loadExcludedAuthorUids(req.user.uid);
@@ -1791,6 +1962,12 @@ router.post('/api/posts/:id/comments', async (req, res) => {
       .findOne(filter, { projection: { uploaderUid: 1, title: 1 } });
     if (!post) {
       return res.status(404).json({ ok: false, message: 'Post not found.' });
+    }
+    if (!canUserCommentOnPost(req.user, req.viewerCourseAccess, post)) {
+      return res.status(403).json({
+        ok: false,
+        message: 'Joined subcourse feeds are view-only. You can like posts there, but you cannot comment.',
+      });
     }
     const comment = {
       postId,

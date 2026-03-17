@@ -58,13 +58,19 @@
         </button>
       </div>
 
-      <div class="feed-scope-toggle" id="feedScopeToggle" role="tablist" aria-label="Feed scope">
-        <button type="button" class="feed-scope-chip is-active" data-feed-scope="global" role="tab" aria-selected="true">
-          Global feed
-        </button>
-        <button type="button" class="feed-scope-chip" data-feed-scope="course" role="tab" aria-selected="false">
-          Course feed
-        </button>
+      <div class="feed-scope-toggle" id="feedScopeToggle" aria-label="Feed scope">
+        <div class="feed-scope-tabs" id="feedScopeTabs" role="tablist" aria-label="Feed scope options"></div>
+        <div class="feed-course-picker" id="feedCoursePicker">
+          <input
+            type="text"
+            id="feedCourseSearchInput"
+            class="feed-course-search-input"
+            placeholder="Join another course..."
+            autocomplete="off"
+            aria-label="Search courses to join"
+          />
+          <div class="feed-course-search-results is-hidden" id="feedCourseSearchResults"></div>
+        </div>
       </div>
 
       <div id="postsFeed" class="posts-feed"></div>
@@ -154,6 +160,7 @@
       <button class="close-button" id="commentsClose">×</button>
       <h2>Discussion</h2>
       <div class="comment-list" id="postCommentList"></div>
+      <p class="form-message" id="postCommentMessage"></p>
       <form id="postCommentForm" class="comment-form">
         <input type="text" id="postCommentInput" placeholder="Write a comment..." />
         <button type="submit">Post</button>
