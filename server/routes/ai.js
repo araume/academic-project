@@ -1101,6 +1101,14 @@ router.get('/api/admin/ai-reports', async (req, res) => {
           : [];
         const recommendedAction = sanitizeText(resultPayload.recommendedAction, 40).toLowerCase() || '';
         const summary = sanitizeText(resultPayload.summary || '', 2400);
+        const autoModeration =
+          resultPayload.autoModeration && typeof resultPayload.autoModeration === 'object'
+            ? resultPayload.autoModeration
+            : null;
+        const adminModeration =
+          resultPayload.adminModeration && typeof resultPayload.adminModeration === 'object'
+            ? resultPayload.adminModeration
+            : null;
         const flagged =
           isInappropriateScan({
             parsed: {
@@ -1161,6 +1169,12 @@ router.get('/api/admin/ai-reports', async (req, res) => {
           recommendedAction: recommendedAction || null,
           flags,
           summary: summary || null,
+          scoreBand:
+            resultPayload.scoreBand && typeof resultPayload.scoreBand === 'object'
+              ? resultPayload.scoreBand
+              : null,
+          autoModeration,
+          adminModeration,
           excerpt: sanitizeText(row.excerpt || '', 8000) || null,
           createdAt: row.created_at,
         };

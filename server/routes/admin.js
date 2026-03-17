@@ -21,6 +21,8 @@ const RESTRICTED_RETENTION_DAYS = Math.max(
   Number(process.env.RESTRICTED_CONTENT_RETENTION_DAYS || 30)
 );
 const CUSTOM_NOTIFICATION_MAX_RECIPIENTS = 1000;
+const DEFAULT_SUSPENSION_HOURS = 72;
+const MAX_SUSPENSION_HOURS = 24 * 365;
 const RESTRICTED_PURGE_INTERVAL_MS = Math.max(
   1,
   Number(process.env.RESTRICTED_PURGE_INTERVAL_MINUTES || 15)
@@ -47,6 +49,11 @@ function clampInteger(value, min, max, fallback) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) return fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+function parseSuspensionDurationHours(value, fallback = DEFAULT_SUSPENSION_HOURS) {
+  const parsed = parsePositiveInt(value);
+  return clampInteger(parsed == null ? fallback : parsed, 1, MAX_SUSPENSION_HOURS, fallback);
 }
 
 function sha256Hex(value) {
@@ -299,13 +306,13 @@ async function recordDisciplinaryAction({
   startsAt = new Date(),
   endsAt = null,
   active = true,
-}) {
+}, client = pool) {
   const target = sanitizeText(targetUid, 120);
   const issuer = sanitizeText(issuedByUid, 120) || null;
   const action = sanitizeText(actionType, 20).toLowerCase();
   if (!target || !['warn', 'suspend', 'ban'].includes(action)) return null;
 
-  const result = await pool.query(
+  const result = await client.query(
     `INSERT INTO account_disciplinary_actions
       (target_uid, issued_by_uid, action_type, reason, starts_at, ends_at, active, created_at)
      VALUES
@@ -836,11 +843,14 @@ const ADMIN_REPORT_STATUSES = new Set([
 
 const ADMIN_REPORT_ACTIONS = new Set([
   'none',
+  'take_down_target',
   'delete_main_post',
   'delete_library_document',
   'delete_chat_message',
+  'take_down_subject_post',
   'take_down_community_post',
   'take_down_community_comment',
+  'suspend_target_user',
   'ban_target_user',
 ]);
 
@@ -1225,6 +1235,22 @@ async function takeDownCommunityCommentById(commentId, adminUid, reason) {
   return Boolean(result.rows.length);
 }
 
+async function takeDownSubjectPostById(postId, adminUid, reason) {
+  const numericPostId = Number(postId);
+  if (!Number.isInteger(numericPostId) || numericPostId <= 0) return false;
+  const result = await pool.query(
+    `UPDATE subject_posts
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [numericPostId, adminUid, reason || 'Taken down from AI report review']
+  );
+  return Boolean(result.rows.length);
+}
+
 async function banTargetUserFromReport(targetUid, adminViewer, note) {
   const normalizedTargetUid = sanitizeText(targetUid, 120);
   if (!normalizedTargetUid) {
@@ -1273,6 +1299,107 @@ async function banTargetUserFromReport(targetUid, adminViewer, note) {
   });
   await deleteSessionsForUid(normalizedTargetUid);
   return { ok: true };
+}
+
+async function suspendTargetUserFromReport(targetUid, adminViewer, note, durationHours) {
+  const normalizedTargetUid = sanitizeText(targetUid, 120);
+  if (!normalizedTargetUid) {
+    return { ok: false, message: 'Target account unavailable for suspension action.' };
+  }
+  if (normalizedTargetUid === adminViewer.uid) {
+    return { ok: false, message: 'You cannot suspend your own account.' };
+  }
+
+  const targetResult = await pool.query(
+    `SELECT uid, COALESCE(platform_role, 'member') AS platform_role, COALESCE(is_banned, false) AS is_banned
+     FROM accounts
+     WHERE uid = $1
+     LIMIT 1`,
+    [normalizedTargetUid]
+  );
+  const target = targetResult.rows[0];
+  if (!target) {
+    return { ok: false, message: 'Target account not found.' };
+  }
+  if (target.platform_role === 'owner') {
+    return { ok: false, message: 'Owner account cannot be suspended.' };
+  }
+  if (adminViewer.platform_role !== 'owner' && (target.platform_role === 'owner' || target.platform_role === 'admin')) {
+    return { ok: false, message: 'Admins cannot suspend owner/admin accounts.' };
+  }
+
+  const activeRestrictionResult = await pool.query(
+    `SELECT id, action_type
+     FROM account_disciplinary_actions
+     WHERE target_uid = $1
+       AND active = true
+       AND action_type IN ('ban', 'suspend')
+       AND (ends_at IS NULL OR ends_at > NOW())
+     ORDER BY CASE WHEN action_type = 'ban' THEN 0 ELSE 1 END, created_at DESC
+     LIMIT 1`,
+    [normalizedTargetUid]
+  );
+  if (activeRestrictionResult.rows[0] && activeRestrictionResult.rows[0].action_type === 'ban') {
+    return { ok: false, message: 'Target account is already banned.' };
+  }
+
+  const safeDurationHours = parseSuspensionDurationHours(durationHours);
+  const endsAt = new Date(Date.now() + safeDurationHours * 60 * 60 * 1000);
+  const reason = note || `Suspended from report resolution for ${safeDurationHours} hour(s)`;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE account_disciplinary_actions
+       SET
+         active = false,
+         revoked_at = NOW(),
+         revoked_by_uid = $2,
+         revoked_reason = $3
+       WHERE target_uid = $1
+         AND action_type = 'suspend'
+         AND active = true`,
+      [normalizedTargetUid, adminViewer.uid, 'Replaced by newer suspension']
+    );
+    await client.query(
+      `UPDATE accounts
+       SET is_banned = true,
+           banned_at = NOW(),
+           banned_reason = $1,
+           banned_by_uid = $2
+       WHERE uid = $3`,
+      [reason, adminViewer.uid, normalizedTargetUid]
+    );
+    const disciplinaryActionId = await recordDisciplinaryAction(
+      {
+        targetUid: normalizedTargetUid,
+        issuedByUid: adminViewer.uid,
+        actionType: 'suspend',
+        reason,
+        startsAt: new Date(),
+        endsAt,
+        active: true,
+      },
+      client
+    );
+    await client.query('COMMIT');
+    await deleteSessionsForUid(normalizedTargetUid);
+    return {
+      ok: true,
+      endsAt,
+      durationHours: safeDurationHours,
+      disciplinaryActionId,
+    };
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_rollbackError) {
+      // no-op
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function cleanupMongoDataForAccount(uid) {
@@ -2119,16 +2246,20 @@ router.post('/api/admin/reports/action', async (req, res) => {
   let status = normalizeAdminReportStatus(req.body && req.body.status, 'open');
   const moderationAction = normalizeAdminReportAction(req.body && req.body.moderationAction, 'none');
   const resolutionNote = sanitizeText(req.body && req.body.note, 1000) || null;
+  const suspendDurationHours = parseSuspensionDurationHours(
+    req.body && req.body.suspendDurationHours,
+    DEFAULT_SUSPENSION_HOURS
+  );
   if (moderationAction !== 'none' && (status === 'open' || status === 'under_review')) {
     status = 'resolved_action_taken';
   }
 
   const allowedActionsBySource = {
-    profile: new Set(['none', 'ban_target_user']),
-    community: new Set(['none', 'take_down_community_post', 'take_down_community_comment', 'ban_target_user']),
-    main_post: new Set(['none', 'delete_main_post', 'ban_target_user']),
-    library_document: new Set(['none', 'delete_library_document', 'ban_target_user']),
-    chat_message: new Set(['none', 'delete_chat_message', 'ban_target_user']),
+    profile: new Set(['none', 'suspend_target_user', 'ban_target_user']),
+    community: new Set(['none', 'take_down_community_post', 'take_down_community_comment', 'suspend_target_user', 'ban_target_user']),
+    main_post: new Set(['none', 'delete_main_post', 'suspend_target_user', 'ban_target_user']),
+    library_document: new Set(['none', 'delete_library_document', 'suspend_target_user', 'ban_target_user']),
+    chat_message: new Set(['none', 'delete_chat_message', 'suspend_target_user', 'ban_target_user']),
   };
   const sourceActions = allowedActionsBySource[parsed.source];
   if (!sourceActions) {
@@ -2149,6 +2280,7 @@ router.post('/api/admin/reports/action', async (req, res) => {
   let targetCourse = null;
   let reportExists = false;
   let restrictedQueueEntry = null;
+  let suspensionEndsAt = null;
 
   try {
     const db = await getMongoDb();
@@ -2220,6 +2352,18 @@ router.post('/api/admin/reports/action', async (req, res) => {
         if (!banResult.ok) {
           return res.status(400).json({ ok: false, message: banResult.message });
         }
+      }
+      if (moderationAction === 'suspend_target_user') {
+        const suspendResult = await suspendTargetUserFromReport(
+          targetUid,
+          req.adminViewer,
+          resolutionNote,
+          suspendDurationHours
+        );
+        if (!suspendResult.ok) {
+          return res.status(400).json({ ok: false, message: suspendResult.message });
+        }
+        suspensionEndsAt = suspendResult.endsAt || null;
       }
 
       await db.collection('post_reports').updateOne(
@@ -2304,6 +2448,18 @@ router.post('/api/admin/reports/action', async (req, res) => {
           return res.status(400).json({ ok: false, message: banResult.message });
         }
       }
+      if (moderationAction === 'suspend_target_user') {
+        const suspendResult = await suspendTargetUserFromReport(
+          targetUid,
+          req.adminViewer,
+          resolutionNote,
+          suspendDurationHours
+        );
+        if (!suspendResult.ok) {
+          return res.status(400).json({ ok: false, message: suspendResult.message });
+        }
+        suspensionEndsAt = suspendResult.endsAt || null;
+      }
 
       await db.collection('document_reports').updateOne(
         { _id: reportObjectId },
@@ -2344,6 +2500,18 @@ router.post('/api/admin/reports/action', async (req, res) => {
           return res.status(400).json({ ok: false, message: banResult.message });
         }
       }
+      if (moderationAction === 'suspend_target_user') {
+        const suspendResult = await suspendTargetUserFromReport(
+          targetUid,
+          req.adminViewer,
+          resolutionNote,
+          suspendDurationHours
+        );
+        if (!suspendResult.ok) {
+          return res.status(400).json({ ok: false, message: suspendResult.message });
+        }
+        suspensionEndsAt = suspendResult.endsAt || null;
+      }
     } else if (parsed.source === 'chat_message') {
       const reportId = parsePositiveInt(parsed.rawId);
       if (!reportId) {
@@ -2377,6 +2545,18 @@ router.post('/api/admin/reports/action', async (req, res) => {
         if (!banResult.ok) {
           return res.status(400).json({ ok: false, message: banResult.message });
         }
+      }
+      if (moderationAction === 'suspend_target_user') {
+        const suspendResult = await suspendTargetUserFromReport(
+          targetUid,
+          req.adminViewer,
+          resolutionNote,
+          suspendDurationHours
+        );
+        if (!suspendResult.ok) {
+          return res.status(400).json({ ok: false, message: suspendResult.message });
+        }
+        suspensionEndsAt = suspendResult.endsAt || null;
       }
 
       await pool.query(
@@ -2506,6 +2686,18 @@ router.post('/api/admin/reports/action', async (req, res) => {
           return res.status(400).json({ ok: false, message: banResult.message });
         }
       }
+      if (moderationAction === 'suspend_target_user') {
+        const suspendResult = await suspendTargetUserFromReport(
+          targetUid,
+          req.adminViewer,
+          resolutionNote,
+          suspendDurationHours
+        );
+        if (!suspendResult.ok) {
+          return res.status(400).json({ ok: false, message: suspendResult.message });
+        }
+        suspensionEndsAt = suspendResult.endsAt || null;
+      }
 
       await pool.query(
         `UPDATE community_reports
@@ -2538,6 +2730,12 @@ router.post('/api/admin/reports/action', async (req, res) => {
           targetUid,
           targetCourse,
           restrictedQueueId: restrictedQueueEntry ? Number(restrictedQueueEntry.id) : null,
+          suspensionDurationHours:
+            moderationAction === 'suspend_target_user' ? suspendDurationHours : null,
+          suspensionEndsAt:
+            moderationAction === 'suspend_target_user' && suspensionEndsAt
+              ? new Date(suspensionEndsAt).toISOString()
+              : null,
           resolvedByUid: shouldMarkResolved ? adminUid : null,
           resolvedAt,
           updatedAt: new Date(),
@@ -2564,6 +2762,208 @@ router.post('/api/admin/reports/action', async (req, res) => {
   } catch (error) {
     console.error('Admin report action failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to apply report action.' });
+  }
+});
+
+router.post('/api/admin/ai-reports/:id/action', async (req, res) => {
+  const reportId = parsePositiveInt(req.params.id);
+  if (!reportId) {
+    return res.status(400).json({ ok: false, message: 'Invalid AI report id.' });
+  }
+
+  const moderationAction = normalizeAdminReportAction(req.body && req.body.moderationAction, 'none');
+  const allowedActions = new Set(['none', 'take_down_target', 'suspend_target_user', 'ban_target_user']);
+  if (!allowedActions.has(moderationAction)) {
+    return res.status(400).json({ ok: false, message: 'Invalid AI moderation action.' });
+  }
+
+  const resolutionNote = sanitizeText(req.body && req.body.note, 1000) || null;
+  const suspendDurationHours = parseSuspensionDurationHours(
+    req.body && req.body.suspendDurationHours,
+    DEFAULT_SUSPENSION_HOURS
+  );
+
+  try {
+    const reportResult = await pool.query(
+      `SELECT id, target_type, target_id, risk_level, risk_score, result, status, created_at
+       FROM ai_content_scans
+       WHERE id = $1
+       LIMIT 1`,
+      [reportId]
+    );
+    if (!reportResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'AI report not found.' });
+    }
+
+    const row = reportResult.rows[0];
+    const targetType = sanitizeText(row.target_type, 40).toLowerCase();
+    const targetId = sanitizeText(row.target_id, 240);
+    const resultPayload = row.result && typeof row.result === 'object' ? { ...row.result } : {};
+
+    let targetUid = null;
+    let targetCourse = null;
+    let targetTitle = null;
+    let targetState = null;
+
+    if (targetType === 'post' && targetId && ObjectId.isValid(targetId)) {
+      const db = await getMongoDb();
+      const post = await db.collection('posts').findOne(
+        { _id: new ObjectId(targetId) },
+        { projection: { title: 1, course: 1, uploaderUid: 1, moderationStatus: 1 } }
+      );
+      if (post) {
+        targetUid = post.uploaderUid || null;
+        targetCourse = post.course || null;
+        targetTitle = post.title || null;
+        targetState = post.moderationStatus || 'active';
+      }
+    } else if (targetType === 'subject_post' && targetId) {
+      const subjectPostResult = await pool.query(
+        `SELECT
+           sp.id,
+           sp.title,
+           sp.author_uid,
+           sp.status,
+           s.course_name
+         FROM subject_posts sp
+         JOIN subjects s ON s.id = sp.subject_id
+         WHERE sp.id = $1
+         LIMIT 1`,
+        [targetId]
+      );
+      if (subjectPostResult.rows.length) {
+        const subjectPost = subjectPostResult.rows[0];
+        targetUid = subjectPost.author_uid || null;
+        targetCourse = subjectPost.course_name || null;
+        targetTitle = subjectPost.title || null;
+        targetState = subjectPost.status || 'active';
+      }
+    } else if (targetType === 'document' && targetId) {
+      const documentResult = await pool.query(
+        `SELECT
+           title,
+           course,
+           uploader_uid,
+           COALESCE(is_restricted, false) AS is_restricted
+         FROM documents
+         WHERE uuid::text = $1
+         LIMIT 1`,
+        [targetId]
+      );
+      if (documentResult.rows.length) {
+        const document = documentResult.rows[0];
+        targetUid = document.uploader_uid || null;
+        targetCourse = document.course || null;
+        targetTitle = document.title || null;
+        targetState = document.is_restricted === true ? 'restricted' : 'active';
+      }
+    }
+
+    let suspensionEndsAt = null;
+
+    if (moderationAction === 'take_down_target') {
+      if (targetType === 'post') {
+        const restricted = await restrictMainPostById(
+          targetId,
+          req.adminViewer.uid,
+          resolutionNote || 'Taken down from AI content report'
+        );
+        if (!restricted) {
+          return res.status(404).json({ ok: false, message: 'Target post no longer exists.' });
+        }
+        targetUid = restricted.targetUid || targetUid;
+        targetCourse = restricted.course || targetCourse;
+        targetTitle = restricted.title || targetTitle;
+        targetState = 'restricted';
+      } else if (targetType === 'document') {
+        const restricted = await restrictLibraryDocumentByUuid(
+          targetId,
+          req.adminViewer.uid,
+          resolutionNote || 'Taken down from AI content report'
+        );
+        if (!restricted) {
+          return res.status(404).json({ ok: false, message: 'Target document no longer exists.' });
+        }
+        targetUid = restricted.targetUid || targetUid;
+        targetCourse = restricted.course || targetCourse;
+        targetTitle = restricted.title || targetTitle;
+        targetState = 'restricted';
+      } else if (targetType === 'subject_post') {
+        const removed = await takeDownSubjectPostById(
+          targetId,
+          req.adminViewer.uid,
+          resolutionNote || 'Taken down from AI content report'
+        );
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target unit post no longer exists.' });
+        }
+        targetState = 'taken_down';
+      } else {
+        return res.status(400).json({ ok: false, message: 'Unsupported AI report target.' });
+      }
+    }
+
+    if (moderationAction === 'suspend_target_user') {
+      const suspendResult = await suspendTargetUserFromReport(
+        targetUid,
+        req.adminViewer,
+        resolutionNote,
+        suspendDurationHours
+      );
+      if (!suspendResult.ok) {
+        return res.status(400).json({ ok: false, message: suspendResult.message });
+      }
+      suspensionEndsAt = suspendResult.endsAt || null;
+    }
+
+    if (moderationAction === 'ban_target_user') {
+      const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+      if (!banResult.ok) {
+        return res.status(400).json({ ok: false, message: banResult.message });
+      }
+    }
+
+    resultPayload.adminModeration = {
+      action: moderationAction,
+      note: resolutionNote,
+      actedByUid: req.adminViewer.uid,
+      actedAt: new Date().toISOString(),
+      suspensionDurationHours:
+        moderationAction === 'suspend_target_user' ? suspendDurationHours : null,
+      suspensionEndsAt:
+        moderationAction === 'suspend_target_user' && suspensionEndsAt
+          ? new Date(suspensionEndsAt).toISOString()
+          : null,
+    };
+
+    await pool.query(
+      `UPDATE ai_content_scans
+       SET result = $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [reportId, JSON.stringify(resultPayload)]
+    );
+
+    return res.json({
+      ok: true,
+      report: {
+        id: reportId,
+        moderationAction,
+        targetType,
+        targetId,
+        targetUid,
+        targetCourse,
+        targetTitle,
+        targetState,
+        suspensionEndsAt:
+          moderationAction === 'suspend_target_user' && suspensionEndsAt
+            ? new Date(suspensionEndsAt).toISOString()
+            : null,
+      },
+    });
+  } catch (error) {
+    console.error('Admin AI report action failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to apply AI report action.' });
   }
 });
 

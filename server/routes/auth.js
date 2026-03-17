@@ -112,6 +112,94 @@ function normalizePlatformRole(value) {
   return 'member';
 }
 
+async function resolveActiveAccountRestriction(uid) {
+  const normalizedUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!normalizedUid) {
+    return { state: 'active', reason: null, endsAt: null, clearedExpiredSuspension: false };
+  }
+
+  const result = await pool.query(
+    `SELECT id, action_type, reason, ends_at, created_at
+     FROM account_disciplinary_actions
+     WHERE target_uid = $1
+       AND active = true
+       AND action_type IN ('ban', 'suspend')
+     ORDER BY CASE WHEN action_type = 'ban' THEN 0 ELSE 1 END, created_at DESC`,
+    [normalizedUid]
+  );
+
+  const rows = result.rows || [];
+  const nowMs = Date.now();
+  const expiredSuspendIds = [];
+  let activeBan = null;
+  let activeSuspend = null;
+
+  rows.forEach((row) => {
+    if (row.action_type === 'ban' && !activeBan) {
+      activeBan = row;
+      return;
+    }
+    if (row.action_type !== 'suspend' || activeSuspend) return;
+    if (row.ends_at) {
+      const endsAtMs = new Date(row.ends_at).getTime();
+      if (Number.isFinite(endsAtMs) && endsAtMs <= nowMs) {
+        expiredSuspendIds.push(Number(row.id));
+        return;
+      }
+    }
+    activeSuspend = row;
+  });
+
+  let clearedExpiredSuspension = false;
+  if (expiredSuspendIds.length) {
+    await pool.query(
+      `UPDATE account_disciplinary_actions
+       SET
+         active = false,
+         revoked_at = COALESCE(revoked_at, NOW()),
+         revoked_reason = COALESCE(revoked_reason, 'Suspension expired automatically')
+       WHERE id = ANY($1::bigint[])`,
+      [expiredSuspendIds]
+    );
+    if (!activeBan && !activeSuspend) {
+      await pool.query(
+        `UPDATE accounts
+         SET is_banned = false,
+             banned_at = NULL,
+             banned_reason = NULL,
+             banned_by_uid = NULL
+         WHERE uid = $1
+           AND COALESCE(is_banned, false) = true`,
+        [normalizedUid]
+      );
+      clearedExpiredSuspension = true;
+    }
+  }
+
+  if (activeBan) {
+    return {
+      state: 'ban',
+      reason: activeBan.reason || null,
+      endsAt: null,
+      clearedExpiredSuspension,
+    };
+  }
+  if (activeSuspend) {
+    return {
+      state: 'suspend',
+      reason: activeSuspend.reason || null,
+      endsAt: activeSuspend.ends_at || null,
+      clearedExpiredSuspension,
+    };
+  }
+  return {
+    state: 'active',
+    reason: null,
+    endsAt: null,
+    clearedExpiredSuspension,
+  };
+}
+
 function normalizeResetCode(value) {
   if (typeof value !== 'string') return '';
   return value.replace(/\s+/g, '').trim().toUpperCase();
@@ -825,7 +913,29 @@ router.post('/api/login', async (req, res) => {
       });
       return res.status(401).json({ ok: false, message: 'Invalid credentials.' });
     }
-    if (user.is_banned) {
+    const restrictionState = await resolveActiveAccountRestriction(user.uid);
+    if (restrictionState.clearedExpiredSuspension) {
+      user.is_banned = false;
+      user.banned_reason = null;
+    }
+    if (restrictionState.state === 'suspend') {
+      authLog('warn', 'login_rejected_suspended', {
+        ...baseLog,
+        statusCode: 403,
+        reason: 'account_suspended',
+        uid: user.uid,
+        suspendedUntil: restrictionState.endsAt || null,
+      });
+      return res.status(403).json({
+        ok: false,
+        reason: 'account_suspended',
+        appealAvailable: true,
+        message: 'This account is temporarily suspended.',
+        suspensionReason: restrictionState.reason || user.banned_reason || null,
+        suspendedUntil: restrictionState.endsAt || null,
+      });
+    }
+    if (user.is_banned || restrictionState.state === 'ban') {
       authLog('warn', 'login_rejected_banned', {
         ...baseLog,
         statusCode: 403,
@@ -837,7 +947,7 @@ router.post('/api/login', async (req, res) => {
         reason: 'account_banned',
         appealAvailable: true,
         message: 'This account is banned.',
-        banReason: user.banned_reason || null,
+        banReason: restrictionState.reason || user.banned_reason || null,
       });
     }
     if (!bypassVerification && (user.id_verification_status || 'pending') !== 'approved') {

@@ -384,7 +384,10 @@
 
         <div class="site-editor-card ai-features-card">
           <div class="site-editor-head">
-            <h3>AI content reports</h3>
+            <div>
+              <h3>AI content reports</h3>
+              <p class="subcopy">Score scale: low `0-29`, medium `30-59`, high `60-84`, critical `85-100`. Critical reports are removed automatically.</p>
+            </div>
             <div class="filters">
               <input type="text" id="aiReportsQuery" placeholder="Search target, actor, summary..." />
               <select id="aiReportsRisk">
@@ -421,10 +424,10 @@
                   <th>Time</th>
                   <th>Target</th>
                   <th>Risk</th>
-                  <th>Action</th>
-                  <th>Flags</th>
+                  <th>State</th>
                   <th>Summary</th>
                   <th>Requested by</th>
+                  <th>Moderator action</th>
                   <th>Status</th>
                 </tr>
               </thead>

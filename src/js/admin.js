@@ -239,6 +239,17 @@ function formatDeadlineLabel(value) {
   return `${days}d left (${date.toLocaleString()})`;
 }
 
+function promptSuspendDurationHours(defaultHours = 72) {
+  const raw = window.prompt('Suspend duration in hours (1-8760):', String(defaultHours));
+  if (raw === null) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 8760) {
+    window.alert('Enter a whole number of hours between 1 and 8760.');
+    return undefined;
+  }
+  return parsed;
+}
+
 async function loadAdminContext() {
   const data = await apiRequest('/api/admin/me');
   if (!data.allowed) {
@@ -319,27 +330,32 @@ async function loadReports() {
     const reportActionOptionsBySource = {
       profile: [
         { value: 'none', label: 'No moderation action' },
+        { value: 'suspend_target_user', label: 'Suspend reported user' },
         { value: 'ban_target_user', label: 'Ban reported user' },
       ],
       community: [
         { value: 'none', label: 'No moderation action' },
         { value: 'take_down_community_post', label: 'Restrict community post' },
         { value: 'take_down_community_comment', label: 'Restrict community comment' },
+        { value: 'suspend_target_user', label: 'Suspend reported user' },
         { value: 'ban_target_user', label: 'Ban reported user' },
       ],
       main_post: [
         { value: 'none', label: 'No moderation action' },
         { value: 'delete_main_post', label: 'Restrict main post' },
+        { value: 'suspend_target_user', label: 'Suspend reported user' },
         { value: 'ban_target_user', label: 'Ban reported user' },
       ],
       library_document: [
         { value: 'none', label: 'No moderation action' },
         { value: 'delete_library_document', label: 'Restrict document' },
+        { value: 'suspend_target_user', label: 'Suspend reported user' },
         { value: 'ban_target_user', label: 'Ban reported user' },
       ],
       chat_message: [
         { value: 'none', label: 'No moderation action' },
         { value: 'delete_chat_message', label: 'Delete chat message' },
+        { value: 'suspend_target_user', label: 'Suspend reported user' },
         { value: 'ban_target_user', label: 'Ban reported user' },
       ],
     };
@@ -650,6 +666,22 @@ async function loadAiReports() {
       return;
     }
 
+    const aiActionOptions = [
+      { value: 'none', label: 'No admin action' },
+      { value: 'take_down_target', label: 'Take down target' },
+      { value: 'suspend_target_user', label: 'Suspend uploader' },
+      { value: 'ban_target_user', label: 'Ban uploader' },
+    ];
+    const buildAiActionOptions = (selected) =>
+      aiActionOptions
+        .map(
+          (option) =>
+            `<option value="${escapeHtml(option.value)}" ${option.value === selected ? 'selected' : ''}>${escapeHtml(
+              option.label
+            )}</option>`
+        )
+        .join('');
+
     aiReportsTableBody.innerHTML = reports
       .map((item) => {
         const targetLabel = item.targetTitle || item.targetId || '-';
@@ -663,11 +695,33 @@ async function loadAiReports() {
         const flagsText = Array.isArray(item.flags) && item.flags.length
           ? item.flags.join(', ')
           : '-';
-        const recommendedAction = item.recommendedAction
+        const recommendedActionLabel = item.recommendedAction
           ? String(item.recommendedAction).replace(/_/g, ' ')
           : '-';
         const summaryText = item.summary || '-';
-        const riskClass = item.flagged ? 'error' : item.riskLevel === 'low' ? 'success' : 'blocked';
+        const scoreBand = item.scoreBand && item.scoreBand.label
+          ? `${item.scoreBand.label} (${item.scoreBand.min}-${item.scoreBand.max})`
+          : 'low 0-29, medium 30-59, high 60-84, critical 85-100';
+        const stateLabel = item.targetState || (item.autoModeration && item.autoModeration.targetState) || 'active';
+        const autoModerationLabel =
+          item.autoModeration && item.autoModeration.applied
+            ? `Auto action: ${String(item.autoModeration.action || 'taken_down').replace(/_/g, ' ')}`
+            : 'Auto action: none';
+        const adminModerationLabel =
+          item.adminModeration && item.adminModeration.action
+            ? `Admin action: ${String(item.adminModeration.action).replace(/_/g, ' ')}`
+            : 'Admin action: none';
+        const selectedAction =
+          item.adminModeration && item.adminModeration.action
+            ? item.adminModeration.action
+            : 'none';
+        const actionOptions = buildAiActionOptions(selectedAction);
+        const riskClass =
+          item.riskLevel === 'critical' || item.riskLevel === 'high'
+            ? 'error'
+            : item.riskLevel === 'medium'
+              ? 'blocked'
+              : 'success';
         const statusClass = item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'blocked';
         return `
           <tr>
@@ -682,12 +736,32 @@ async function loadAiReports() {
               <div class="stacked-cell">
                 <span class="status-pill ${riskClass}">${escapeHtml(item.riskLevel || 'unknown')}</span>
                 <small>Score: ${escapeHtml(item.riskScore == null ? '-' : formatNumber(item.riskScore))}</small>
+                <small>Scale: ${escapeHtml(scoreBand)}</small>
               </div>
             </td>
-            <td>${escapeHtml(recommendedAction)}</td>
-            <td>${escapeHtml(flagsText)}</td>
-            <td>${escapeHtml(summaryText)}</td>
+            <td>
+              <div class="stacked-cell">
+                <span class="status-pill ${stateLabel === 'active' ? 'success' : 'error'}">${escapeHtml(stateLabel)}</span>
+                <small>Model action: ${escapeHtml(recommendedActionLabel)}</small>
+                <small>${escapeHtml(autoModerationLabel)}</small>
+              </div>
+            </td>
+            <td>
+              <div class="stacked-cell">
+                <span>${escapeHtml(summaryText)}</span>
+                <small>Flags: ${escapeHtml(flagsText)}</small>
+              </div>
+            </td>
             <td>${escapeHtml(item.requestedByName || item.requestedByUid || '-')}</td>
+            <td>
+              <div class="row-actions">
+                <select class="small-select" data-ai-report-action="${escapeHtml(item.id)}">
+                  ${actionOptions}
+                </select>
+                <button class="secondary-button" data-action="apply-ai-report-action" data-report-id="${escapeHtml(item.id)}">Apply</button>
+              </div>
+              <small>${escapeHtml(adminModerationLabel)}</small>
+            </td>
             <td><span class="status-pill ${statusClass}">${escapeHtml(item.status || '-')}</span></td>
           </tr>`;
       })
@@ -1745,6 +1819,12 @@ if (reportsTableBody) {
     const status = statusSelect ? statusSelect.value : 'open';
     const moderationAction = actionSelect ? actionSelect.value : 'none';
     const note = window.prompt('Resolution note (optional):', '') || '';
+    let suspendDurationHours = null;
+    if (moderationAction === 'suspend_target_user') {
+      const promptedHours = promptSuspendDurationHours();
+      if (promptedHours === null || promptedHours === undefined) return;
+      suspendDurationHours = promptedHours;
+    }
 
     try {
       await apiRequest('/api/admin/reports/action', {
@@ -1755,10 +1835,48 @@ if (reportsTableBody) {
           status,
           moderationAction,
           note,
+          suspendDurationHours,
         }),
       });
       setPageMessage('Report action applied.', 'success');
       await Promise.all([loadReports(), loadContent(), loadAccounts()]);
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
+if (aiReportsTableBody) {
+  aiReportsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="apply-ai-report-action"][data-report-id]');
+    if (!button) return;
+    const reportId = button.dataset.reportId;
+    if (!reportId) return;
+
+    const actionSelect = Array.from(aiReportsTableBody.querySelectorAll('select[data-ai-report-action]')).find(
+      (item) => item.dataset.aiReportAction === reportId
+    );
+    const moderationAction = actionSelect ? actionSelect.value : 'none';
+    const note = window.prompt('Moderation note (optional):', '') || '';
+    let suspendDurationHours = null;
+    if (moderationAction === 'suspend_target_user') {
+      const promptedHours = promptSuspendDurationHours();
+      if (promptedHours === null || promptedHours === undefined) return;
+      suspendDurationHours = promptedHours;
+    }
+
+    try {
+      await apiRequest(`/api/admin/ai-reports/${encodeURIComponent(reportId)}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          moderationAction,
+          note,
+          suspendDurationHours,
+        }),
+      });
+      setPageMessage('AI report action applied.', 'success');
+      await Promise.all([loadAiReports(), loadReports(), loadContent(), loadAccounts()]);
     } catch (error) {
       setPageMessage(error.message);
     }
