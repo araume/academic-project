@@ -11,6 +11,10 @@ const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/o
 const pdfParse = require('pdf-parse');
 const { isUnifiedVisibilityEnabled } = require('../services/featureFlags');
 const {
+  autoScanIncomingContent,
+  extractDocumentExcerptForScan,
+} = require('../services/aiContentScanService');
+const {
   uploadToStorage,
   deleteFromStorage,
   getSignedUrl,
@@ -905,6 +909,52 @@ router.post(
         uploader_name: req.user.displayName || req.user.username || req.user.email || 'Member',
         uploader_photo_link: null,
       });
+
+      setImmediate(async () => {
+        try {
+          const excerpt = await extractDocumentExcerptForScan({
+            buffer: file.buffer,
+            filename: file.originalname,
+            mimeType: file.mimetype,
+          });
+          const contentScanText = [
+            `Title: ${inserted && inserted.title ? inserted.title : title.trim()}`,
+            `Description: ${
+              inserted && inserted.description
+                ? inserted.description
+                : description
+                  ? String(description).trim()
+                  : ''
+            }`,
+            `Course: ${inserted && inserted.course ? inserted.course : String(resolvedCourse).trim()}`,
+            `Subject: ${inserted && inserted.subject ? inserted.subject : String(subject).trim()}`,
+            `Visibility: ${visibilityValue}`,
+            `Filename: ${file.originalname || ''}`,
+            excerpt ? `Document excerpt:\n${excerpt}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n');
+
+          await autoScanIncomingContent({
+            targetType: 'document',
+            targetId: String(uuid),
+            requestedByUid: req.user.uid,
+            content: contentScanText,
+            metadata: {
+              source: 'file_vault_upload',
+              documentSource: 'vault',
+              visibility: visibilityValue,
+              course: inserted && inserted.course ? inserted.course : String(resolvedCourse).trim(),
+              subject: inserted && inserted.subject ? inserted.subject : String(subject).trim(),
+              filename: file.originalname || '',
+              mimeType: file.mimetype || '',
+            },
+          });
+        } catch (error) {
+          console.error('File vault auto content scan failed:', error);
+        }
+      });
+
       return res.json({ ok: true, document: mapped });
     } catch (error) {
       console.error('Vault document upload failed:', error);

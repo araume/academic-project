@@ -1,4 +1,5 @@
 const path = require('path');
+const zlib = require('zlib');
 const { ObjectId } = require('mongodb');
 const pdfParse = require('pdf-parse');
 const pool = require('../db/pool');
@@ -15,6 +16,7 @@ const {
 const MAX_SCAN_TEXT_CHARS = 10000;
 const MAX_DOC_EXCERPT_BYTES = 8 * 1024 * 1024;
 const MAX_DOC_EXCERPT_CHARS = 6000;
+const PDF_OCR_MIN_TEXT_CHARS = 140;
 const CRITICAL_AUTO_MODERATION_REASON =
   'Automatically removed by AI moderation due to critical-risk content.';
 const RISK_LEVEL_PRIORITY = Object.freeze({
@@ -46,6 +48,189 @@ function getFileExtension(filenameOrPath) {
   if (!filenameOrPath) return '';
   const normalized = String(filenameOrPath).split('?')[0].split('#')[0];
   return path.extname(normalized).toLowerCase();
+}
+
+function normalizeExtractedText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function classifyDocumentForScan({ filename, mimeType } = {}) {
+  const ext = getFileExtension(filename);
+  const normalizedMime = sanitizeText(mimeType, 120).toLowerCase();
+  if (ext === '.txt') return { type: 'text', mimeType: 'text/plain' };
+  if (ext === '.md' || ext === '.markdown') return { type: 'markdown', mimeType: 'text/markdown' };
+  if (ext === '.pdf' || normalizedMime === 'application/pdf') {
+    return { type: 'pdf', mimeType: 'application/pdf' };
+  }
+  if (
+    ext === '.docx' ||
+    normalizedMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
+    return {
+      type: 'docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+  }
+  if (
+    ext === '.pptx' ||
+    normalizedMime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  ) {
+    return {
+      type: 'pptx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    };
+  }
+  if (normalizedMime.startsWith('text/')) {
+    return { type: 'text', mimeType: normalizedMime || 'text/plain' };
+  }
+  return { type: 'unknown', mimeType: normalizedMime || 'application/octet-stream' };
+}
+
+function decodeXmlEntities(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#10;/g, '\n')
+    .replace(/&#13;/g, '\n')
+    .replace(/&#9;/g, '\t')
+    .replace(/&nbsp;/g, ' ');
+}
+
+function extractDocxXmlText(xml) {
+  if (!xml) return '';
+  const withBreaks = String(xml)
+    .replace(/<w:tab[^>]*\/>/g, '\t')
+    .replace(/<w:br[^>]*\/>/g, '\n')
+    .replace(/<w:cr[^>]*\/>/g, '\n')
+    .replace(/<\/w:p>/g, '\n');
+  return decodeXmlEntities(withBreaks.replace(/<[^>]+>/g, ' '));
+}
+
+function extractPptxXmlText(xml) {
+  if (!xml) return '';
+  const withBreaks = String(xml)
+    .replace(/<a:br[^>]*\/>/g, '\n')
+    .replace(/<\/a:p>/g, '\n')
+    .replace(/<\/p:txBody>/g, '\n\n');
+  return decodeXmlEntities(withBreaks.replace(/<[^>]+>/g, ' '));
+}
+
+function sortNumberedXmlEntries(entries, pattern) {
+  return entries
+    .filter((entry) => pattern.test(entry))
+    .sort((a, b) => {
+      const aNum = Number((a.match(/\d+/g) || ['0']).slice(-1)[0]);
+      const bNum = Number((b.match(/\d+/g) || ['0']).slice(-1)[0]);
+      return aNum - bNum;
+    });
+}
+
+function findZipEocdOffset(buffer) {
+  const minOffset = Math.max(0, buffer.length - 65557);
+  for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) {
+      return offset;
+    }
+  }
+  return -1;
+}
+
+function readZipEntries(buffer) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return new Map();
+  const eocdOffset = findZipEocdOffset(buffer);
+  if (eocdOffset < 0) return new Map();
+
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  const centralDirOffset = buffer.readUInt32LE(eocdOffset + 16);
+  let cursor = centralDirOffset;
+  const entries = new Map();
+
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (cursor + 46 > buffer.length) break;
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
+
+    const compressionMethod = buffer.readUInt16LE(cursor + 10);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+
+    const nameStart = cursor + 46;
+    const nameEnd = nameStart + fileNameLength;
+    if (nameEnd > buffer.length) break;
+    const entryName = buffer.toString('utf8', nameStart, nameEnd);
+
+    cursor = nameEnd + extraLength + commentLength;
+    if (!entryName || entryName.endsWith('/')) continue;
+    if (
+      compressedSize === 0xffffffff ||
+      localHeaderOffset + 30 > buffer.length ||
+      buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50
+    ) {
+      continue;
+    }
+
+    const localNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataStart < 0 || dataEnd > buffer.length || dataEnd < dataStart) continue;
+
+    const compressed = buffer.subarray(dataStart, dataEnd);
+    try {
+      const content =
+        compressionMethod === 0
+          ? compressed
+          : compressionMethod === 8
+            ? zlib.inflateRawSync(compressed)
+            : null;
+      if (!content) continue;
+      entries.set(entryName, content);
+    } catch (_error) {
+      // Skip unreadable archive entries.
+    }
+  }
+
+  return entries;
+}
+
+async function extractDocxTextFromBuffer(buffer) {
+  const zipEntries = readZipEntries(buffer);
+  const docParts = sortNumberedXmlEntries(
+    Array.from(zipEntries.keys()),
+    /^(word\/document\.xml|word\/header\d+\.xml|word\/footer\d+\.xml)$/i
+  );
+  if (!docParts.length) return '';
+  const chunks = docParts
+    .map((part) => zipEntries.get(part)?.toString('utf8') || '')
+    .map((xml) => extractDocxXmlText(xml))
+    .filter(Boolean);
+  return normalizeExtractedText(chunks.join('\n\n'));
+}
+
+async function extractPptxTextFromBuffer(buffer) {
+  const zipEntries = readZipEntries(buffer);
+  const allEntries = Array.from(zipEntries.keys());
+  const slideEntries = sortNumberedXmlEntries(allEntries, /^ppt\/slides\/slide\d+\.xml$/i);
+  const noteEntries = sortNumberedXmlEntries(allEntries, /^ppt\/notesSlides\/notesSlide\d+\.xml$/i);
+  const selected = [...slideEntries, ...noteEntries];
+  if (!selected.length) return '';
+  const chunks = selected
+    .map((part) => zipEntries.get(part)?.toString('utf8') || '')
+    .map((xml) => extractPptxXmlText(xml))
+    .filter(Boolean);
+  return normalizeExtractedText(chunks.join('\n\n'));
 }
 
 function extractOpenAiText(response) {
@@ -96,6 +281,49 @@ function extractJsonFromText(text) {
   }
 
   return null;
+}
+
+async function extractTextFromFileWithOpenAi({ buffer, filename, mimeType, ocrMode = false } = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > MAX_DOC_EXCERPT_BYTES) {
+    return '';
+  }
+
+  const openAiClient = await getOpenAIClient();
+  if (!openAiClient) return '';
+
+  try {
+    const fileData = `data:${mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`;
+    const response = await openAiClient.responses.create({
+      model: getOpenAIModel(),
+      max_output_tokens: 1300,
+      input: [
+        {
+          role: 'system',
+          content: 'Extract readable text from the provided file. Output only plain text with no commentary.',
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: ocrMode
+                ? 'Run OCR on this file and return the extracted readable text.'
+                : 'Return the key readable text content from this file.',
+            },
+            {
+              type: 'input_file',
+              filename: filename || 'scan-document',
+              file_data: fileData,
+            },
+          ],
+        },
+      ],
+    });
+    return normalizeExtractedText(extractOpenAiText(response));
+  } catch (error) {
+    console.error('AI file text extraction failed:', error);
+    return '';
+  }
 }
 
 function normalizeRiskLevel(value) {
@@ -383,20 +611,53 @@ async function extractDocumentExcerptForScan({ buffer, filename, mimeType } = {}
   if (!buffer || !Buffer.isBuffer(buffer)) return '';
   if (buffer.length <= 0 || buffer.length > MAX_DOC_EXCERPT_BYTES) return '';
 
-  const ext = getFileExtension(filename);
-  const normalizedMime = sanitizeText(mimeType, 120).toLowerCase();
+  const typeInfo = classifyDocumentForScan({ filename, mimeType });
   try {
-    if (ext === '.txt' || ext === '.md' || ext === '.markdown' || normalizedMime.startsWith('text/')) {
-      return truncateText(buffer.toString('utf8'), MAX_DOC_EXCERPT_CHARS);
+    if (typeInfo.type === 'text' || typeInfo.type === 'markdown') {
+      return truncateText(normalizeExtractedText(buffer.toString('utf8')), MAX_DOC_EXCERPT_CHARS);
     }
-    if (ext === '.pdf' || normalizedMime === 'application/pdf') {
-      const parsed = await pdfParse(buffer);
-      return truncateText(parsed && parsed.text ? parsed.text : '', MAX_DOC_EXCERPT_CHARS);
+
+    if (typeInfo.type === 'pdf') {
+      let extracted = '';
+      try {
+        const parsed = await pdfParse(buffer);
+        extracted = normalizeExtractedText(parsed && parsed.text ? parsed.text : '');
+      } catch (_pdfError) {
+        extracted = '';
+      }
+      if (extracted.length >= PDF_OCR_MIN_TEXT_CHARS) {
+        return truncateText(extracted, MAX_DOC_EXCERPT_CHARS);
+      }
+
+      const ocrText = await extractTextFromFileWithOpenAi({
+        buffer,
+        filename: filename || 'document.pdf',
+        mimeType: typeInfo.mimeType,
+        ocrMode: true,
+      });
+      return truncateText(ocrText, MAX_DOC_EXCERPT_CHARS);
     }
+
+    if (typeInfo.type === 'docx') {
+      const extracted = await extractDocxTextFromBuffer(buffer);
+      return truncateText(extracted, MAX_DOC_EXCERPT_CHARS);
+    }
+
+    if (typeInfo.type === 'pptx') {
+      const extracted = await extractPptxTextFromBuffer(buffer);
+      return truncateText(extracted, MAX_DOC_EXCERPT_CHARS);
+    }
+
+    const extracted = await extractTextFromFileWithOpenAi({
+      buffer,
+      filename,
+      mimeType: typeInfo.mimeType,
+      ocrMode: false,
+    });
+    return truncateText(extracted, MAX_DOC_EXCERPT_CHARS);
   } catch (_error) {
     return '';
   }
-  return '';
 }
 
 async function autoScanIncomingContent({
