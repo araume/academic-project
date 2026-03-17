@@ -70,7 +70,10 @@
           <h2 id="subjectTitle">Unit feed</h2>
           <p id="subjectDescription" class="subject-description">Choose a unit on the left to load posts.</p>
         </div>
-        <button type="button" class="primary-button" id="openCreateSubjectPostModal" disabled>New unit post</button>
+        <div class="subject-feed-actions">
+          <button type="button" class="secondary-button" id="openSubjectAiModal" disabled>Unit AI</button>
+          <button type="button" class="primary-button" id="openCreateSubjectPostModal" disabled>New unit post</button>
+        </div>
       </div>
       <div id="subjectPosts" class="subject-posts">
         <p class="subject-empty">Choose a unit to view posts.</p>
@@ -128,6 +131,58 @@
     </div>
   </div>
 
+  <div class="modal is-hidden" id="editSubjectPostModal">
+    <div class="modal-card">
+      <button type="button" class="close-button" id="closeEditSubjectPostModal">×</button>
+      <h3>Edit unit post</h3>
+      <form id="editSubjectPostForm" class="subject-form">
+        <label>
+          <span>Title</span>
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea name="content" rows="4" required></textarea>
+        </label>
+        <label>
+          <span>Attach Open Library document UUID (leave blank to remove)</span>
+          <input type="text" name="attachmentLibraryDocumentUuid" />
+        </label>
+        <button type="submit" class="primary-button">Save changes</button>
+        <p id="editSubjectPostMessage" class="form-message"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="subjectAiModal">
+    <div class="modal-card subject-ai-modal-card">
+      <button type="button" class="close-button" id="closeSubjectAiModal">×</button>
+      <h3 id="subjectAiTitle">Unit AI</h3>
+      <p id="subjectAiSubtitle" class="subject-description">This AI only answers questions related to the selected unit.</p>
+      <div class="subject-ai-messages" id="subjectAiMessages"></div>
+      <form id="subjectAiForm" class="subject-ai-form">
+        <input type="text" id="subjectAiInput" placeholder="Ask about this unit..." />
+        <button type="submit" class="primary-button">Send</button>
+      </form>
+      <p id="subjectAiMessage" class="form-message"></p>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="subjectPostAiModal">
+    <div class="modal-card subject-ai-modal-card">
+      <button type="button" class="close-button" id="closeSubjectPostAiModal">×</button>
+      <h3 id="subjectPostAiTitle">Ask AI</h3>
+      <p id="subjectPostAiSubtitle" class="subject-description">This AI stays grounded on the selected unit post.</p>
+      <div class="subject-ai-messages" id="subjectPostAiMessages"></div>
+      <form id="subjectPostAiForm" class="subject-ai-form">
+        <input type="text" id="subjectPostAiInput" placeholder="Ask about this post..." />
+        <button type="submit" class="primary-button">Send</button>
+      </form>
+      <p id="subjectPostAiMessage" class="form-message"></p>
+    </div>
+  </div>
+
+  <script src="/src/js/report-dialog.js"></script>
   <script src="/src/js/subjects.js"></script>
   <script src="/src/js/nav-admin-link.js"></script>
 </body>

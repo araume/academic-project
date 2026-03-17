@@ -346,6 +346,12 @@ async function loadReports() {
         { value: 'suspend_target_user', label: 'Suspend reported user' },
         { value: 'ban_target_user', label: 'Ban reported user' },
       ],
+      subject_post: [
+        { value: 'none', label: 'No moderation action' },
+        { value: 'take_down_subject_post', label: 'Take down unit post' },
+        { value: 'suspend_target_user', label: 'Suspend reported user' },
+        { value: 'ban_target_user', label: 'Ban reported user' },
+      ],
       library_document: [
         { value: 'none', label: 'No moderation action' },
         { value: 'delete_library_document', label: 'Restrict document' },

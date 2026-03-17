@@ -1444,15 +1444,41 @@ async function cleanupMongoDataForAccount(uid) {
       .filter(Boolean);
   }
 
-  const [postAiConversations, libraryAiConversations, personalAiConversations] = await Promise.all([
+  const subjectPostResult = await pool.query(
+    `SELECT id
+     FROM subject_posts
+     WHERE author_uid = $1`,
+    [uid]
+  );
+  const subjectPostIds = subjectPostResult.rows
+    .map((row) => Number(row.id))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  let subjectPostLinkedAiConversationIds = [];
+
+  if (subjectPostIds.length) {
+    const subjectPostLinkedAiConversations = await db
+      .collection('subject_post_ai_conversations')
+      .find({ postId: { $in: subjectPostIds } })
+      .project({ _id: 1 })
+      .toArray();
+    subjectPostLinkedAiConversationIds = subjectPostLinkedAiConversations
+      .map((item) => item && item._id)
+      .filter(Boolean);
+  }
+
+  const [postAiConversations, libraryAiConversations, personalAiConversations, subjectAiConversations, subjectPostAiConversations] = await Promise.all([
     db.collection('post_ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
     db.collection('library_ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
     db.collection('ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
+    db.collection('subject_ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
+    db.collection('subject_post_ai_conversations').find({ userUid: uid }).project({ _id: 1 }).toArray(),
   ]);
 
   const postAiConversationIds = postAiConversations.map((item) => item && item._id).filter(Boolean);
   const libraryAiConversationIds = libraryAiConversations.map((item) => item && item._id).filter(Boolean);
   const personalAiConversationIds = personalAiConversations.map((item) => item && item._id).filter(Boolean);
+  const subjectAiConversationIds = subjectAiConversations.map((item) => item && item._id).filter(Boolean);
+  const subjectPostAiConversationIds = subjectPostAiConversations.map((item) => item && item._id).filter(Boolean);
 
   const cleanupOps = [
     db.collection('post_likes').deleteMany({ userUid: uid }),
@@ -1472,6 +1498,10 @@ async function cleanupMongoDataForAccount(uid) {
     db.collection('post_ai_conversations').deleteMany({ userUid: uid }),
     db.collection('library_ai_messages').deleteMany({ userUid: uid }),
     db.collection('library_ai_conversations').deleteMany({ userUid: uid }),
+    db.collection('subject_ai_messages').deleteMany({ userUid: uid }),
+    db.collection('subject_ai_conversations').deleteMany({ userUid: uid }),
+    db.collection('subject_post_ai_messages').deleteMany({ userUid: uid }),
+    db.collection('subject_post_ai_conversations').deleteMany({ userUid: uid }),
   ];
 
   if (userPostIds.length) {
@@ -1481,6 +1511,9 @@ async function cleanupMongoDataForAccount(uid) {
     cleanupOps.push(db.collection('post_bookmarks').deleteMany({ postId: { $in: userPostIds } }));
     cleanupOps.push(db.collection('post_reports').deleteMany({ postId: { $in: userPostIds } }));
     cleanupOps.push(db.collection('post_ai_conversations').deleteMany({ postId: { $in: userPostIds } }));
+  }
+  if (subjectPostIds.length) {
+    cleanupOps.push(db.collection('subject_post_ai_conversations').deleteMany({ postId: { $in: subjectPostIds } }));
   }
   cleanupOps.push(db.collection('document_reports').deleteMany({ targetUid: uid }));
   const postMessageConversationIds = Array.from(
@@ -1494,6 +1527,19 @@ async function cleanupMongoDataForAccount(uid) {
   if (libraryAiConversationIds.length) {
     cleanupOps.push(
       db.collection('library_ai_messages').deleteMany({ conversationId: { $in: libraryAiConversationIds } })
+    );
+  }
+  if (subjectAiConversationIds.length) {
+    cleanupOps.push(
+      db.collection('subject_ai_messages').deleteMany({ conversationId: { $in: subjectAiConversationIds } })
+    );
+  }
+  const subjectPostMessageConversationIds = Array.from(
+    new Set([...subjectPostAiConversationIds, ...subjectPostLinkedAiConversationIds].map((value) => String(value)))
+  ).map((value) => new ObjectId(value));
+  if (subjectPostMessageConversationIds.length) {
+    cleanupOps.push(
+      db.collection('subject_post_ai_messages').deleteMany({ conversationId: { $in: subjectPostMessageConversationIds } })
     );
   }
   if (personalAiConversationIds.length) {
@@ -2052,6 +2098,78 @@ router.get('/api/admin/reports', async (req, res) => {
       }
     }
 
+    if (!source || source === 'subject_post') {
+      const where = [];
+      const params = [];
+      if (status && status !== 'all') {
+        params.push(status);
+        where.push(`r.status = $${params.length}`);
+      }
+      if (course) {
+        params.push(course);
+        where.push(`s.course_name = $${params.length}`);
+      }
+      params.push(maxSourceRows);
+      const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const subjectPostResult = await pool.query(
+        `SELECT
+           r.id,
+           r.post_id,
+           r.reporter_uid,
+           r.target_uid,
+           r.category,
+           r.custom_reason,
+           r.details,
+           r.reason,
+           r.status,
+           r.moderation_action,
+           r.resolution_note,
+           r.resolved_at,
+           r.resolved_by_uid,
+           r.created_at,
+           sp.title AS post_title,
+           s.course_name,
+           COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS reporter_name,
+           COALESCE(tp.display_name, ta.display_name, ta.username, ta.email) AS target_name
+         FROM subject_post_reports r
+         JOIN subjects s ON s.id = r.subject_id
+         LEFT JOIN subject_posts sp ON sp.id = r.post_id
+         JOIN accounts ra ON ra.uid = r.reporter_uid
+         LEFT JOIN profiles rp ON rp.uid = r.reporter_uid
+         LEFT JOIN accounts ta ON ta.uid = r.target_uid
+         LEFT JOIN profiles tp ON tp.uid = r.target_uid
+         ${whereClause}
+         ORDER BY r.created_at DESC
+         LIMIT $${params.length}`,
+        params
+      );
+
+      subjectPostResult.rows.forEach((row) => {
+        reports.push({
+          id: `subject_post:${row.id}`,
+          source: 'subject_post',
+          status: normalizeAdminReportStatus(row.status, 'open'),
+          targetType: 'subject_post',
+          targetId: row.post_id ? String(row.post_id) : null,
+          targetUid: row.target_uid || null,
+          targetName: row.post_title || 'Unit post',
+          reporterUid: row.reporter_uid || null,
+          reporterName: row.reporter_name || 'Member',
+          category: row.category || null,
+          customReason: row.custom_reason || null,
+          details: row.details || null,
+          reason: row.reason || null,
+          course: row.course_name || null,
+          moderationAction: row.moderation_action || 'none',
+          resolutionNote: row.resolution_note || null,
+          resolvedAt: row.resolved_at || null,
+          resolvedByUid: row.resolved_by_uid || null,
+          createdAt: row.created_at,
+          targetAuthorName: row.target_name || null,
+        });
+      });
+    }
+
     if (!source || source === 'library_document') {
       const db = await getMongoDb();
       const mongoReports = await db
@@ -2258,6 +2376,7 @@ router.post('/api/admin/reports/action', async (req, res) => {
     profile: new Set(['none', 'suspend_target_user', 'ban_target_user']),
     community: new Set(['none', 'take_down_community_post', 'take_down_community_comment', 'suspend_target_user', 'ban_target_user']),
     main_post: new Set(['none', 'delete_main_post', 'suspend_target_user', 'ban_target_user']),
+    subject_post: new Set(['none', 'take_down_subject_post', 'suspend_target_user', 'ban_target_user']),
     library_document: new Set(['none', 'delete_library_document', 'suspend_target_user', 'ban_target_user']),
     chat_message: new Set(['none', 'delete_chat_message', 'suspend_target_user', 'ban_target_user']),
   };
@@ -2378,6 +2497,77 @@ router.post('/api/admin/reports/action', async (req, res) => {
             updatedAt: new Date(),
           },
         }
+      );
+    } else if (parsed.source === 'subject_post') {
+      const reportId = parsePositiveInt(parsed.rawId);
+      if (!reportId) {
+        return res.status(400).json({ ok: false, message: 'Invalid unit post report id.' });
+      }
+      const subjectPostReport = await pool.query(
+        `SELECT r.id, r.post_id, r.target_uid, r.reason, s.course_name
+         FROM subject_post_reports r
+         JOIN subjects s ON s.id = r.subject_id
+         WHERE r.id = $1
+         LIMIT 1`,
+        [reportId]
+      );
+      if (!subjectPostReport.rows.length) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      const reportRow = subjectPostReport.rows[0];
+      reportExists = true;
+      targetType = 'subject_post';
+      targetId = reportRow.post_id ? String(reportRow.post_id) : null;
+      targetUid = reportRow.target_uid || null;
+      targetCourse = reportRow.course_name || null;
+
+      if (moderationAction === 'take_down_subject_post') {
+        const removed = await takeDownSubjectPostById(
+          reportRow.post_id,
+          adminUid,
+          resolutionNote || reportRow.reason || 'Taken down from report review'
+        );
+        if (!removed) {
+          return res.status(404).json({ ok: false, message: 'Target unit post no longer exists.' });
+        }
+      }
+
+      if (moderationAction === 'ban_target_user') {
+        const banResult = await banTargetUserFromReport(targetUid, req.adminViewer, resolutionNote);
+        if (!banResult.ok) {
+          return res.status(400).json({ ok: false, message: banResult.message });
+        }
+      }
+      if (moderationAction === 'suspend_target_user') {
+        const suspendResult = await suspendTargetUserFromReport(
+          targetUid,
+          req.adminViewer,
+          resolutionNote,
+          suspendDurationHours
+        );
+        if (!suspendResult.ok) {
+          return res.status(400).json({ ok: false, message: suspendResult.message });
+        }
+        suspensionEndsAt = suspendResult.endsAt || null;
+      }
+
+      await pool.query(
+        `UPDATE subject_post_reports
+         SET status = $2,
+             moderation_action = $3,
+             resolution_note = $4,
+             resolved_at = $5,
+             resolved_by_uid = $6,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          reportId,
+          status,
+          moderationAction === 'none' ? null : moderationAction,
+          resolutionNote,
+          resolvedAt,
+          shouldMarkResolved ? adminUid : null,
+        ]
       );
     } else if (parsed.source === 'library_document') {
       if (!ObjectId.isValid(parsed.rawId)) {

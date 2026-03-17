@@ -827,6 +827,36 @@ CREATE TABLE IF NOT EXISTS subject_post_likes (
   UNIQUE (subject_id, post_id, user_uid)
 );
 
+CREATE TABLE IF NOT EXISTS subject_post_bookmarks (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES subject_posts(id) ON DELETE CASCADE,
+  user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (subject_id, post_id, user_uid)
+);
+
+CREATE TABLE IF NOT EXISTS subject_post_reports (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES subject_posts(id) ON DELETE CASCADE,
+  reporter_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  target_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  category TEXT,
+  custom_reason TEXT,
+  details TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'under_review', 'resolved_action_taken', 'resolved_no_action', 'rejected')),
+  moderation_action TEXT,
+  resolution_note TEXT,
+  resolved_at TIMESTAMPTZ,
+  resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (post_id, reporter_uid)
+);
+
 CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows(follower_uid);
 CREATE INDEX IF NOT EXISTS follows_target_idx ON follows(target_uid);
 CREATE INDEX IF NOT EXISTS follow_requests_target_status_idx ON follow_requests(target_uid, status);
@@ -875,6 +905,9 @@ CREATE INDEX IF NOT EXISTS subject_posts_subject_likes_idx ON subject_posts(subj
 CREATE INDEX IF NOT EXISTS subject_comments_post_created_idx ON subject_comments(post_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS subject_post_likes_post_idx ON subject_post_likes(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_post_likes_user_idx ON subject_post_likes(user_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_post_bookmarks_user_created_idx ON subject_post_bookmarks(user_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_post_reports_subject_status_idx ON subject_post_reports(subject_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_post_reports_target_idx ON subject_post_reports(post_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS rooms (
   id BIGSERIAL PRIMARY KEY,
