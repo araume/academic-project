@@ -59,6 +59,7 @@ router.use('/api/subjects', async (req, res, next) => {
   try {
     await ensureDepartmentWorkflowReady();
     await ensureSubjectEngagementReady();
+    req.subjectCourseAccess = await loadUserCourseAccess(req.user && req.user.uid ? req.user.uid : '');
     return next();
   } catch (error) {
     console.error('Subjects governance bootstrap failed:', error);
@@ -198,13 +199,20 @@ async function hasDepAdminAssignmentForCourse(uid, courseName, client = pool) {
   return result.rows.length > 0;
 }
 
-async function canViewerCreateSubjects(user, client = pool) {
+async function canViewerCreateSubjects(user, client = pool, courseAccess = null) {
   const role = getPlatformRole(user);
   if (role === 'owner' || role === 'admin') return true;
   if (role !== 'depadmin') return false;
-  const viewerCourse = canonicalCourseNameForSubjects(normalizeCourse(user && user.course));
+  const viewerCourse = resolveViewerMainCourseForSubjects(user, courseAccess);
   if (!viewerCourse) return false;
   return hasDepAdminAssignmentForCourse(user.uid, viewerCourse, client);
+}
+
+function resolveViewerMainCourseForSubjects(user, courseAccess = null) {
+  const profileMainCourse =
+    courseAccess && typeof courseAccess === 'object' ? normalizeCourse(courseAccess.mainCourse) : '';
+  const fallbackCourse = normalizeCourse(user && user.course);
+  return canonicalCourseNameForSubjects(profileMainCourse || fallbackCourse);
 }
 
 function parsePositiveInt(value, fallback = 1, max = 1000) {
@@ -329,10 +337,10 @@ async function signIfNeeded(value) {
   }
 }
 
-function canReadSubjectRow(subject, user) {
+function canReadSubjectRow(subject, user, courseAccess = null) {
   if (!subject || !user) return false;
   if (hasAdminPrivileges(user)) return true;
-  const viewerCourse = canonicalCourseNameForSubjects(user.course).toLowerCase();
+  const viewerCourse = resolveViewerMainCourseForSubjects(user, courseAccess).toLowerCase();
   const subjectCourse = canonicalCourseNameForSubjects(subject.course_name).toLowerCase();
   if (!viewerCourse || !subjectCourse || viewerCourse !== subjectCourse) {
     return false;
@@ -343,7 +351,7 @@ function canReadSubjectRow(subject, user) {
   return true;
 }
 
-async function loadSubjectForViewer(subjectId, user, client = pool) {
+async function loadSubjectForViewer(subjectId, user, client = pool, courseAccess = null) {
   const result = await client.query(
     `SELECT
        s.id,
@@ -368,7 +376,7 @@ async function loadSubjectForViewer(subjectId, user, client = pool) {
   );
   const subject = result.rows[0];
   if (!subject) return { status: 'not_found', subject: null };
-  if (!canReadSubjectRow(subject, user)) return { status: 'forbidden', subject };
+  if (!canReadSubjectRow(subject, user, courseAccess)) return { status: 'forbidden', subject };
   return { status: 'ok', subject };
 }
 
@@ -400,8 +408,8 @@ async function ensureActiveMembership(subjectId, userUid, client = pool) {
   return result.rows[0] ? result.rows[0].state : 'member';
 }
 
-async function ensureSubjectInteractionAccess(subjectId, user, client = pool) {
-  const subjectState = await loadSubjectForViewer(subjectId, user, client);
+async function ensureSubjectInteractionAccess(subjectId, user, client = pool, courseAccess = null) {
+  const subjectState = await loadSubjectForViewer(subjectId, user, client, courseAccess);
   if (subjectState.status !== 'ok') {
     return subjectState;
   }
@@ -456,8 +464,8 @@ async function loadAccessibleLibraryDocument(uuid, user, client = pool) {
   };
 }
 
-async function loadSubjectAiContext(subjectId, user, client = pool) {
-  const subjectAccess = await ensureSubjectInteractionAccess(subjectId, user, client);
+async function loadSubjectAiContext(subjectId, user, client = pool, courseAccess = null) {
+  const subjectAccess = await ensureSubjectInteractionAccess(subjectId, user, client, courseAccess);
   if (subjectAccess.status !== 'ok') {
     return subjectAccess;
   }
@@ -546,8 +554,8 @@ function buildSubjectAiContextBlock(subject, recentPosts = []) {
   return lines.join('\n\n');
 }
 
-async function loadSubjectPostAiContext(subjectId, postId, user, client = pool) {
-  const subjectAccess = await ensureSubjectInteractionAccess(subjectId, user, client);
+async function loadSubjectPostAiContext(subjectId, postId, user, client = pool, courseAccess = null) {
+  const subjectAccess = await ensureSubjectInteractionAccess(subjectId, user, client, courseAccess);
   if (subjectAccess.status !== 'ok') {
     return subjectAccess;
   }
@@ -620,14 +628,14 @@ function buildSubjectPostAiContextBlock(subject, post) {
 }
 
 router.get('/api/subjects/bootstrap', async (req, res) => {
-  const viewerCourse = normalizeCourse(req.user.course);
+  const viewerCourse = resolveViewerMainCourseForSubjects(req.user, req.subjectCourseAccess);
   const requestedCourse = normalizeCourse(req.query.course);
   const canViewAll = hasAdminPrivileges(req.user);
   let effectiveViewerCourse = canonicalCourseNameForSubjects(viewerCourse);
   let effectiveRequestedCourse = canonicalCourseNameForSubjects(requestedCourse);
 
   try {
-    const canCreate = await canViewerCreateSubjects(req.user);
+    const canCreate = await canViewerCreateSubjects(req.user, pool, req.subjectCourseAccess);
     if (!canViewAll && !effectiveViewerCourse) {
       return res.json({
         ok: true,
@@ -719,7 +727,7 @@ router.post('/api/subjects', async (req, res) => {
   const subjectName = normalizeText(req.body && req.body.subjectName, 180);
   const description = normalizeText(req.body && req.body.description, 2000);
   const subjectCode = normalizeText(req.body && req.body.subjectCode, 60);
-  const viewerCourse = canonicalCourseNameForSubjects(normalizeCourse(req.user.course));
+  const viewerCourse = resolveViewerMainCourseForSubjects(req.user, req.subjectCourseAccess);
   const requestedCourse = canonicalCourseNameForSubjects(normalizeCourse(req.body && req.body.courseName));
   const courseName = hasAdminPrivileges(req.user) ? requestedCourse || viewerCourse : viewerCourse;
 
@@ -853,7 +861,7 @@ router.get('/api/subjects/:id/feed', async (req, res) => {
   }
 
   try {
-    const subjectState = await loadSubjectForViewer(subjectId, req.user);
+    const subjectState = await loadSubjectForViewer(subjectId, req.user, pool, req.subjectCourseAccess);
     if (subjectState.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
     }
@@ -1047,7 +1055,7 @@ router.post('/api/subjects/:id/posts', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
@@ -1183,7 +1191,7 @@ router.patch('/api/subjects/:id/posts/:postId', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
@@ -1326,7 +1334,7 @@ router.delete('/api/subjects/:id/posts/:postId', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
@@ -1402,7 +1410,7 @@ router.post('/api/subjects/:id/posts/:postId/like', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
@@ -1499,7 +1507,7 @@ router.post('/api/subjects/:id/posts/:postId/bookmark', async (req, res) => {
 
   const client = await pool.connect();
   try {
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
     }
@@ -1558,7 +1566,7 @@ router.post('/api/subjects/:id/posts/:postId/report', async (req, res) => {
 
   const client = await pool.connect();
   try {
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
     }
@@ -1625,7 +1633,7 @@ router.get('/api/subjects/:id/posts/:postId/ask-ai/bootstrap', async (req, res) 
 
   try {
     await ensureSubjectAiIndexes();
-    const context = await loadSubjectPostAiContext(subjectId, postId, req.user);
+    const context = await loadSubjectPostAiContext(subjectId, postId, req.user, pool, req.subjectCourseAccess);
     if (context.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject post not found.' });
     }
@@ -1705,7 +1713,7 @@ router.post('/api/subjects/:id/posts/:postId/ask-ai/messages', async (req, res) 
 
   try {
     await ensureSubjectAiIndexes();
-    const context = await loadSubjectPostAiContext(subjectId, postId, req.user);
+    const context = await loadSubjectPostAiContext(subjectId, postId, req.user, pool, req.subjectCourseAccess);
     if (context.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject post not found.' });
     }
@@ -1841,7 +1849,7 @@ router.post('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client);
+    const subjectAccess = await ensureSubjectInteractionAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (subjectAccess.status === 'not_found') {
       await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
@@ -1925,7 +1933,7 @@ router.get('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
   }
 
   try {
-    const subjectState = await loadSubjectForViewer(subjectId, req.user);
+    const subjectState = await loadSubjectForViewer(subjectId, req.user, pool, req.subjectCourseAccess);
     if (subjectState.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
     }
@@ -1979,7 +1987,7 @@ router.get('/api/subjects/:id/ask-ai/bootstrap', async (req, res) => {
 
   try {
     await ensureSubjectAiIndexes();
-    const context = await loadSubjectAiContext(subjectId, req.user);
+    const context = await loadSubjectAiContext(subjectId, req.user, pool, req.subjectCourseAccess);
     if (context.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
     }
@@ -2060,7 +2068,7 @@ router.post('/api/subjects/:id/ask-ai/messages', async (req, res) => {
 
   try {
     await ensureSubjectAiIndexes();
-    const context = await loadSubjectAiContext(subjectId, req.user);
+    const context = await loadSubjectAiContext(subjectId, req.user, pool, req.subjectCourseAccess);
     if (context.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Subject not found.' });
     }
