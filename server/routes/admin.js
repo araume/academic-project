@@ -1777,11 +1777,25 @@ router.get('/api/admin/me', requireAuthApi, async (req, res) => {
     if (!viewer) {
       return res.status(401).json({ ok: false, message: 'Unauthorized.' });
     }
+    await ensureDepAdminManagerReady();
+    const normalizedRole = sanitizeText(viewer.platform_role || 'member', 30).toLowerCase() || 'member';
+    let departmentAssignmentsCount = 0;
+    if (normalizedRole === 'owner' || normalizedRole === 'admin' || normalizedRole === 'depadmin') {
+      const assignmentResult = await pool.query(
+        `SELECT COUNT(*)::int AS total
+         FROM course_dep_admin_assignments
+         WHERE depadmin_uid = $1`,
+        [viewer.uid]
+      );
+      departmentAssignmentsCount = Number(assignmentResult.rows[0] ? assignmentResult.rows[0].total : 0);
+    }
     return res.json({
       ok: true,
       allowed: isOwnerOrAdmin(viewer) && viewer.is_banned !== true,
-      role: viewer.platform_role || 'member',
+      role: normalizedRole,
       uid: viewer.uid,
+      departmentAssignmentsCount,
+      canManageDepartment: viewer.is_banned !== true && departmentAssignmentsCount > 0,
     });
   } catch (error) {
     console.error('Admin me failed:', error);

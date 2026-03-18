@@ -17,6 +17,7 @@ const {
 } = require('../services/notificationService');
 const { autoScanIncomingContent } = require('../services/aiContentScanService');
 const { hasAdminPrivileges } = require('../services/roleAccess');
+const { loadUserCourseAccess, canUserAccessLibraryDocumentRow, ensureDepartmentWorkflowReady } = require('../services/departmentAccess');
 
 const router = express.Router();
 const upload = multer({
@@ -33,6 +34,7 @@ router.use('/api/posts', requireAuthApi);
 router.use('/api/home', requireAuthApi);
 router.use(['/api/posts', '/api/home'], async (req, res, next) => {
   try {
+    await ensureDepartmentWorkflowReady();
     req.viewerCourseAccess = await loadViewerCourseAccess(req.user && req.user.uid ? req.user.uid : '');
     return next();
   } catch (error) {
@@ -302,36 +304,16 @@ async function loadLibraryDocumentContext(uuid) {
 
 async function canAttachLibraryDocumentForUser(user, uuid) {
   if (!user || !user.uid || !uuid) return false;
-  const userCourse = user.course ? String(user.course).trim() : '';
-  const includeCourseExclusive = isUnifiedVisibilityEnabled();
-  const values = [uuid];
-  const filters = ['uuid = $1', 'COALESCE(is_restricted, false) = false'];
-
-  values.push(user.uid);
-  const uidParam = values.length;
-  if (userCourse) {
-    values.push(userCourse);
-    const courseParam = values.length;
-    const courseVisibilityClause = includeCourseExclusive
-      ? `(visibility IN ('private', 'course_exclusive') AND course = $${courseParam})`
-      : `(visibility = 'private' AND course = $${courseParam})`;
-    filters.push(
-      `(uploader_uid = $${uidParam}
-        OR visibility = 'public'
-        OR ${courseVisibilityClause})`
-    );
-  } else {
-    filters.push(`(uploader_uid = $${uidParam} OR visibility = 'public')`);
-  }
-
   const result = await pool.query(
-    `SELECT uuid
+    `SELECT uuid, uploader_uid, course, visibility, source, is_restricted, upload_approval_status
      FROM documents
-     WHERE ${filters.join(' AND ')}
+     WHERE uuid = $1
      LIMIT 1`,
-    values
+    [uuid]
   );
-  return result.rowCount > 0;
+  if (!result.rowCount) return false;
+  const courseAccess = await loadUserCourseAccess(user.uid);
+  return canUserAccessLibraryDocumentRow(result.rows[0], user, courseAccess);
 }
 
 async function getAccessiblePostForUser(req, postId) {

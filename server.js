@@ -18,6 +18,7 @@ const workbenchRoutes = require('./server/routes/workbench');
 const aiRoutes = require('./server/routes/ai');
 const systemRoutes = require('./server/routes/system');
 const adminRoutes = require('./server/routes/admin');
+const departmentRoutes = require('./server/routes/department');
 const notificationsRoutes = require('./server/routes/notifications');
 const searchRoutes = require('./server/routes/search');
 const { isSubjectsEnabled, loadRuntimeFeatureOverrides } = require('./server/services/featureFlags');
@@ -51,6 +52,7 @@ app.use(roomsRoutes);
 app.use(workbenchRoutes);
 app.use(aiRoutes);
 app.use(adminRoutes);
+app.use(departmentRoutes);
 app.use(notificationsRoutes);
 app.use(searchRoutes);
 
@@ -146,6 +148,10 @@ app.get('/preferences/blocked-users', requireAuth, (req, res) => {
 
 app.get('/admin', requireAuth, requireOwnerOrAdmin, (req, res) => {
   res.sendFile(path.join(__dirname, 'src', 'pages', 'admin.html'));
+});
+
+app.get('/department', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'src', 'pages', 'department.html'));
 });
 
 async function startServer() {

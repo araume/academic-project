@@ -10,6 +10,7 @@ const activeUploaderFilterText = document.getElementById('activeUploaderFilterTe
 const clearUploaderFilterButton = document.getElementById('clearUploaderFilterButton');
 const uploadCourse = document.getElementById('uploadCourse');
 const uploadCourseList = document.getElementById('uploadCourseList');
+const uploadCoursePolicyHint = document.getElementById('uploadCoursePolicyHint');
 const uploadToggle = document.getElementById('uploadToggle');
 const uploadModal = document.getElementById('uploadModal');
 const uploadClose = document.getElementById('uploadClose');
@@ -84,6 +85,109 @@ const state = {
   sort: 'recent',
   total: 0,
 };
+
+const uploadAccessState = {
+  loaded: false,
+  loading: false,
+  mainCourse: '',
+  uploadCourses: [],
+  blockedSubcourses: [],
+};
+
+function normalizeCourseName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function findUploadCoursePolicy(courseName) {
+  const normalized = normalizeCourseName(courseName);
+  if (!normalized) return null;
+  return uploadAccessState.uploadCourses.find(
+    (item) => normalizeCourseName(item.courseName) === normalized
+  ) || null;
+}
+
+function buildUploadCoursePolicyHint(courseName) {
+  const policy = findUploadCoursePolicy(courseName);
+  if (policy) {
+    return policy.approvalRequired
+      ? 'Joined subcourse upload selected. This document will stay pending until the assigned DepAdmin approves it.'
+      : 'Your main course is selected. Uploads here are published immediately.';
+  }
+
+  const normalizedCourse = normalizeCourseName(courseName);
+  if (normalizedCourse) {
+    const blockedMatch = uploadAccessState.blockedSubcourses.find(
+      (item) => normalizeCourseName(item.courseName) === normalizedCourse
+    );
+    if (blockedMatch) {
+      return blockedMatch.message || 'This joined subcourse cannot accept uploads until a DepAdmin is assigned.';
+    }
+    return 'You can upload only to your main course or to joined subcourses that already have an assigned DepAdmin.';
+  }
+
+  if (!uploadAccessState.uploadCourses.length) {
+    return 'Set your main course first. Joined subcourses without an assigned DepAdmin cannot receive uploads.';
+  }
+
+  const blockedNames = uploadAccessState.blockedSubcourses
+    .map((item) => String(item.courseName || '').trim())
+    .filter(Boolean);
+
+  const baseHint = 'Direct uploads are limited to your main course. Joined subcourses require DepAdmin approval.';
+  if (!blockedNames.length) {
+    return baseHint;
+  }
+  return `${baseHint} Unavailable joined subcourses: ${blockedNames.join(', ')}.`;
+}
+
+function renderUploadCoursePolicyHint(courseName = uploadCourse ? uploadCourse.value : '') {
+  if (!uploadCoursePolicyHint) return;
+  uploadCoursePolicyHint.textContent = buildUploadCoursePolicyHint(courseName);
+}
+
+function populateUploadCourseList(uploadCourses) {
+  if (!uploadCourseList) return;
+  clearElement(uploadCourseList);
+  uploadCourses.forEach((item) => {
+    const option = document.createElement('option');
+    option.value = item.courseName || '';
+    uploadCourseList.appendChild(option);
+  });
+}
+
+function applyUploadAccessState(data) {
+  uploadAccessState.loaded = true;
+  uploadAccessState.mainCourse = String(data.mainCourse || '').trim();
+  uploadAccessState.uploadCourses = Array.isArray(data.uploadCourses) ? data.uploadCourses : [];
+  uploadAccessState.blockedSubcourses = Array.isArray(data.blockedSubcourses) ? data.blockedSubcourses : [];
+  populateUploadCourseList(uploadAccessState.uploadCourses);
+  if (uploadCourse && !findUploadCoursePolicy(uploadCourse.value) && uploadAccessState.mainCourse) {
+    uploadCourse.value = uploadAccessState.mainCourse;
+  }
+  renderUploadCoursePolicyHint();
+}
+
+async function loadUploadAccess(force = false) {
+  if (uploadAccessState.loading) return;
+  if (uploadAccessState.loaded && !force) {
+    renderUploadCoursePolicyHint();
+    return;
+  }
+
+  uploadAccessState.loading = true;
+  try {
+    const response = await fetch('/api/library/upload-access');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Failed to load upload access.');
+    }
+    applyUploadAccessState(data);
+  } catch (_error) {
+    renderUploadCoursePolicyHint();
+  } finally {
+    uploadAccessState.loading = false;
+  }
+}
 
 function initialsFromName(name) {
   const safe = String(name || '').trim();
@@ -229,9 +333,15 @@ function renderDocuments(documents) {
 
     const meta = document.createElement('div');
     meta.className = 'doc-meta';
+    const approvalStatus = String(doc.upload_approval_status || 'approved').toLowerCase();
+    const ownerStatusLine =
+      doc.is_owner && approvalStatus !== 'approved'
+        ? `<p>${approvalStatus === 'pending' ? 'Pending DepAdmin approval' : 'Rejected for selected subcourse'}</p>`
+        : '';
     meta.innerHTML = `
       <h4>${doc.title}</h4>
       <p>${doc.uploader_name || 'Unknown uploader'}</p>
+      ${ownerStatusLine}
     `;
 
     const stats = document.createElement('div');
@@ -283,7 +393,11 @@ async function openDetail(doc) {
   currentDoc = doc;
   updateDocumentAvailabilityUI(doc);
   detailTitle.textContent = doc.title;
-  detailMeta.textContent = `${doc.course} • ${doc.subject}`;
+  const approvalStatus = String(doc.upload_approval_status || 'approved').toLowerCase();
+  detailMeta.textContent =
+    doc.is_owner && approvalStatus !== 'approved'
+      ? `${doc.course} • ${doc.subject} • ${approvalStatus === 'pending' ? 'Pending approval' : 'Rejected'}`
+      : `${doc.course} • ${doc.subject}`;
   detailDescription.textContent = doc.description || 'No description provided.';
   detailFilename.textContent = doc.filename;
   detailUploader.textContent = doc.uploader_name || 'Unknown';
@@ -412,6 +526,10 @@ async function submitEdit(event) {
     currentDoc.description = data.document.description;
     currentDoc.course = data.document.course;
     currentDoc.subject = data.document.subject;
+    currentDoc.upload_approval_status = data.document.upload_approval_status || currentDoc.upload_approval_status || 'approved';
+    if (data.message) {
+      editMessage.textContent = data.message;
+    }
     openDetail(currentDoc);
     editSection.classList.add('is-hidden');
     fetchDocuments();
@@ -445,25 +563,15 @@ async function loadCourses() {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Failed to load courses.');
     }
-    const courseNames = Array.from(
-      new Set((data.courses || []).map((course) => String(course.course_name || '').trim()).filter(Boolean))
-    );
-
-    if (uploadCourseList) {
-      clearElement(uploadCourseList);
-      courseNames.forEach((name) => {
-        const uploadOption = document.createElement('option');
-        uploadOption.value = name;
-        uploadCourseList.appendChild(uploadOption);
+    if (courseFilter) {
+      courseFilter.innerHTML = '<option value="all">All courses</option>';
+      data.courses.forEach((course) => {
+        const option = document.createElement('option');
+        option.value = course.course_name;
+        option.textContent = course.course_name;
+        courseFilter.appendChild(option);
       });
     }
-
-    data.courses.forEach((course) => {
-      const option = document.createElement('option');
-      option.value = course.course_name;
-      option.textContent = course.course_name;
-      courseFilter.appendChild(option);
-    });
   } catch (error) {
     // Silent failure; user can still type the course manually.
   }
@@ -691,11 +799,29 @@ async function sendDocAiMessage(event) {
 }
 
 if (uploadToggle) {
-  uploadToggle.addEventListener('click', () => openModal(uploadModal));
+  uploadToggle.addEventListener('click', async () => {
+    await loadUploadAccess(true);
+    if (uploadForm) {
+      uploadForm.reset();
+    }
+    if (uploadMessage) {
+      uploadMessage.textContent = '';
+    }
+    if (uploadCourse && uploadAccessState.mainCourse) {
+      uploadCourse.value = uploadAccessState.mainCourse;
+    }
+    renderUploadCoursePolicyHint();
+    openModal(uploadModal);
+  });
 }
 
 if (uploadClose) {
   uploadClose.addEventListener('click', () => closeModal(uploadModal));
+}
+
+if (uploadCourse) {
+  uploadCourse.addEventListener('input', () => renderUploadCoursePolicyHint());
+  uploadCourse.addEventListener('change', () => renderUploadCoursePolicyHint());
 }
 
 if (detailClose) {
@@ -858,6 +984,12 @@ if (uploadForm) {
         ? rawVisibility
         : 'public';
     formData.set('visibility', visibility);
+    const selectedCourse = String(formData.get('course') || '').trim();
+    if (uploadAccessState.loaded && selectedCourse && !findUploadCoursePolicy(selectedCourse)) {
+      uploadMessage.textContent = buildUploadCoursePolicyHint(selectedCourse);
+      isDocumentUploading = false;
+      return;
+    }
     const submitButton = uploadForm.querySelector('button[type="submit"]');
     const originalSubmitLabel = submitButton ? submitButton.textContent : 'Upload';
     if (submitButton) {
@@ -876,6 +1008,9 @@ if (uploadForm) {
       }
       uploadForm.reset();
       closeModal(uploadModal);
+      if (data.message && String(data.document && data.document.upload_approval_status || '').toLowerCase() === 'pending') {
+        alert(data.message);
+      }
       fetchDocuments();
     } catch (error) {
       uploadMessage.textContent = error.message;
@@ -1002,6 +1137,7 @@ setInterval(() => {
 }, 10000);
 
 loadCourses();
+loadUploadAccess();
 updateActiveUploaderFilterUI();
 fetchDocuments();
 loadNavAvatar();

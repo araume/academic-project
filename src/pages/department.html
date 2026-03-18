@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Department Management</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/department.css" />
+  <link rel="stylesheet" href="/src/styles/nav.css" />
+  <link rel="icon" href="../../assets/newlogo.png" type="image/x-icon">
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-left">
+      <img src="/assets/nav-logo.png" alt="Thesis logo" class="nav-logo" />
+      <nav class="nav-links">
+        <a href="/home" aria-label="Home"><img src="/assets/home.svg" alt="" /><span class="nav-label">Home</span></a>
+        <a href="/connections" aria-label="Connections"><img src="/assets/connection.svg" alt="" /><span class="nav-label">Connections</span></a>
+        <a href="/workbench" aria-label="Repository"><img src="/assets/workbench.svg" alt="" /><span class="nav-label">Repository</span></a>
+        <a href="/personal" aria-label="Personal"><img src="/assets/personal.svg" alt="" /><span class="nav-label">Personal</span></a>
+        <a href="/open-library" aria-label="Open Library"><img src="/assets/open-library.svg" alt="" /><span class="nav-label">Open Library</span></a>
+        <a href="/community" aria-label="Units"><img src="/assets/community.svg" alt="" /><span class="nav-label">Units</span></a>
+        <a href="/rooms" aria-label="Rooms"><img src="/assets/rooms.svg" alt="" /><span class="nav-label">Rooms</span></a>
+      </nav>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-button" aria-label="Search">
+        <img src="/assets/search.svg" alt="" />
+      </button>
+      <button class="icon-button" aria-label="Notifications">
+        <img src="/assets/notif.svg" alt="" />
+      </button>
+      <div class="profile-wrap">
+        <button class="avatar-button" id="profileToggle" aria-label="Profile menu">
+          <span class="avatar-circle" id="navAvatarLabel">DM</span>
+        </button>
+        <div class="profile-menu is-hidden" id="profileMenu">
+          <a href="/profile">Profile</a>
+          <a href="/account">Account</a>
+          <a href="/faq">FAQ</a>
+          <a href="/about">About</a>
+          <a href="/preferences">Preferences</a>
+          <button type="button" id="logoutButton">Logout</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="department-page">
+    <section class="department-hero">
+      <div>
+        <p class="eyebrow">Department Management</p>
+        <h1>Moderate your assigned department.</h1>
+        <p class="department-subcopy">Review pending subcourse document uploads, take down course-exclusive home feed posts, and moderate unit posts in your department.</p>
+      </div>
+      <div class="department-filter-card">
+        <label for="departmentCourseFilter">Department</label>
+        <select id="departmentCourseFilter">
+          <option value="">All assigned departments</option>
+        </select>
+        <p class="hint">Only courses assigned to your DepAdmin account appear here.</p>
+      </div>
+    </section>
+
+    <p class="form-message" id="departmentMessage"></p>
+
+    <section class="department-summary card-shell">
+      <div>
+        <p class="eyebrow">Assigned Departments</p>
+        <div id="departmentAssignments" class="assignment-pills"></div>
+      </div>
+    </section>
+
+    <section class="department-grid">
+      <article class="department-panel card-shell">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Document Approval</p>
+            <h2>Pending uploads</h2>
+          </div>
+          <span class="panel-count" id="documentsCount">0</span>
+        </div>
+        <div id="documentsList" class="moderation-list"></div>
+      </article>
+
+      <article class="department-panel card-shell">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Home Feed</p>
+            <h2>Course-exclusive posts</h2>
+          </div>
+          <span class="panel-count" id="homePostsCount">0</span>
+        </div>
+        <div id="homePostsList" class="moderation-list"></div>
+      </article>
+
+      <article class="department-panel card-shell">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Units</p>
+            <h2>Unit post moderation</h2>
+          </div>
+          <span class="panel-count" id="unitPostsCount">0</span>
+        </div>
+        <div id="unitPostsList" class="moderation-list"></div>
+      </article>
+    </section>
+  </main>
+
+  <script src="/src/js/department.js"></script>
+  <script src="/src/js/nav-admin-link.js"></script>
+</body>
+</html>

@@ -36,6 +36,10 @@ const vaultModalClose = document.getElementById('vaultModalClose');
 const vaultForm = document.getElementById('vaultForm');
 const vaultSubmitButton = document.getElementById('vaultSubmitButton');
 const vaultMessage = document.getElementById('vaultMessage');
+const vaultUploadMessage = document.getElementById('vaultUploadMessage');
+const vaultCourseInput = document.getElementById('vaultCourse');
+const vaultCourseList = document.getElementById('vaultCourseList');
+const vaultCoursePolicyHint = document.getElementById('vaultCoursePolicyHint');
 const vaultList = document.getElementById('vaultList');
 
 const conversationList = document.getElementById('conversationList');
@@ -67,6 +71,109 @@ let selectedContext = null;
 let isSendingMessage = false;
 let conversationCache = new Map();
 let vaultLoaded = false;
+
+const vaultUploadAccessState = {
+  loaded: false,
+  loading: false,
+  mainCourse: '',
+  uploadCourses: [],
+  blockedSubcourses: [],
+};
+
+function normalizeCourseName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function findVaultUploadCoursePolicy(courseName) {
+  const normalized = normalizeCourseName(courseName);
+  if (!normalized) return null;
+  return vaultUploadAccessState.uploadCourses.find(
+    (item) => normalizeCourseName(item.courseName) === normalized
+  ) || null;
+}
+
+function buildVaultCoursePolicyHint(courseName) {
+  const policy = findVaultUploadCoursePolicy(courseName);
+  if (policy) {
+    return policy.approvalRequired
+      ? 'Joined subcourse upload selected. This document will stay pending until the assigned DepAdmin approves it.'
+      : 'Your main course is selected. Uploads here are published immediately.';
+  }
+
+  const normalizedCourse = normalizeCourseName(courseName);
+  if (normalizedCourse) {
+    const blockedMatch = vaultUploadAccessState.blockedSubcourses.find(
+      (item) => normalizeCourseName(item.courseName) === normalizedCourse
+    );
+    if (blockedMatch) {
+      return blockedMatch.message || 'This joined subcourse cannot accept uploads until a DepAdmin is assigned.';
+    }
+    return 'You can upload only to your main course or to joined subcourses that already have an assigned DepAdmin.';
+  }
+
+  if (!vaultUploadAccessState.uploadCourses.length) {
+    return 'Set your main course first. Joined subcourses without an assigned DepAdmin cannot receive uploads.';
+  }
+
+  const blockedNames = vaultUploadAccessState.blockedSubcourses
+    .map((item) => String(item.courseName || '').trim())
+    .filter(Boolean);
+
+  const baseHint = 'Direct uploads are limited to your main course. Joined subcourses require DepAdmin approval.';
+  if (!blockedNames.length) {
+    return baseHint;
+  }
+  return `${baseHint} Unavailable joined subcourses: ${blockedNames.join(', ')}.`;
+}
+
+function renderVaultCoursePolicyHint(courseName = vaultCourseInput ? vaultCourseInput.value : '') {
+  if (!vaultCoursePolicyHint) return;
+  vaultCoursePolicyHint.textContent = buildVaultCoursePolicyHint(courseName);
+}
+
+function populateVaultCourseList(courses) {
+  if (!vaultCourseList) return;
+  vaultCourseList.innerHTML = '';
+  courses.forEach((name) => {
+    const option = document.createElement('option');
+    option.value = name;
+    vaultCourseList.appendChild(option);
+  });
+}
+
+function applyVaultUploadAccessState(data) {
+  vaultUploadAccessState.loaded = true;
+  vaultUploadAccessState.mainCourse = String(data.mainCourse || '').trim();
+  vaultUploadAccessState.uploadCourses = Array.isArray(data.uploadCourses) ? data.uploadCourses : [];
+  vaultUploadAccessState.blockedSubcourses = Array.isArray(data.blockedSubcourses) ? data.blockedSubcourses : [];
+  populateVaultCourseList(vaultUploadAccessState.uploadCourses.map((item) => item.courseName || ''));
+  if (vaultCourseInput && !findVaultUploadCoursePolicy(vaultCourseInput.value) && vaultUploadAccessState.mainCourse) {
+    vaultCourseInput.value = vaultUploadAccessState.mainCourse;
+  }
+  renderVaultCoursePolicyHint();
+}
+
+async function loadVaultUploadAccess(force = false) {
+  if (vaultUploadAccessState.loading) return;
+  if (vaultUploadAccessState.loaded && !force) {
+    renderVaultCoursePolicyHint();
+    return;
+  }
+
+  vaultUploadAccessState.loading = true;
+  try {
+    const response = await fetch('/api/library/upload-access');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Failed to load upload access.');
+    }
+    applyVaultUploadAccessState(data);
+  } catch (_error) {
+    renderVaultCoursePolicyHint();
+  } finally {
+    vaultUploadAccessState.loading = false;
+  }
+}
 
 function setConversationHeader(title, subtitle) {
   if (conversationTitle) {
@@ -828,6 +935,13 @@ function createVaultItem(documentItem) {
   const libraryState = documentItem.is_open_library_visible
     ? 'Visible in Open Library'
     : 'Hidden from Open Library';
+  const approvalStatus = String(documentItem.upload_approval_status || 'approved').toLowerCase();
+  const approvalLine =
+    approvalStatus === 'pending'
+      ? 'Pending DepAdmin approval for the selected subcourse.'
+      : approvalStatus === 'rejected'
+        ? `Subcourse upload rejected${documentItem.upload_rejection_note ? `: ${documentItem.upload_rejection_note}` : '.'}`
+        : 'Approved for the selected course.';
 
   item.innerHTML = `
     <div class="vault-item-head">
@@ -840,6 +954,7 @@ function createVaultItem(documentItem) {
     <p class="vault-item-description">${escapeHtml(description)}</p>
     <p class="vault-item-filename">${escapeHtml(filename)}</p>
     <p class="vault-item-library-state">${libraryState}</p>
+    <p class="vault-item-library-state">${escapeHtml(approvalLine)}</p>
     <div class="vault-item-actions">
       <label>
         <span>Visibility</span>
@@ -938,12 +1053,44 @@ async function uploadVaultDocument(event) {
   const file = vaultForm.elements.file && vaultForm.elements.file.files
     ? vaultForm.elements.file.files[0]
     : null;
+  const title = String(formData.get('title') || '').trim();
+  const course = String(formData.get('course') || '').trim();
+  const subject = String(formData.get('subject') || '').trim();
+  const rawVisibility = String(formData.get('visibility') || '').trim().toLowerCase();
+  const visibility =
+    rawVisibility === 'public' || rawVisibility === 'course_exclusive'
+      ? rawVisibility
+      : 'private';
+
+  if (vaultUploadMessage) {
+    vaultUploadMessage.textContent = '';
+  }
+  if (vaultMessage) {
+    vaultMessage.textContent = '';
+  }
   if (!file) {
-    vaultMessage.textContent = 'Please choose a file to upload.';
+    if (vaultUploadMessage) {
+      vaultUploadMessage.textContent = 'Please choose a file to upload.';
+    }
+    return;
+  }
+  if (!title || !course || !subject) {
+    if (vaultUploadMessage) {
+      vaultUploadMessage.textContent = 'Title, course, and subject are required.';
+    }
     return;
   }
 
-  vaultMessage.textContent = '';
+  formData.set('title', title);
+  formData.set('course', course);
+  formData.set('subject', subject);
+  formData.set('visibility', visibility);
+  if (vaultUploadAccessState.loaded && course && !findVaultUploadCoursePolicy(course)) {
+    if (vaultUploadMessage) {
+      vaultUploadMessage.textContent = buildVaultCoursePolicyHint(course);
+    }
+    return;
+  }
   const originalLabel = vaultSubmitButton ? vaultSubmitButton.textContent : 'Upload';
   if (vaultSubmitButton) {
     vaultSubmitButton.disabled = true;
@@ -961,11 +1108,16 @@ async function uploadVaultDocument(event) {
     }
     vaultForm.reset();
     closeModal(vaultModal);
-    vaultMessage.textContent = 'Document uploaded to your vault.';
+    if (vaultUploadMessage) {
+      vaultUploadMessage.textContent = '';
+    }
+    vaultMessage.textContent = data.message || 'Document uploaded to your vault.';
     vaultLoaded = false;
     await loadVaultDocuments();
   } catch (error) {
-    vaultMessage.textContent = error.message || 'Upload failed.';
+    if (vaultUploadMessage) {
+      vaultUploadMessage.textContent = error.message || 'Upload failed.';
+    }
   } finally {
     if (vaultSubmitButton) {
       vaultSubmitButton.disabled = false;
@@ -975,11 +1127,25 @@ async function uploadVaultDocument(event) {
 }
 
 if (openVaultModalButton) {
-  openVaultModalButton.addEventListener('click', () => {
+  openVaultModalButton.addEventListener('click', async () => {
+    await loadVaultUploadAccess(true);
     if (vaultForm) {
       vaultForm.reset();
+      if (vaultForm.elements.visibility) {
+        vaultForm.elements.visibility.value = 'private';
+      }
     }
+    if (vaultUploadMessage) {
+      vaultUploadMessage.textContent = '';
+    }
+    if (vaultCourseInput && vaultUploadAccessState.mainCourse) {
+      vaultCourseInput.value = vaultUploadAccessState.mainCourse;
+    }
+    renderVaultCoursePolicyHint();
     openModal(vaultModal);
+    if (vaultCourseInput) {
+      vaultCourseInput.focus();
+    }
   });
 }
 
@@ -989,6 +1155,19 @@ if (vaultModalClose) {
 
 if (vaultForm) {
   vaultForm.addEventListener('submit', uploadVaultDocument);
+}
+
+if (vaultCourseInput) {
+  vaultCourseInput.addEventListener('input', () => renderVaultCoursePolicyHint());
+  vaultCourseInput.addEventListener('change', () => renderVaultCoursePolicyHint());
+}
+
+if (vaultModal) {
+  vaultModal.addEventListener('click', (event) => {
+    if (event.target === vaultModal) {
+      closeModal(vaultModal);
+    }
+  });
 }
 
 async function loadConversations() {
@@ -1358,3 +1537,4 @@ loadTasks();
 loadConversations();
 updateContextChip();
 loadNavAvatar();
+loadVaultUploadAccess();

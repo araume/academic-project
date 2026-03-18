@@ -121,6 +121,30 @@ ALTER TABLE documents
   ADD COLUMN IF NOT EXISTS restricted_reason TEXT;
 
 ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_approval_status TEXT NOT NULL DEFAULT 'approved';
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_approval_required BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_approval_requested_at TIMESTAMPTZ;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_approved_at TIMESTAMPTZ;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_approved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_rejected_at TIMESTAMPTZ;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_rejected_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL;
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS upload_rejection_note TEXT;
+
+ALTER TABLE documents
   DROP CONSTRAINT IF EXISTS documents_visibility_check;
 
 ALTER TABLE documents
@@ -133,6 +157,13 @@ ALTER TABLE documents
 ALTER TABLE documents
   ADD CONSTRAINT documents_source_check
     CHECK (source IN ('vault', 'library'));
+
+ALTER TABLE documents
+  DROP CONSTRAINT IF EXISTS documents_upload_approval_status_check;
+
+ALTER TABLE documents
+  ADD CONSTRAINT documents_upload_approval_status_check
+    CHECK (upload_approval_status IN ('approved', 'pending', 'rejected'));
 
 DO $$
 BEGIN

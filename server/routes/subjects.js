@@ -8,6 +8,11 @@ const { isSubjectsEnabled, isUnifiedVisibilityEnabled } = require('../services/f
 const { autoScanIncomingContent } = require('../services/aiContentScanService');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const { parseReportPayload } = require('../services/reporting');
+const {
+  ensureDepartmentWorkflowReady,
+  loadUserCourseAccess,
+  canUserAccessLibraryDocumentRow,
+} = require('../services/departmentAccess');
 
 const router = express.Router();
 
@@ -52,6 +57,7 @@ router.use('/api/subjects', async (req, res, next) => {
     return res.status(404).json({ ok: false, message: 'Subjects feature is disabled.' });
   }
   try {
+    await ensureDepartmentWorkflowReady();
     await ensureSubjectEngagementReady();
     return next();
   } catch (error) {
@@ -413,23 +419,7 @@ async function ensureSubjectInteractionAccess(subjectId, user, client = pool) {
 }
 
 function canAccessDocumentRow(document, user) {
-  if (!document || !user) return false;
-  if (document.is_restricted === true) return false;
-  if (hasAdminPrivileges(user)) return true;
-  if (document.uploader_uid && document.uploader_uid === user.uid) return true;
-  if (document.visibility === 'public') return true;
-  const viewerCourse = canonicalCourseNameForSubjects(user.course).toLowerCase();
-  const docCourse = canonicalCourseNameForSubjects(document.course).toLowerCase();
-  const includeCourseExclusive = isUnifiedVisibilityEnabled();
-  return Boolean(
-    viewerCourse &&
-      docCourse &&
-      viewerCourse === docCourse &&
-      (
-        document.visibility === 'private' ||
-        (includeCourseExclusive && document.visibility === 'course_exclusive')
-      )
-  );
+  return canUserAccessLibraryDocumentRow(document, user, null);
 }
 
 async function loadAccessibleLibraryDocument(uuid, user, client = pool) {
@@ -442,7 +432,9 @@ async function loadAccessibleLibraryDocument(uuid, user, client = pool) {
        course,
        subject,
        visibility,
+       source,
        is_restricted,
+       upload_approval_status,
        link,
        uploader_uid
      FROM documents
@@ -451,7 +443,8 @@ async function loadAccessibleLibraryDocument(uuid, user, client = pool) {
     [uuid]
   );
   const document = result.rows[0];
-  if (!document || !canAccessDocumentRow(document, user)) return null;
+  const viewerCourseAccess = await loadUserCourseAccess(user.uid, client);
+  if (!document || !canUserAccessLibraryDocumentRow(document, user, viewerCourseAccess)) return null;
   const link = await signIfNeeded(document.link);
   return {
     uuid: document.uuid,

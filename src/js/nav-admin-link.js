@@ -7,8 +7,10 @@ applyStoredThemePreference();
 initThemeToggle();
 
 (async function initNavEnhancements() {
+  const adminContext = await loadAdminContextSafe();
+  injectAdminNavLink(adminContext);
+  injectDepartmentNavLink(adminContext);
   await Promise.all([
-    injectAdminNavLink(),
     initMobileAppMenuEntry(),
     initNotificationsMenu(),
     initGlobalSearchModal(),
@@ -87,34 +89,75 @@ function initThemeToggle() {
   });
 }
 
-async function injectAdminNavLink() {
+function injectAdminNavLink(adminContext) {
   const profileMenu = document.getElementById('profileMenu');
   if (!profileMenu) return;
 
+  if (!adminContext || adminContext.allowed !== true) {
+    return;
+  }
+
+  const existing = profileMenu.querySelector('a[href="/admin"]');
+  if (existing) return;
+
+  const accountLink = profileMenu.querySelector('a[href="/account"]');
+  const link = document.createElement('a');
+  link.href = '/admin';
+  link.textContent = 'Admin';
+
+  if (accountLink && accountLink.nextSibling) {
+    profileMenu.insertBefore(link, accountLink.nextSibling);
+  } else if (accountLink) {
+    profileMenu.appendChild(link);
+  } else {
+    profileMenu.insertBefore(link, profileMenu.firstChild);
+  }
+}
+
+async function loadAdminContext() {
+  const response = await fetch('/api/admin/me');
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || !data.ok) {
+    throw new Error((data && data.message) || 'Unable to load admin context.');
+  }
+  return data;
+}
+
+async function loadAdminContextSafe() {
   try {
-    const response = await fetch('/api/admin/me');
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data || !data.ok || data.allowed !== true) {
-      return;
-    }
-
-    const existing = profileMenu.querySelector('a[href="/admin"]');
-    if (existing) return;
-
-    const accountLink = profileMenu.querySelector('a[href="/account"]');
-    const link = document.createElement('a');
-    link.href = '/admin';
-    link.textContent = 'Admin';
-
-    if (accountLink && accountLink.nextSibling) {
-      profileMenu.insertBefore(link, accountLink.nextSibling);
-    } else if (accountLink) {
-      profileMenu.appendChild(link);
-    } else {
-      profileMenu.insertBefore(link, profileMenu.firstChild);
-    }
+    return await loadAdminContext();
   } catch (error) {
-    // ignore; nav still works for non-admin users
+    return null;
+  }
+}
+
+function injectDepartmentNavLink(adminContext) {
+  const profileMenu = document.getElementById('profileMenu');
+  if (!profileMenu) return;
+
+  if (!adminContext || adminContext.canManageDepartment !== true) {
+    return;
+  }
+
+  const existing = profileMenu.querySelector('a[href="/department"]');
+  if (existing) return;
+
+  const link = document.createElement('a');
+  link.href = '/department';
+  link.textContent = 'Department Management';
+
+  const adminLink = profileMenu.querySelector('a[href="/admin"]');
+  const accountLink = profileMenu.querySelector('a[href="/account"]');
+  if (adminLink && adminLink.nextSibling) {
+    profileMenu.insertBefore(link, adminLink.nextSibling);
+  } else if (adminLink) {
+    profileMenu.appendChild(link);
+  } else if (accountLink && accountLink.nextSibling) {
+    profileMenu.insertBefore(link, accountLink.nextSibling);
+  } else if (accountLink) {
+    profileMenu.appendChild(link);
+  } else {
+    profileMenu.insertBefore(link, profileMenu.firstChild);
   }
 }
 

@@ -22,6 +22,12 @@ const {
   normalizeStorageKey,
   downloadFromStorage,
 } = require('../services/storage');
+const { createNotification } = require('../services/notificationService');
+const {
+  ensureDepartmentWorkflowReady,
+  resolveDocumentCoursePolicyForUser,
+  normalizeDocumentApprovalStatus,
+} = require('../services/departmentAccess');
 
 const GCLOUD_MCP_SERVER_URL = (process.env.GCLOUD_MCP_SERVER_URL || '').trim();
 const CONTEXT_PARSE_MAX_BYTES = 8 * 1024 * 1024;
@@ -37,6 +43,16 @@ const upload = multer({
 const router = express.Router();
 
 router.use('/api/personal', requireAuthApi);
+
+router.use('/api/personal', async (req, res, next) => {
+  try {
+    await ensureDepartmentWorkflowReady();
+    return next();
+  } catch (error) {
+    console.error('Personal department workflow bootstrap failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to resolve personal workspace access.' });
+  }
+});
 
 function parseBoolean(value) {
   if (typeof value === 'boolean') return value;
@@ -792,6 +808,12 @@ async function mapVaultDocument(row) {
     visibility: row.visibility,
     source: row.source,
     aiallowed: row.aiallowed === true,
+    upload_approval_status: normalizeDocumentApprovalStatus(row.upload_approval_status, 'approved'),
+    upload_approval_required: row.upload_approval_required === true,
+    upload_approval_requested_at: row.upload_approval_requested_at || null,
+    upload_approved_at: row.upload_approved_at || null,
+    upload_rejected_at: row.upload_rejected_at || null,
+    upload_rejection_note: row.upload_rejection_note || null,
     link,
     thumbnail_link: thumbnailLink,
     is_open_library_visible: row.visibility !== 'private',
@@ -807,6 +829,8 @@ router.get('/api/personal/vault/documents', async (req, res) => {
       `SELECT
          d.uuid, d.title, d.description, d.filename, d.uploader_uid, d.uploaddate,
          d.course, d.subject, d.views, d.popularity, d.visibility, d.source, d.aiallowed,
+         d.upload_approval_status, d.upload_approval_required, d.upload_approval_requested_at,
+         d.upload_approved_at, d.upload_rejected_at, d.upload_rejection_note,
          d.link, d.thumbnail_link,
          COALESCE(p.display_name, a.display_name, a.username, a.email) AS uploader_name,
          p.photo_link AS uploader_photo_link
@@ -842,25 +866,36 @@ router.post(
     const file = req.files && req.files.file ? req.files.file[0] : null;
     const thumbnail = req.files && req.files.thumbnail ? req.files.thumbnail[0] : null;
 
-    if (!title || !subject || !file) {
-      return res.status(400).json({ ok: false, message: 'Title, subject, and file are required.' });
-    }
-
     try {
-      const visibilityValue = normalizeDocumentVisibility(visibility || 'private');
+      const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+      const normalizedDescription = typeof description === 'string' ? description.trim() : '';
+      const normalizedSubject = typeof subject === 'string' ? subject.trim() : '';
+      const normalizedCourse = typeof course === 'string' ? course.trim() : '';
+      const visibilityRaw = typeof visibility === 'string' ? visibility.trim().toLowerCase() : '';
+      const visibilityValue =
+        visibilityRaw === 'public'
+          ? 'public'
+          : visibilityRaw === 'course_exclusive'
+            ? 'course_exclusive'
+            : 'private';
+
+      if (!normalizedTitle || !normalizedCourse || !normalizedSubject || !file) {
+        return res.status(400).json({ ok: false, message: 'Title, course, subject, and file are required.' });
+      }
+      const uploadPolicy = await resolveDocumentCoursePolicyForUser(req.user.uid, normalizedCourse);
+      if (!uploadPolicy.ok) {
+        return res.status(403).json({ ok: false, message: uploadPolicy.message || 'Course upload is not allowed.' });
+      }
       if (visibilityValue === 'course_exclusive' && !UNIFIED_VISIBILITY_ENABLED) {
         return res.status(400).json({
           ok: false,
           message: 'Course-exclusive visibility is currently unavailable.',
         });
       }
-
-      const resolvedCourse =
-        (typeof course === 'string' && course.trim()) ||
-        (typeof req.user.course === 'string' && req.user.course.trim()) ||
-        'General';
       const uuid = crypto.randomUUID();
       const aiAllowedValue = parseBoolean(aiallowed);
+      const approvalStatus = uploadPolicy.approvalStatus || 'approved';
+      const approvalRequired = uploadPolicy.approvalRequired === true;
 
       const uploadedFile = await uploadToStorage({
         buffer: file.buffer,
@@ -882,28 +917,60 @@ router.post(
 
       const insertResult = await pool.query(
         `INSERT INTO documents
-          (uuid, title, description, filename, uploader_uid, course, subject, visibility, source, aiallowed, link, thumbnail_link)
+          (
+            uuid, title, description, filename, uploader_uid, course, subject, visibility, source, aiallowed,
+            link, thumbnail_link, upload_approval_status, upload_approval_required, upload_approval_requested_at,
+            upload_approved_at, upload_approved_by_uid, upload_rejected_at, upload_rejected_by_uid, upload_rejection_note
+          )
          VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, 'vault', $9, $10, $11)
+          ($1, $2, $3, $4, $5, $6, $7, $8, 'vault', $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING
           uuid, title, description, filename, uploader_uid, uploaddate, course, subject, views,
-          popularity, visibility, source, aiallowed, link, thumbnail_link`,
+          popularity, visibility, source, aiallowed, link, thumbnail_link,
+          upload_approval_status, upload_approval_required, upload_approval_requested_at,
+          upload_approved_at, upload_rejected_at, upload_rejection_note`,
         [
           uuid,
-          title.trim(),
-          description ? String(description).trim() : '',
+          normalizedTitle,
+          normalizedDescription,
           file.originalname,
           req.user.uid,
-          String(resolvedCourse).trim(),
-          String(subject).trim(),
+          uploadPolicy.courseName || normalizedCourse,
+          normalizedSubject,
           visibilityValue,
           aiAllowedValue,
           uploadedFile.key,
           thumbnailKey,
+          approvalStatus,
+          approvalRequired,
+          approvalRequired ? new Date() : null,
+          approvalStatus === 'approved' ? new Date() : null,
+          null,
+          null,
+          null,
+          null,
         ]
       );
 
       const inserted = insertResult.rows[0];
+      if (approvalRequired && uploadPolicy.depadminUid && uploadPolicy.depadminUid !== req.user.uid) {
+        createNotification({
+          recipientUid: uploadPolicy.depadminUid,
+          actorUid: req.user.uid,
+          type: 'document_upload_pending_approval',
+          entityType: 'document',
+          entityId: uuid,
+          targetUrl: '/department',
+          meta: {
+            documentTitle: inserted && inserted.title ? inserted.title : normalizedTitle,
+            documentUuid: uuid,
+            course: uploadPolicy.courseName || normalizedCourse,
+            source: 'file_vault',
+          },
+        }).catch((error) => {
+          console.error('File Vault pending approval notification failed:', error);
+        });
+      }
       const mapped = await mapVaultDocument({
         ...inserted,
         uploader_name: req.user.displayName || req.user.username || req.user.email || 'Member',
@@ -918,16 +985,14 @@ router.post(
             mimeType: file.mimetype,
           });
           const contentScanText = [
-            `Title: ${inserted && inserted.title ? inserted.title : title.trim()}`,
+            `Title: ${inserted && inserted.title ? inserted.title : normalizedTitle}`,
             `Description: ${
               inserted && inserted.description
                 ? inserted.description
-                : description
-                  ? String(description).trim()
-                  : ''
+                : normalizedDescription
             }`,
-            `Course: ${inserted && inserted.course ? inserted.course : String(resolvedCourse).trim()}`,
-            `Subject: ${inserted && inserted.subject ? inserted.subject : String(subject).trim()}`,
+            `Course: ${inserted && inserted.course ? inserted.course : normalizedCourse}`,
+            `Subject: ${inserted && inserted.subject ? inserted.subject : normalizedSubject}`,
             `Visibility: ${visibilityValue}`,
             `Filename: ${file.originalname || ''}`,
             excerpt ? `Document excerpt:\n${excerpt}` : '',
@@ -944,10 +1009,11 @@ router.post(
               source: 'file_vault_upload',
               documentSource: 'vault',
               visibility: visibilityValue,
-              course: inserted && inserted.course ? inserted.course : String(resolvedCourse).trim(),
-              subject: inserted && inserted.subject ? inserted.subject : String(subject).trim(),
+              course: inserted && inserted.course ? inserted.course : uploadPolicy.courseName || normalizedCourse,
+              subject: inserted && inserted.subject ? inserted.subject : normalizedSubject,
               filename: file.originalname || '',
               mimeType: file.mimetype || '',
+              uploadApprovalStatus: approvalStatus,
             },
           });
         } catch (error) {
@@ -955,7 +1021,13 @@ router.post(
         }
       });
 
-      return res.json({ ok: true, document: mapped });
+      return res.json({
+        ok: true,
+        document: mapped,
+        message: approvalRequired
+          ? 'Document uploaded to your vault and submitted for DepAdmin approval for the selected subcourse.'
+          : 'Document uploaded to your vault.',
+      });
     } catch (error) {
       console.error('Vault document upload failed:', error);
       return res.status(500).json({ ok: false, message: 'Upload failed.' });
@@ -975,6 +1047,7 @@ router.patch('/api/personal/vault/documents/:uuid', async (req, res) => {
   const { title, description, subject, course, visibility, aiallowed } = req.body || {};
   const updates = [];
   const values = [];
+  let courseValueIndex = null;
 
   if (title !== undefined) {
     values.push(String(title).trim());
@@ -989,8 +1062,9 @@ router.patch('/api/personal/vault/documents/:uuid', async (req, res) => {
     updates.push(`subject = $${values.length}`);
   }
   if (course !== undefined) {
-    values.push(String(course).trim() || 'General');
-    updates.push(`course = $${values.length}`);
+    values.push(String(course).trim());
+    courseValueIndex = values.length;
+    updates.push(`course = $${courseValueIndex}`);
   }
   if (visibility !== undefined) {
     const visibilityValue = normalizeDocumentVisibility(visibility);
@@ -1013,15 +1087,73 @@ router.patch('/api/personal/vault/documents/:uuid', async (req, res) => {
   }
 
   try {
+    const ownerResult = await pool.query(
+      `SELECT uuid, title, course
+       FROM documents
+       WHERE uuid = $1
+         AND uploader_uid = $2
+         AND source = 'vault'
+       LIMIT 1`,
+      [uuid, req.user.uid]
+    );
+    if (!ownerResult.rowCount) {
+      return res.status(404).json({ ok: false, message: 'Vault document not found.' });
+    }
+
+    const approvalUpdates = [];
+    if (course !== undefined) {
+      const nextCourse = String(course).trim();
+      const policy = await resolveDocumentCoursePolicyForUser(req.user.uid, nextCourse);
+      if (!policy.ok) {
+        return res.status(403).json({ ok: false, message: policy.message || 'Course update is not allowed.' });
+      }
+      if (courseValueIndex) {
+        values[courseValueIndex - 1] = policy.courseName || nextCourse;
+      }
+      values.push(policy.approvalStatus || 'approved');
+      approvalUpdates.push(`upload_approval_status = $${values.length}`);
+      values.push(policy.approvalRequired === true);
+      approvalUpdates.push(`upload_approval_required = $${values.length}`);
+      values.push(policy.approvalRequired ? new Date() : null);
+      approvalUpdates.push(`upload_approval_requested_at = $${values.length}`);
+      values.push(policy.approvalStatus === 'approved' ? new Date() : null);
+      approvalUpdates.push(`upload_approved_at = $${values.length}`);
+      approvalUpdates.push(`upload_approved_by_uid = NULL`);
+      approvalUpdates.push(`upload_rejected_at = NULL`);
+      approvalUpdates.push(`upload_rejected_by_uid = NULL`);
+      approvalUpdates.push(`upload_rejection_note = NULL`);
+
+      if (policy.approvalRequired && policy.depadminUid && policy.depadminUid !== req.user.uid) {
+        createNotification({
+          recipientUid: policy.depadminUid,
+          actorUid: req.user.uid,
+          type: 'document_upload_pending_approval',
+          entityType: 'document',
+          entityId: uuid,
+          targetUrl: '/department',
+          meta: {
+            documentTitle: title !== undefined ? String(title).trim() : ownerResult.rows[0].title || 'Untitled document',
+            documentUuid: uuid,
+            course: policy.courseName || nextCourse,
+            source: 'file_vault_edit',
+          },
+        }).catch((error) => {
+          console.error('File Vault edit approval notification failed:', error);
+        });
+      }
+    }
+
     values.push(uuid, req.user.uid);
     const result = await pool.query(
       `UPDATE documents
-       SET ${updates.join(', ')}
+       SET ${updates.concat(approvalUpdates).join(', ')}
        WHERE uuid = $${values.length - 1}
          AND uploader_uid = $${values.length}
          AND source = 'vault'
        RETURNING uuid, title, description, filename, uploader_uid, uploaddate, course, subject,
-                 views, popularity, visibility, source, aiallowed, link, thumbnail_link`,
+                 views, popularity, visibility, source, aiallowed, link, thumbnail_link,
+                 upload_approval_status, upload_approval_required, upload_approval_requested_at,
+                 upload_approved_at, upload_rejected_at, upload_rejection_note`,
       values
     );
     if (!result.rowCount) {
@@ -1033,7 +1165,14 @@ router.patch('/api/personal/vault/documents/:uuid', async (req, res) => {
       uploader_name: req.user.displayName || req.user.username || req.user.email || 'Member',
       uploader_photo_link: null,
     });
-    return res.json({ ok: true, document: mapped });
+    return res.json({
+      ok: true,
+      document: mapped,
+      message:
+        course !== undefined && mapped.upload_approval_status === 'pending'
+          ? 'Vault document updated and resubmitted for DepAdmin approval.'
+          : 'Vault document updated.',
+    });
   } catch (error) {
     console.error('Vault document update failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to update vault document.' });
