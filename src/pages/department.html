@@ -53,9 +53,9 @@
       <div>
         <p class="eyebrow">Department Management</p>
         <h1>Moderate your assigned department.</h1>
-        <p class="department-subcopy">Review pending subcourse document uploads, take down course-exclusive home feed posts, and moderate unit posts in your department.</p>
+        <p class="department-subcopy">Review pending subcourse document uploads, moderate course-exclusive home feed posts, manage unit posts, and act on reported unit content without escalating to full admin bans.</p>
       </div>
-      <div class="department-filter-card">
+      <div class="department-filter-card card-shell">
         <label for="departmentCourseFilter">Department</label>
         <select id="departmentCourseFilter">
           <option value="">All assigned departments</option>
@@ -82,6 +82,12 @@
           </div>
           <span class="panel-count" id="documentsCount">0</span>
         </div>
+        <div class="panel-toolbar">
+          <label class="search-field" id="documentsSearchWrap" hidden>
+            <span>Search uploads</span>
+            <input id="documentsSearchInput" type="search" placeholder="Search by title, uploader, unit, or file name" />
+          </label>
+        </div>
         <div id="documentsList" class="moderation-list"></div>
       </article>
 
@@ -92,6 +98,12 @@
             <h2>Course-exclusive posts</h2>
           </div>
           <span class="panel-count" id="homePostsCount">0</span>
+        </div>
+        <div class="panel-toolbar">
+          <label class="search-field" id="homePostsSearchWrap" hidden>
+            <span>Search posts</span>
+            <input id="homePostsSearchInput" type="search" placeholder="Search by title, uploader, course, or content" />
+          </label>
         </div>
         <div id="homePostsList" class="moderation-list"></div>
       </article>
@@ -104,8 +116,61 @@
           </div>
           <span class="panel-count" id="unitPostsCount">0</span>
         </div>
+        <div class="panel-toolbar">
+          <label class="search-field" id="unitPostsSearchWrap" hidden>
+            <span>Search unit posts</span>
+            <input id="unitPostsSearchInput" type="search" placeholder="Search by title, author, unit, course, or content" />
+          </label>
+        </div>
         <div id="unitPostsList" class="moderation-list"></div>
       </article>
+    </section>
+
+    <section class="department-panel card-shell reports-panel">
+      <div class="panel-head panel-head-spread">
+        <div>
+          <p class="eyebrow">Reported Unit Posts</p>
+          <h2>Manual and AI report queue</h2>
+          <p class="panel-subcopy">DepAdmins can review reports, take down unit posts, or suspend authors. Account bans remain exclusive to the admin panel.</p>
+        </div>
+        <span class="panel-count" id="reportedUnitPostsCount">0</span>
+      </div>
+
+      <div class="reports-toolbar">
+        <label class="search-field reports-search" id="reportsSearchWrap" hidden>
+          <span>Search reports</span>
+          <input id="reportsSearchInput" type="search" placeholder="Search by post, author, reason, reporter, AI summary, or flags" />
+        </label>
+        <label class="select-field">
+          <span>Source</span>
+          <select id="reportsSourceFilter">
+            <option value="all">All reports</option>
+            <option value="manual">Member reports</option>
+            <option value="ai">AI reports</option>
+          </select>
+        </label>
+        <label class="select-field">
+          <span>Queue status</span>
+          <select id="reportsStatusFilter">
+            <option value="all">All queue items</option>
+            <option value="open">Open</option>
+            <option value="under_review">Under review</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="reports-table-shell">
+        <table class="reports-table">
+          <thead>
+            <tr>
+              <th scope="col">Unit Post</th>
+              <th scope="col">Report Details</th>
+              <th scope="col">Moderation Action</th>
+            </tr>
+          </thead>
+          <tbody id="reportedUnitPostsBody"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 
