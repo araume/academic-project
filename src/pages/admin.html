@@ -58,6 +58,7 @@
       <button class="tab-button" data-tab="reports">Reports</button>
       <button class="tab-button" data-tab="restricted">Restricted</button>
       <button class="tab-button" data-tab="appeals">Appeals</button>
+      <button class="tab-button" data-tab="subject-ban-requests">Unit bans</button>
       <button class="tab-button" data-tab="broadcast">Broadcast</button>
       <button class="tab-button" data-tab="ai">AI</button>
       <button class="tab-button" data-tab="accounts">Accounts</button>
@@ -232,6 +233,44 @@
               </tr>
             </thead>
             <tbody id="appealsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-subject-ban-requests">
+      <div class="panel-card">
+        <div class="panel-head">
+          <h2>Unit/thread ban requests</h2>
+          <div class="filters">
+            <input type="text" id="subjectBanRequestsQuery" placeholder="Search target, requester, reason..." />
+            <input type="text" id="subjectBanRequestsCourse" placeholder="Course" />
+            <select id="subjectBanRequestsStatus">
+              <option value="">All statuses</option>
+              <option value="open">Open</option>
+              <option value="under_review">Under review</option>
+              <option value="approved_banned">Approved and banned</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <button class="primary-button" id="refreshSubjectBanRequests">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Target</th>
+                <th>Requested by</th>
+                <th>Unit/Thread</th>
+                <th>Course</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="subjectBanRequestsTableBody"></tbody>
           </table>
         </div>
       </div>

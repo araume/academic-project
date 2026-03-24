@@ -31,6 +31,12 @@ const appealsStatus = document.getElementById('appealsStatus');
 const appealsType = document.getElementById('appealsType');
 const refreshAppeals = document.getElementById('refreshAppeals');
 
+const subjectBanRequestsTableBody = document.getElementById('subjectBanRequestsTableBody');
+const subjectBanRequestsQuery = document.getElementById('subjectBanRequestsQuery');
+const subjectBanRequestsCourse = document.getElementById('subjectBanRequestsCourse');
+const subjectBanRequestsStatus = document.getElementById('subjectBanRequestsStatus');
+const refreshSubjectBanRequests = document.getElementById('refreshSubjectBanRequests');
+
 const customNotifyMode = document.getElementById('customNotifyMode');
 const customNotifyUids = document.getElementById('customNotifyUids');
 const customNotifyCourse = document.getElementById('customNotifyCourse');
@@ -220,6 +226,11 @@ function formatAiTargetType(value) {
   if (normalized === 'subject_post') return 'Unit post';
   if (normalized === 'document') return 'Open Library document';
   return normalized || '-';
+}
+
+function formatSubjectKindLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'thread' ? 'Thread' : 'Unit';
 }
 
 function formatDeadlineLabel(value) {
@@ -525,6 +536,90 @@ async function loadAppeals() {
       .join('');
   } catch (error) {
     renderEmptyRow(appealsTableBody, 8, error.message);
+  }
+}
+
+async function loadSubjectBanRequests() {
+  if (!subjectBanRequestsTableBody) return;
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+  });
+  if (subjectBanRequestsQuery && subjectBanRequestsQuery.value.trim()) {
+    params.set('q', subjectBanRequestsQuery.value.trim());
+  }
+  if (subjectBanRequestsCourse && subjectBanRequestsCourse.value.trim()) {
+    params.set('course', subjectBanRequestsCourse.value.trim());
+  }
+  if (subjectBanRequestsStatus && subjectBanRequestsStatus.value) {
+    params.set('status', subjectBanRequestsStatus.value);
+  }
+
+  try {
+    const data = await apiRequest(`/api/admin/subject-ban-requests?${params.toString()}`);
+    const rows = Array.isArray(data.requests) ? data.requests : [];
+    if (!rows.length) {
+      renderEmptyRow(subjectBanRequestsTableBody, 9);
+      return;
+    }
+
+    subjectBanRequestsTableBody.innerHTML = rows
+      .map((item) => {
+        const isClosed = item.status === 'approved_banned' || item.status === 'rejected';
+        const notes = [item.reason, item.requestNote, item.adminNote].filter(Boolean).join(' | ');
+        const resolvedMeta =
+          item.resolvedByName || item.resolvedAt
+            ? `<small>${escapeHtml(
+                `Resolved by ${item.resolvedByName || item.resolvedByUid || 'Admin'}${item.resolvedAt ? ` • ${formatDateTime(item.resolvedAt)}` : ''}`
+              )}</small>`
+            : '';
+        const actionCell = isClosed
+          ? '<span>-</span>'
+          : `<div class="row-actions">
+               <select class="small-select" data-subject-ban-request-status="${escapeHtml(item.id)}">
+                 <option value="under_review" ${item.status === 'under_review' ? 'selected' : ''}>Under review</option>
+                 <option value="approved_banned">Approve and ban</option>
+                 <option value="rejected">Reject</option>
+               </select>
+               <button class="secondary-button" data-action="resolve-subject-ban-request" data-id="${escapeHtml(item.id)}">Apply</button>
+             </div>`;
+        return `
+          <tr>
+            <td>${escapeHtml(item.id)}</td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${escapeHtml(item.targetName || item.targetUid || '-')}</strong>
+                <small>${escapeHtml(item.targetUid || '-')}</small>
+                ${item.targetIsBanned ? '<small>Already banned</small>' : ''}
+              </div>
+            </td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${escapeHtml(item.requestedByName || item.requestedByUid || '-')}</strong>
+                <small>${escapeHtml(item.requestedByUid || '-')}</small>
+              </div>
+            </td>
+            <td>
+              <div class="stacked-cell">
+                <strong>${escapeHtml(item.subjectName || '-')}</strong>
+                <small>${escapeHtml(formatSubjectKindLabel(item.subjectKind))}</small>
+              </div>
+            </td>
+            <td>${escapeHtml(item.courseName || '-')}</td>
+            <td>${escapeHtml(notes || '-')}</td>
+            <td>
+              <div class="stacked-cell">
+                <span class="status-pill ${item.status === 'approved_banned' ? 'error' : item.status === 'under_review' ? 'blocked' : item.status === 'rejected' ? 'verification-rejected' : 'email-pending'}">${escapeHtml(item.status || 'open')}</span>
+                ${resolvedMeta}
+              </div>
+            </td>
+            <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+            <td>${actionCell}</td>
+          </tr>`;
+      })
+      .join('');
+  } catch (error) {
+    renderEmptyRow(subjectBanRequestsTableBody, 9, error.message);
   }
 }
 
@@ -1949,6 +2044,38 @@ if (appealsTableBody) {
   });
 }
 
+if (subjectBanRequestsTableBody) {
+  subjectBanRequestsTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action="resolve-subject-ban-request"][data-id]');
+    if (!button) return;
+    const id = button.dataset.id;
+    if (!id) return;
+    const select = Array.from(
+      subjectBanRequestsTableBody.querySelectorAll('select[data-subject-ban-request-status]')
+    ).find((item) => item.dataset.subjectBanRequestStatus === id);
+    const status = select ? select.value : '';
+    if (!status) return;
+    if (status === 'approved_banned') {
+      const confirmed = window.confirm('Approve this request and ban the target account?');
+      if (!confirmed) return;
+    }
+    const notePrompt = status === 'rejected' ? 'Rejection note (optional):' : 'Admin note (optional):';
+    const note = window.prompt(notePrompt, '') || '';
+
+    try {
+      await apiRequest(`/api/admin/subject-ban-requests/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, note }),
+      });
+      setPageMessage('Unit/thread ban request updated.', 'success');
+      await Promise.all([loadSubjectBanRequests(), loadAccounts()]);
+    } catch (error) {
+      setPageMessage(error.message);
+    }
+  });
+}
+
 if (professorCodesTableBody) {
   professorCodesTableBody.addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-action][data-id]');
@@ -2201,6 +2328,7 @@ if (refreshLogs) refreshLogs.addEventListener('click', loadLogs);
 if (refreshReports) refreshReports.addEventListener('click', loadReports);
 if (refreshRestricted) refreshRestricted.addEventListener('click', loadRestrictedContents);
 if (refreshAppeals) refreshAppeals.addEventListener('click', loadAppeals);
+if (refreshSubjectBanRequests) refreshSubjectBanRequests.addEventListener('click', loadSubjectBanRequests);
 if (refreshAccounts) refreshAccounts.addEventListener('click', loadAccounts);
 if (refreshProfessorCodes) refreshProfessorCodes.addEventListener('click', loadProfessorCodes);
 if (refreshDepAdminAssignments) refreshDepAdminAssignments.addEventListener('click', loadDepAdminAssignments);
@@ -2224,6 +2352,25 @@ if (reloadAiFeatures) reloadAiFeatures.addEventListener('click', loadAiFeatureSt
 if (saveAiFeatures) {
   saveAiFeatures.addEventListener('click', () => {
     saveAiFeatureStates();
+  });
+}
+if (subjectBanRequestsStatus) {
+  subjectBanRequestsStatus.addEventListener('change', loadSubjectBanRequests);
+}
+if (subjectBanRequestsQuery) {
+  subjectBanRequestsQuery.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadSubjectBanRequests();
+    }
+  });
+}
+if (subjectBanRequestsCourse) {
+  subjectBanRequestsCourse.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadSubjectBanRequests();
+    }
   });
 }
 if (generateProfessorCodes) generateProfessorCodes.addEventListener('click', generateProfessorCodesBatch);
@@ -2335,6 +2482,7 @@ async function init() {
       loadReports(),
       loadRestrictedContents(),
       loadAppeals(),
+      loadSubjectBanRequests(),
       loadAccounts(),
       loadProfessorCodes(),
       loadDepAdminAssignments(),

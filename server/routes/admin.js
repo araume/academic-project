@@ -56,6 +56,14 @@ function parseSuspensionDurationHours(value, fallback = DEFAULT_SUSPENSION_HOURS
   return clampInteger(parsed == null ? fallback : parsed, 1, MAX_SUSPENSION_HOURS, fallback);
 }
 
+function normalizeSubjectBanRequestStatus(value, fallback = 'open') {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  if (['open', 'under_review', 'approved_banned', 'rejected'].includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -235,6 +243,29 @@ async function ensureGovernanceReady() {
           ON account_appeals(appellant_uid, created_at DESC);
         CREATE INDEX IF NOT EXISTS account_appeals_status_created_idx
           ON account_appeals(status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS subject_ban_requests (
+          id BIGSERIAL PRIMARY KEY,
+          subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+          target_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          requested_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'open'
+            CHECK (status IN ('open', 'under_review', 'approved_banned', 'rejected')),
+          reason TEXT,
+          request_note TEXT,
+          admin_note TEXT,
+          resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          resolved_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS subject_ban_requests_status_created_idx
+          ON subject_ban_requests(status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS subject_ban_requests_subject_status_idx
+          ON subject_ban_requests(subject_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS subject_ban_requests_target_status_idx
+          ON subject_ban_requests(target_uid, status, created_at DESC);
       `);
     })().catch((error) => {
       ensureGovernanceReadyPromise = null;
@@ -3632,6 +3663,197 @@ router.post('/api/admin/appeals/:id/resolve', async (req, res) => {
     }
     console.error('Admin appeal resolve failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to resolve appeal.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.get('/api/admin/subject-ban-requests', async (req, res) => {
+  const { page, pageSize, offset } = parsePagination(req, 30, 120);
+  const status = normalizeSubjectBanRequestStatus(req.query.status, '');
+  const course = sanitizeText(req.query.course, 160);
+  const query = sanitizeText(req.query.q, 220);
+
+  try {
+    const where = [];
+    const params = [];
+    if (status) {
+      params.push(status);
+      where.push(`sbr.status = $${params.length}`);
+    }
+    if (course) {
+      params.push(course);
+      where.push(`s.course_name ILIKE $${params.length}`);
+    }
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(COALESCE(sbr.reason, '') ILIKE $${params.length}
+          OR COALESCE(sbr.request_note, '') ILIKE $${params.length}
+          OR COALESCE(sbr.admin_note, '') ILIKE $${params.length}
+          OR COALESCE(s.subject_name, '') ILIKE $${params.length}
+          OR COALESCE(s.course_name, '') ILIKE $${params.length}
+          OR COALESCE(tp.display_name, ta.display_name, ta.username, ta.email) ILIKE $${params.length}
+          OR COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) ILIKE $${params.length})`
+      );
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM subject_ban_requests sbr
+       JOIN subjects s ON s.id = sbr.subject_id
+       JOIN accounts ta ON ta.uid = sbr.target_uid
+       LEFT JOIN profiles tp ON tp.uid = sbr.target_uid
+       LEFT JOIN accounts ra ON ra.uid = sbr.requested_by_uid
+       LEFT JOIN profiles rp ON rp.uid = sbr.requested_by_uid
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0] ? countResult.rows[0].total : 0);
+
+    params.push(pageSize, offset);
+    const result = await pool.query(
+      `SELECT
+         sbr.id,
+         sbr.subject_id,
+         sbr.target_uid,
+         sbr.requested_by_uid,
+         sbr.status,
+         sbr.reason,
+         sbr.request_note,
+         sbr.admin_note,
+         sbr.resolved_by_uid,
+         sbr.resolved_at,
+         sbr.created_at,
+         sbr.updated_at,
+         s.subject_name,
+         s.course_name,
+         s.kind,
+         COALESCE(tp.display_name, ta.display_name, ta.username, ta.email) AS target_name,
+         COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS requested_by_name,
+         COALESCE(ap.display_name, aa.display_name, aa.username, aa.email) AS resolved_by_name,
+         COALESCE(ta.is_banned, false) AS target_is_banned
+       FROM subject_ban_requests sbr
+       JOIN subjects s ON s.id = sbr.subject_id
+       JOIN accounts ta ON ta.uid = sbr.target_uid
+       LEFT JOIN profiles tp ON tp.uid = sbr.target_uid
+       LEFT JOIN accounts ra ON ra.uid = sbr.requested_by_uid
+       LEFT JOIN profiles rp ON rp.uid = sbr.requested_by_uid
+       LEFT JOIN accounts aa ON aa.uid = sbr.resolved_by_uid
+       LEFT JOIN profiles ap ON ap.uid = sbr.resolved_by_uid
+       ${whereClause}
+       ORDER BY sbr.created_at DESC, sbr.id DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      requests: result.rows.map((row) => ({
+        id: Number(row.id),
+        subjectId: Number(row.subject_id),
+        subjectName: row.subject_name || '',
+        courseName: row.course_name || '',
+        subjectKind: row.kind || 'unit',
+        targetUid: row.target_uid,
+        targetName: row.target_name || row.target_uid || 'Member',
+        requestedByUid: row.requested_by_uid || null,
+        requestedByName: row.requested_by_name || row.requested_by_uid || 'Staff',
+        status: normalizeSubjectBanRequestStatus(row.status, 'open'),
+        reason: row.reason || '',
+        requestNote: row.request_note || '',
+        adminNote: row.admin_note || '',
+        resolvedByUid: row.resolved_by_uid || null,
+        resolvedByName: row.resolved_by_name || null,
+        resolvedAt: row.resolved_at || null,
+        targetIsBanned: row.target_is_banned === true,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('Admin subject ban requests fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load subject ban requests.' });
+  }
+});
+
+router.post('/api/admin/subject-ban-requests/:id/resolve', async (req, res) => {
+  const requestId = parsePositiveInt(req.params.id);
+  const status = normalizeSubjectBanRequestStatus(req.body && req.body.status, '');
+  const note = sanitizeText(req.body && req.body.note, 2000);
+  if (!requestId) {
+    return res.status(400).json({ ok: false, message: 'Invalid ban request id.' });
+  }
+  if (!['under_review', 'approved_banned', 'rejected'].includes(status)) {
+    return res.status(400).json({ ok: false, message: 'Invalid resolution status.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const requestResult = await client.query(
+      `SELECT id, target_uid, status
+       FROM subject_ban_requests
+       WHERE id = $1
+       FOR UPDATE`,
+      [requestId]
+    );
+    if (!requestResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Ban request not found.' });
+    }
+
+    const requestRow = requestResult.rows[0];
+    const currentStatus = normalizeSubjectBanRequestStatus(requestRow.status, 'open');
+    if (currentStatus === 'approved_banned' || currentStatus === 'rejected') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Ban request is already closed.' });
+    }
+
+    if (status === 'approved_banned') {
+      const banResult = await banTargetUserFromReport(
+        requestRow.target_uid,
+        req.adminViewer,
+        note || 'Approved from unit/thread ban request'
+      );
+      if (!banResult.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ ok: false, message: banResult.message });
+      }
+    }
+
+    await client.query(
+      `UPDATE subject_ban_requests
+       SET status = $2,
+           admin_note = $3,
+           resolved_by_uid = CASE WHEN $2 IN ('approved_banned', 'rejected') THEN $4 ELSE NULL END,
+           resolved_at = CASE WHEN $2 IN ('approved_banned', 'rejected') THEN NOW() ELSE NULL END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [requestId, status, note || null, req.adminViewer.uid]
+    );
+
+    await client.query('COMMIT');
+    return res.json({
+      ok: true,
+      request: {
+        id: requestId,
+        status,
+        adminNote: note || '',
+      },
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_rollbackError) {
+      // ignore rollback errors
+    }
+    console.error('Admin subject ban request resolve failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to resolve subject ban request.' });
   } finally {
     client.release();
   }

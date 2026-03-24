@@ -3,29 +3,58 @@ const profileMenu = document.getElementById('profileMenu');
 const logoutButton = document.getElementById('logoutButton');
 const navAvatarLabel = document.getElementById('navAvatarLabel');
 
+const subjectTabs = document.getElementById('subjectTabs');
+const unitsTabButton = document.getElementById('unitsTabButton');
+const threadsTabButton = document.getElementById('threadsTabButton');
 const subjectsList = document.getElementById('subjectsList');
 const subjectSearchInput = document.getElementById('subjectSearchInput');
 const subjectCourseLabel = document.getElementById('subjectCourseLabel');
 const subjectTitle = document.getElementById('subjectTitle');
 const subjectDescription = document.getElementById('subjectDescription');
+const subjectApprovalHint = document.getElementById('subjectApprovalHint');
 const subjectPosts = document.getElementById('subjectPosts');
 const openSubjectAiModalButton = document.getElementById('openSubjectAiModal');
+const openSubjectModerationModalButton = document.getElementById('openSubjectModerationModal');
 
-const openCreateSubjectModal = document.getElementById('openCreateSubjectModal');
+const openCreateUnitModalButton = document.getElementById('openCreateUnitModal');
+const openCreateThreadModalButton = document.getElementById('openCreateThreadModal');
 const createSubjectModal = document.getElementById('createSubjectModal');
 const closeCreateSubjectModal = document.getElementById('closeCreateSubjectModal');
 const createSubjectForm = document.getElementById('createSubjectForm');
 const createSubjectMessage = document.getElementById('createSubjectMessage');
+const createSubjectTitle = document.getElementById('createSubjectTitle');
+const createSubjectKindInput = document.getElementById('createSubjectKind');
+const createSubjectNameLabel = document.getElementById('createSubjectNameLabel');
+const createSubjectCodeLabel = document.getElementById('createSubjectCodeLabel');
+const createSubjectDescriptionLabel = document.getElementById('createSubjectDescriptionLabel');
 
 const openCreateSubjectPostModal = document.getElementById('openCreateSubjectPostModal');
 const createSubjectPostModal = document.getElementById('createSubjectPostModal');
 const closeCreateSubjectPostModal = document.getElementById('closeCreateSubjectPostModal');
 const createSubjectPostForm = document.getElementById('createSubjectPostForm');
+const createSubjectPostTitle = document.getElementById('createSubjectPostTitle');
+const createSubjectPostHelper = document.getElementById('createSubjectPostHelper');
 const createSubjectPostMessage = document.getElementById('createSubjectPostMessage');
+
 const editSubjectPostModal = document.getElementById('editSubjectPostModal');
 const closeEditSubjectPostModal = document.getElementById('closeEditSubjectPostModal');
 const editSubjectPostForm = document.getElementById('editSubjectPostForm');
+const editSubjectPostTitle = document.getElementById('editSubjectPostTitle');
+const editSubjectPostHelper = document.getElementById('editSubjectPostHelper');
 const editSubjectPostMessage = document.getElementById('editSubjectPostMessage');
+
+const subjectModerationModal = document.getElementById('subjectModerationModal');
+const closeSubjectModerationModal = document.getElementById('closeSubjectModerationModal');
+const subjectModerationEyebrow = document.getElementById('subjectModerationEyebrow');
+const subjectModerationTitle = document.getElementById('subjectModerationTitle');
+const subjectModerationSubtitle = document.getElementById('subjectModerationSubtitle');
+const subjectModerationMessage = document.getElementById('subjectModerationMessage');
+const subjectModerationMembers = document.getElementById('subjectModerationMembers');
+const subjectModerationMembersCount = document.getElementById('subjectModerationMembersCount');
+const subjectModerationPendingPosts = document.getElementById('subjectModerationPendingPosts');
+const subjectModerationPendingCount = document.getElementById('subjectModerationPendingCount');
+const subjectModerationReports = document.getElementById('subjectModerationReports');
+const subjectModerationReportsCount = document.getElementById('subjectModerationReportsCount');
 
 const subjectAiModal = document.getElementById('subjectAiModal');
 const closeSubjectAiModal = document.getElementById('closeSubjectAiModal');
@@ -61,14 +90,24 @@ function readInitialSelection() {
 
 const initialSelection = readInitialSelection();
 const state = {
+  viewerRole: 'member',
+  threadTabLabel: 'Threads',
+  canCreateUnit: false,
+  canCreateThread: false,
   subjects: [],
+  activeTab: 'unit',
   selectedSubjectId: initialSelection.subjectId,
-  canCreate: false,
-  loadingFeed: false,
   subjectSearchQuery: '',
+  loadingFeed: false,
   feedPosts: [],
   requestedPostId: initialSelection.postId,
   expandedCommentPostIds: new Set(initialSelection.postId ? [initialSelection.postId] : []),
+  moderation: {
+    subjectId: null,
+    members: [],
+    pendingPosts: [],
+    reports: [],
+  },
 };
 
 let activeSubjectAiSubjectId = null;
@@ -84,6 +123,14 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function apiLabel(kind, mode = 'singular', capitalize = false) {
+  const normalized = String(kind || 'unit').trim().toLowerCase() === 'thread' ? 'thread' : 'unit';
+  let value = normalized;
+  if (mode === 'plural') value = `${normalized}s`;
+  if (capitalize) value = value.charAt(0).toUpperCase() + value.slice(1);
+  return value;
 }
 
 function initialsFromName(name) {
@@ -116,47 +163,48 @@ function setNavAvatar(photoLink, displayName) {
   setAvatarContent(navAvatarLabel, photoLink, displayName);
 }
 
-function closeProfileMenuOnOutsideClick(event) {
-  if (!profileMenu || !profileToggle) return;
-  if (!profileMenu.contains(event.target) && !profileToggle.contains(event.target)) {
-    profileMenu.classList.add('is-hidden');
-  }
-}
-
-function closeAllSubjectPostMenus() {
-  document.querySelectorAll('.subject-post-menu').forEach((menu) => menu.classList.add('is-hidden'));
-}
-
-if (profileToggle && profileMenu) {
-  profileToggle.addEventListener('click', () => {
-    profileMenu.classList.toggle('is-hidden');
-  });
-  document.addEventListener('click', closeProfileMenuOnOutsideClick);
-}
-
-document.addEventListener('click', (event) => {
-  if (!event.target.closest('.subject-post-menu-wrap')) {
-    closeAllSubjectPostMenus();
-  }
-});
-
-if (logoutButton) {
-  logoutButton.addEventListener('click', async () => {
-    try {
-      await fetch('/api/logout', { method: 'POST' });
-    } catch (_error) {
-      // best effort
-    }
-    window.location.href = '/login';
-  });
-}
-
 function openModal(modal) {
   if (modal) modal.classList.remove('is-hidden');
 }
 
 function closeModal(modal) {
   if (modal) modal.classList.add('is-hidden');
+}
+
+function timeAgo(dateValue) {
+  if (!dateValue) return 'just now';
+  const date = new Date(dateValue);
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString();
+}
+
+function isStaffRole() {
+  return ['owner', 'admin', 'depadmin', 'professor'].includes(state.viewerRole);
+}
+
+function subjectNeedsApprovalNotice(subject) {
+  if (!subject) return '';
+  if (subject.canModerate) {
+    return `You can approve student posts, review reports, and manage student access for this ${apiLabel(subject.kind)}.`;
+  }
+  return `Student posts in this ${apiLabel(subject.kind)} stay pending until a professor or DepAdmin approves them.`;
+}
+
+function getSelectedSubject() {
+  return state.subjects.find((item) => item.id === state.selectedSubjectId) || null;
 }
 
 function syncSubjectLocation(subjectId, postId = null) {
@@ -181,124 +229,167 @@ function highlightSubjectPost(postId) {
   if (!card) return;
   card.classList.add('is-highlighted');
   card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  window.setTimeout(() => {
-    card.classList.remove('is-highlighted');
-  }, 2400);
+  window.setTimeout(() => card.classList.remove('is-highlighted'), 2400);
 }
 
-function timeAgo(dateValue) {
-  if (!dateValue) return 'just now';
-  const date = new Date(dateValue);
-  const diffMs = Date.now() - date.getTime();
-  const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+function getVisibleSubjects() {
+  const query = String(state.subjectSearchQuery || '').trim().toLowerCase();
+  return state.subjects.filter((subject) => {
+    if ((subject.kind || 'unit') !== state.activeTab) return false;
+    if (!query) return true;
+    return [
+      subject.subjectName,
+      subject.subjectCode,
+      subject.courseName,
+      subject.creatorName,
+    ].some((value) => String(value || '').toLowerCase().includes(query));
+  });
+}
+
+function ensureTabSelectionIntegrity() {
+  const selected = getSelectedSubject();
+  if (selected) {
+    state.activeTab = selected.kind || 'unit';
+    return;
+  }
+  const visible = getVisibleSubjects();
+  if (visible.length) {
+    state.selectedSubjectId = visible[0].id;
+    return;
+  }
+  const fallbackTab = ['unit', 'thread'].find((tab) => state.subjects.some((item) => item.kind === tab));
+  if (fallbackTab) {
+    state.activeTab = fallbackTab;
+    const nextVisible = getVisibleSubjects();
+    state.selectedSubjectId = nextVisible[0] ? nextVisible[0].id : null;
+    return;
+  }
+  state.selectedSubjectId = null;
+}
+
+function setCreateButtonsVisibility() {
+  if (openCreateUnitModalButton) {
+    openCreateUnitModalButton.classList.toggle('is-hidden', !state.canCreateUnit);
+  }
+  if (openCreateThreadModalButton) {
+    openCreateThreadModalButton.classList.toggle('is-hidden', !state.canCreateThread);
+  }
+}
+
+function renderTabLabels() {
+  if (unitsTabButton) unitsTabButton.classList.toggle('is-active', state.activeTab === 'unit');
+  if (threadsTabButton) {
+    threadsTabButton.textContent = state.threadTabLabel || 'Threads';
+    threadsTabButton.classList.toggle('is-active', state.activeTab === 'thread');
+  }
 }
 
 function setSubjectFeedHeader(subject) {
   if (!subject) {
     if (subjectCourseLabel) subjectCourseLabel.textContent = 'Select a unit';
     if (subjectTitle) subjectTitle.textContent = 'Unit feed';
-    if (subjectDescription) subjectDescription.textContent = 'Choose a unit on the left to load posts.';
-    if (openCreateSubjectPostModal) openCreateSubjectPostModal.disabled = true;
-    if (openSubjectAiModalButton) openSubjectAiModalButton.disabled = true;
+    if (subjectDescription) subjectDescription.textContent = 'Choose a unit or thread on the left to load posts.';
+    if (subjectApprovalHint) subjectApprovalHint.textContent = '';
+    if (openCreateSubjectPostModal) {
+      openCreateSubjectPostModal.disabled = true;
+      openCreateSubjectPostModal.textContent = 'New post';
+    }
+    if (openSubjectAiModalButton) {
+      openSubjectAiModalButton.disabled = true;
+      openSubjectAiModalButton.textContent = 'Unit AI';
+    }
+    if (openSubjectModerationModalButton) {
+      openSubjectModerationModalButton.classList.add('is-hidden');
+    }
     return;
   }
 
-  if (subjectCourseLabel) subjectCourseLabel.textContent = subject.courseName || 'Unit course';
-  if (subjectTitle) subjectTitle.textContent = subject.subjectName || 'Unit feed';
+  const singular = apiLabel(subject.kind);
+  const capitalized = apiLabel(subject.kind, 'singular', true);
+  if (subjectCourseLabel) subjectCourseLabel.textContent = subject.courseName || `${capitalized} course`;
+  if (subjectTitle) subjectTitle.textContent = `${subject.subjectName || `Untitled ${singular}`} feed`;
   if (subjectDescription) {
-    subjectDescription.textContent = subject.description || 'No unit description yet.';
+    const creatorLine = subject.kind === 'thread' && subject.creatorName ? ` Started by ${subject.creatorName}.` : '';
+    subjectDescription.textContent = (subject.description || `No ${singular} description yet.`) + creatorLine;
   }
-  if (openCreateSubjectPostModal) openCreateSubjectPostModal.disabled = false;
-  if (openSubjectAiModalButton) openSubjectAiModalButton.disabled = false;
+  if (subjectApprovalHint) subjectApprovalHint.textContent = subjectNeedsApprovalNotice(subject);
+  if (openCreateSubjectPostModal) {
+    openCreateSubjectPostModal.disabled = false;
+    openCreateSubjectPostModal.textContent = `New ${singular} post`;
+  }
+  if (openSubjectAiModalButton) {
+    openSubjectAiModalButton.disabled = false;
+    openSubjectAiModalButton.textContent = `${capitalized} AI`;
+  }
+  if (openSubjectModerationModalButton) {
+    openSubjectModerationModalButton.classList.toggle('is-hidden', subject.canModerate !== true);
+  }
 }
 
-function getSelectedSubject() {
-  return state.subjects.find((subject) => subject.id === state.selectedSubjectId) || null;
+function closeAllSubjectPostMenus() {
+  document.querySelectorAll('.subject-post-menu').forEach((menu) => menu.classList.add('is-hidden'));
 }
 
-function getFilteredSubjects() {
-  const query = String(state.subjectSearchQuery || '').trim().toLowerCase();
-  if (!query) return state.subjects;
-  return state.subjects.filter((subject) => {
-    const subjectName = String(subject.subjectName || '').toLowerCase();
-    const subjectCode = String(subject.subjectCode || '').toLowerCase();
-    const courseName = String(subject.courseName || '').toLowerCase();
-    return subjectName.includes(query) || subjectCode.includes(query) || courseName.includes(query);
-  });
+function createSubjectListMeta(subject) {
+  const lines = [];
+  if (subject.subjectCode) lines.push(subject.subjectCode);
+  if (subject.kind === 'thread' && subject.creatorName) lines.push(`By ${subject.creatorName}`);
+  lines.push(`${Number(subject.postsCount || 0)} posts`);
+  if (subject.canModerate && Number(subject.pendingPostsCount || 0) > 0) {
+    lines.push(`${Number(subject.pendingPostsCount || 0)} pending`);
+  }
+  return lines.join(' · ');
 }
 
 function renderSubjects() {
   if (!subjectsList) return;
+  const visibleSubjects = getVisibleSubjects();
   subjectsList.innerHTML = '';
-  if (!state.subjects.length) {
-    subjectsList.innerHTML = '<p class="subject-empty">No units available for your course yet.</p>';
-    setSubjectFeedHeader(null);
-    return;
-  }
-
-  const visibleSubjects = getFilteredSubjects();
   if (!visibleSubjects.length) {
-    subjectsList.innerHTML = '<p class="subject-empty">No units match your search.</p>';
+    subjectsList.innerHTML = `<p class="subject-empty">No ${escapeHtml(apiLabel(state.activeTab, 'plural'))} match your current view.</p>`;
     return;
   }
 
   visibleSubjects.forEach((subject) => {
+    const shell = document.createElement('div');
+    shell.className = 'subject-item-shell';
+
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `subject-item${subject.id === state.selectedSubjectId ? ' is-active' : ''}`;
     button.innerHTML = `
-      <h3>${escapeHtml(subject.subjectName || 'Untitled unit')}</h3>
-      <p>${Number(subject.postsCount || 0)} posts</p>
+      <h3>${escapeHtml(subject.subjectName || `Untitled ${apiLabel(subject.kind)}`)}</h3>
+      <p>${escapeHtml(createSubjectListMeta(subject))}</p>
     `;
     button.addEventListener('click', async () => {
       if (state.selectedSubjectId === subject.id) return;
       state.selectedSubjectId = subject.id;
       state.requestedPostId = null;
       renderSubjects();
+      setSubjectFeedHeader(subject);
       syncSubjectLocation(subject.id);
       await fetchAndRenderSubjectFeed(subject.id);
     });
-    subjectsList.appendChild(button);
-  });
-}
+    shell.appendChild(button);
 
-async function applySubjectSearch() {
-  const visibleSubjects = getFilteredSubjects();
-  const hasSelectedVisible = visibleSubjects.some((subject) => subject.id === state.selectedSubjectId);
-  const shouldReloadFeed = !hasSelectedVisible;
-
-  if (!visibleSubjects.length) {
-    state.selectedSubjectId = null;
-    state.requestedPostId = null;
-    renderSubjects();
-    setSubjectFeedHeader(null);
-    if (subjectPosts) {
-      subjectPosts.innerHTML = '<p class="subject-empty">No units match your search.</p>';
+    if (subject.canModerate) {
+      const moderateButton = document.createElement('button');
+      moderateButton.type = 'button';
+      moderateButton.className = 'subject-item-moderate';
+      moderateButton.textContent = 'Moderate';
+      moderateButton.addEventListener('click', async () => {
+        state.selectedSubjectId = subject.id;
+        renderSubjects();
+        setSubjectFeedHeader(subject);
+        syncSubjectLocation(subject.id, state.requestedPostId);
+        await fetchAndRenderSubjectFeed(subject.id);
+        await openSubjectModeration(subject);
+      });
+      shell.appendChild(moderateButton);
     }
-    syncSubjectLocation(null);
-    return;
-  }
 
-  if (!hasSelectedVisible) {
-    state.selectedSubjectId = visibleSubjects[0].id;
-    state.requestedPostId = null;
-  }
-
-  renderSubjects();
-  const selectedSubject = visibleSubjects.find((subject) => subject.id === state.selectedSubjectId) || null;
-  setSubjectFeedHeader(selectedSubject);
-  if (selectedSubject) {
-    syncSubjectLocation(selectedSubject.id, state.requestedPostId);
-  }
-  if (selectedSubject && shouldReloadFeed) {
-    await fetchAndRenderSubjectFeed(selectedSubject.id);
-  }
+    subjectsList.appendChild(shell);
+  });
 }
 
 function createSubjectPostBadge(text, modifier = '') {
@@ -308,11 +399,23 @@ function createSubjectPostBadge(text, modifier = '') {
   return badge;
 }
 
-function createSubjectPostActionButton({ action, icon, label, active = false }) {
+function approvalBadgeForPost(post) {
+  const approvalStatus = String(post.approvalStatus || 'approved').toLowerCase();
+  if (approvalStatus === 'approved') {
+    return null;
+  }
+  if (approvalStatus === 'pending') {
+    return createSubjectPostBadge('Pending approval', 'is-warning');
+  }
+  return createSubjectPostBadge('Rejected', 'is-danger');
+}
+
+function createSubjectPostActionButton({ action, icon, label, active = false, disabled = false }) {
   const button = document.createElement('button');
   button.type = 'button';
   button.dataset.action = action;
   button.className = `subject-post-action${active ? ' is-active' : ''}`;
+  button.disabled = disabled;
 
   const iconImage = document.createElement('img');
   iconImage.src = icon;
@@ -341,7 +444,7 @@ async function copyTextToClipboard(text) {
 async function collectReportPayload() {
   if (typeof window.showReportDialog === 'function') {
     return window.showReportDialog({
-      title: 'Report unit post',
+      title: 'Report post',
       subtitle: 'Select the reason and add optional details.',
     });
   }
@@ -360,26 +463,24 @@ async function collectReportPayload() {
 function updatePostInState(postId, updater) {
   const index = state.feedPosts.findIndex((item) => item.id === postId);
   if (index === -1) return null;
-  const target = state.feedPosts[index];
-  updater(target);
-  return target;
+  updater(state.feedPosts[index]);
+  return state.feedPosts[index];
 }
 
 function replaceSubjectPostCard(postId) {
   const existing = document.getElementById(`subject-post-${postId}`);
   const index = state.feedPosts.findIndex((item) => item.id === postId);
   if (!existing || index === -1) return;
-  const replacement = renderSubjectPostCard(state.feedPosts[index], index);
-  existing.replaceWith(replacement);
+  existing.replaceWith(renderSubjectPostCard(state.feedPosts[index], index));
 }
 
 function setSubjectPostCommentsExpanded(postId, expanded) {
   if (!postId) return;
   if (expanded) {
     state.expandedCommentPostIds.add(postId);
-    return;
+  } else {
+    state.expandedCommentPostIds.delete(postId);
   }
-  state.expandedCommentPostIds.delete(postId);
 }
 
 function openSubjectPostDiscussion(post) {
@@ -389,31 +490,27 @@ function openSubjectPostDiscussion(post) {
     setSubjectPostCommentsExpanded(post.id, true);
     replaceSubjectPostCard(post.id);
   }
-  focusSubjectPostDiscussion(post.id);
-}
-
-function focusSubjectPostDiscussion(postId) {
-  const card = document.getElementById(`subject-post-${postId}`);
+  const card = document.getElementById(`subject-post-${post.id}`);
   if (!card) return;
   card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   const input = card.querySelector('input[name="content"]');
-  if (input) {
-    input.focus();
-    input.select();
-  }
+  if (input) input.focus();
+}
+
+function currentSubjectPostLabel() {
+  const subject = getSelectedSubject();
+  return subject ? apiLabel(subject.kind) : 'unit';
 }
 
 async function toggleSubjectPostLike(post) {
-  if (!state.selectedSubjectId) return;
+  const subject = getSelectedSubject();
+  if (!subject) return;
   const action = post.liked ? 'unlike' : 'like';
-  const response = await fetch(
-    `/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts/${encodeURIComponent(post.id)}/like`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-    }
-  );
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/like`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
   const data = await response.json().catch(() => ({ ok: false }));
   if (!response.ok || !data.ok) {
     throw new Error(data.message || 'Unable to update like.');
@@ -426,15 +523,13 @@ async function toggleSubjectPostLike(post) {
 }
 
 async function toggleSubjectPostBookmark(post) {
-  if (!state.selectedSubjectId) return;
-  const response = await fetch(
-    `/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts/${encodeURIComponent(post.id)}/bookmark`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: post.bookmarked ? 'remove' : 'add' }),
-    }
-  );
+  const subject = getSelectedSubject();
+  if (!subject) return;
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/bookmark`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: post.bookmarked ? 'remove' : 'add' }),
+  });
   const data = await response.json().catch(() => ({ ok: false }));
   if (!response.ok || !data.ok) {
     throw new Error(data.message || 'Unable to update bookmark.');
@@ -446,32 +541,32 @@ async function toggleSubjectPostBookmark(post) {
 }
 
 async function shareSubjectPost(post) {
-  const shareUrl = subjectPostUrl(post.subjectId || state.selectedSubjectId, post.id);
+  const subject = getSelectedSubject();
+  if (!subject) return;
+  const shareUrl = subjectPostUrl(subject.id, post.id);
   try {
     await copyTextToClipboard(shareUrl);
-    window.alert('Unit post link copied.');
+    window.alert('Post link copied.');
   } catch (_error) {
     window.prompt('Copy this link:', shareUrl);
   }
 }
 
 async function reportSubjectPost(post) {
-  if (!state.selectedSubjectId) return;
+  const subject = getSelectedSubject();
+  if (!subject) return;
   const payload = await collectReportPayload();
   if (!payload) return;
-  const response = await fetch(
-    `/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts/${encodeURIComponent(post.id)}/report`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }
-  );
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
   const data = await response.json().catch(() => ({ ok: false }));
   if (!response.ok || !data.ok) {
     throw new Error(data.message || 'Unable to submit report.');
   }
-  window.alert('Report submitted. Thank you.');
+  window.alert('Report submitted.');
 }
 
 function resetEditSubjectPostState() {
@@ -486,32 +581,38 @@ function closeEditSubjectPostDialog() {
 }
 
 function openEditSubjectPostDialog(post) {
-  if (!post || !post.id || !editSubjectPostModal || !editSubjectPostForm) return;
+  const subject = getSelectedSubject();
+  if (!subject || !post || !editSubjectPostForm) return;
   activeEditSubjectPostId = post.id;
+  if (editSubjectPostTitle) {
+    editSubjectPostTitle.textContent = `Edit ${apiLabel(subject.kind)} post`;
+  }
+  if (editSubjectPostHelper) {
+    editSubjectPostHelper.textContent = isStaffRole()
+      ? `Changes in this ${apiLabel(subject.kind)} go live immediately.`
+      : `Student edits in this ${apiLabel(subject.kind)} return to the moderation queue before they reappear.`;
+  }
   editSubjectPostForm.elements.title.value = post.title || '';
   editSubjectPostForm.elements.content.value = post.content || '';
-  editSubjectPostForm.elements.attachmentLibraryDocumentUuid.value =
-    post.attachment && post.attachment.uuid ? post.attachment.uuid : '';
+  editSubjectPostForm.elements.attachmentLibraryDocumentUuid.value = post.attachment?.uuid || '';
   if (editSubjectPostMessage) editSubjectPostMessage.textContent = '';
   openModal(editSubjectPostModal);
 }
 
 async function deleteSubjectPost(post) {
-  if (!state.selectedSubjectId || !post || !post.id) return;
-  if (!window.confirm('Delete this unit post?')) return;
-
-  const response = await fetch(
-    `/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts/${encodeURIComponent(post.id)}`,
-    { method: 'DELETE' }
-  );
+  const subject = getSelectedSubject();
+  if (!subject || !post) return;
+  if (!window.confirm(`Delete this ${apiLabel(subject.kind)} post?`)) return;
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}`, {
+    method: 'DELETE',
+  });
   const data = await response.json().catch(() => ({ ok: false }));
   if (!response.ok || !data.ok) {
-    throw new Error(data.message || 'Unable to delete unit post.');
+    throw new Error(data.message || 'Unable to delete post.');
   }
-
   state.requestedPostId = null;
   setSubjectPostCommentsExpanded(post.id, false);
-  await loadSubjectsBootstrap();
+  await Promise.all([fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()]);
 }
 
 function buildSubjectPostAttachment(post) {
@@ -537,6 +638,17 @@ function buildSubjectCommentsSection(post) {
   const commentsWrap = document.createElement('section');
   commentsWrap.className = 'subject-post-comments';
 
+  const approvalStatus = String(post.approvalStatus || 'approved').toLowerCase();
+  if (approvalStatus !== 'approved') {
+    const pendingMessage = document.createElement('p');
+    pendingMessage.className = 'subject-post-comments-empty';
+    pendingMessage.textContent = approvalStatus === 'rejected'
+      ? `This post is currently rejected and hidden from the public ${currentSubjectPostLabel()} feed.`
+      : `Discussion opens once this post is approved for the public ${currentSubjectPostLabel()} feed.`;
+    commentsWrap.appendChild(pendingMessage);
+    return commentsWrap;
+  }
+
   const commentsHead = document.createElement('div');
   commentsHead.className = 'subject-post-comments-head';
   commentsHead.innerHTML = `
@@ -556,9 +668,7 @@ function buildSubjectCommentsSection(post) {
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'subject-comments-toggle';
-    toggle.textContent = isExpanded
-      ? 'Show fewer comments'
-      : `Show all ${comments.length} comments`;
+    toggle.textContent = isExpanded ? 'Show fewer comments' : `Show all ${comments.length} comments`;
     toggle.addEventListener('click', () => {
       setSubjectPostCommentsExpanded(post.id, !isExpanded);
       replaceSubjectPostCard(post.id);
@@ -575,17 +685,14 @@ function buildSubjectCommentsSection(post) {
     visibleComments.forEach((comment) => {
       const commentItem = document.createElement('article');
       commentItem.className = 'subject-comment';
-
       const commentMeta = document.createElement('div');
       commentMeta.className = 'subject-comment-meta';
       commentMeta.innerHTML = `
         <strong>${escapeHtml(comment.authorName || 'Member')}</strong>
         <span>${escapeHtml(timeAgo(comment.createdAt))}</span>
       `;
-
       const content = document.createElement('p');
       content.textContent = comment.content || '';
-
       commentItem.appendChild(commentMeta);
       commentItem.appendChild(content);
       commentsList.appendChild(commentItem);
@@ -601,7 +708,8 @@ function buildSubjectCommentsSection(post) {
   `;
   commentForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!state.selectedSubjectId) return;
+    const subject = getSelectedSubject();
+    if (!subject) return;
     const input = commentForm.elements.content;
     const content = String(input.value || '').trim();
     if (!content) return;
@@ -613,14 +721,11 @@ function buildSubjectCommentsSection(post) {
     }
 
     try {
-      const response = await fetch(
-        `/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts/${encodeURIComponent(post.id)}/comments`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content }),
-        }
-      );
+      const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
       const data = await response.json().catch(() => ({ ok: false }));
       if (!response.ok || !data.ok) {
         throw new Error(data.message || 'Unable to submit comment.');
@@ -628,9 +733,9 @@ function buildSubjectCommentsSection(post) {
       input.value = '';
       state.requestedPostId = post.id;
       setSubjectPostCommentsExpanded(post.id, true);
-      syncSubjectLocation(state.selectedSubjectId, post.id);
-      await fetchAndRenderSubjectFeed(state.selectedSubjectId);
-      focusSubjectPostDiscussion(post.id);
+      syncSubjectLocation(subject.id, post.id);
+      await fetchAndRenderSubjectFeed(subject.id);
+      highlightSubjectPost(post.id);
     } catch (error) {
       window.alert(error.message || 'Unable to submit comment.');
     } finally {
@@ -655,30 +760,30 @@ function renderSubjectPostCard(post, index) {
 
   const authorWrap = document.createElement('div');
   authorWrap.className = 'subject-post-author-wrap';
-  authorWrap.appendChild(buildAvatarElement(post.author?.photoLink, post.author?.displayName || 'Member', 'subject-post-avatar'));
+  authorWrap.appendChild(buildAvatarElement(post.author?.photoLink, post.author?.displayName, 'subject-post-avatar'));
 
   const meta = document.createElement('div');
   meta.className = 'subject-post-meta';
   meta.innerHTML = `
     <div class="subject-post-author-row">
       <h3>${escapeHtml(post.author?.displayName || 'Member')}</h3>
-      <span class="subject-post-divider">•</span>
       <p>${escapeHtml(timeAgo(post.createdAt))}</p>
     </div>
-    <p class="subject-post-subline">Unit discussion</p>
+    <p class="subject-post-subline">${escapeHtml(post.updatedAt && post.updatedAt !== post.createdAt ? `Updated ${timeAgo(post.updatedAt)}` : 'Live in this feed')}</p>
   `;
   authorWrap.appendChild(meta);
 
   const menuWrap = document.createElement('div');
   menuWrap.className = 'subject-post-menu-wrap';
+  const canReport = String(post.approvalStatus || 'approved').toLowerCase() === 'approved' && !post.isOwner;
   menuWrap.innerHTML = `
-    <button type="button" class="subject-post-menu-button" aria-label="More post actions">
-      <img src="/assets/dot-menu.svg" alt="" />
+    <button type="button" class="subject-post-menu-button" aria-label="Post actions">
+      <img src="/assets/ellipsis.svg" alt="" />
     </button>
     <div class="subject-post-menu is-hidden">
       <button type="button" data-action="bookmark">${post.bookmarked ? 'Remove bookmark' : 'Bookmark post'}</button>
       <button type="button" data-action="share">Share link</button>
-      <button type="button" data-action="report">Report post</button>
+      ${canReport ? '<button type="button" data-action="report">Report post</button>' : ''}
       ${post.isOwner ? '<button type="button" data-action="edit">Edit post</button>' : ''}
       ${post.isOwner ? '<button type="button" class="is-danger" data-action="delete">Delete post</button>' : ''}
     </div>
@@ -700,17 +805,32 @@ function renderSubjectPostCard(post, index) {
 
   const utilityRow = document.createElement('div');
   utilityRow.className = 'subject-post-utility-row';
+  const approvalBadge = approvalBadgeForPost(post);
+  if (approvalBadge) utilityRow.appendChild(approvalBadge);
   utilityRow.appendChild(createSubjectPostBadge(`${Number(post.likesCount || 0)} likes`));
   utilityRow.appendChild(createSubjectPostBadge(`${Number(post.commentsCount || 0)} comments`));
-  if (post.bookmarked) {
-    utilityRow.appendChild(createSubjectPostBadge('Bookmarked', 'is-accent'));
+  if (post.bookmarked) utilityRow.appendChild(createSubjectPostBadge('Bookmarked', 'is-accent'));
+  if (post.canModerate && String(post.approvalStatus || '').toLowerCase() !== 'approved') {
+    utilityRow.appendChild(createSubjectPostBadge('Visible to moderators', 'is-warning'));
   }
   const attachment = buildSubjectPostAttachment(post);
-  if (attachment) {
-    utilityRow.appendChild(attachment);
-  }
+  if (attachment) utilityRow.appendChild(attachment);
   article.appendChild(utilityRow);
 
+  if (String(post.approvalStatus || 'approved').toLowerCase() === 'rejected' && post.rejectionNote) {
+    const rejection = document.createElement('p');
+    rejection.className = 'subject-post-status-copy is-danger';
+    rejection.textContent = `Rejection note: ${post.rejectionNote}`;
+    article.appendChild(rejection);
+  }
+  if (String(post.approvalStatus || 'approved').toLowerCase() === 'pending') {
+    const pending = document.createElement('p');
+    pending.className = 'subject-post-status-copy';
+    pending.textContent = `Submitted ${timeAgo(post.approvalRequestedAt || post.createdAt)} and waiting for professor/DepAdmin approval.`;
+    article.appendChild(pending);
+  }
+
+  const isApproved = String(post.approvalStatus || 'approved').toLowerCase() === 'approved';
   const actions = document.createElement('div');
   actions.className = 'subject-post-actions';
   const likeButton = createSubjectPostActionButton({
@@ -718,18 +838,19 @@ function renderSubjectPostCard(post, index) {
     icon: '/assets/heart.svg',
     label: `${Number(post.likesCount || 0)} Like`,
     active: Boolean(post.liked),
+    disabled: !isApproved,
   });
   const discussionButton = createSubjectPostActionButton({
     action: 'comments',
     icon: '/assets/comment-discussion.svg',
     label: 'Discussion',
+    disabled: !isApproved,
   });
   const askAiButton = createSubjectPostActionButton({
     action: 'ask-ai',
     icon: '/assets/AI-star.svg',
     label: 'Ask AI',
   });
-
   actions.appendChild(likeButton);
   actions.appendChild(discussionButton);
   actions.appendChild(askAiButton);
@@ -791,23 +912,21 @@ function renderPostList(posts) {
   state.feedPosts = Array.isArray(posts) ? posts : [];
   const visiblePostIds = new Set(state.feedPosts.map((item) => item.id));
   Array.from(state.expandedCommentPostIds).forEach((postId) => {
-    if (!visiblePostIds.has(postId)) {
-      state.expandedCommentPostIds.delete(postId);
-    }
+    if (!visiblePostIds.has(postId)) state.expandedCommentPostIds.delete(postId);
   });
   if (state.requestedPostId && visiblePostIds.has(state.requestedPostId)) {
     state.expandedCommentPostIds.add(state.requestedPostId);
   }
   subjectPosts.innerHTML = '';
   if (!state.feedPosts.length) {
-    subjectPosts.innerHTML = '<p class="subject-empty">No posts yet for this unit.</p>';
+    const selected = getSelectedSubject();
+    subjectPosts.innerHTML = `<p class="subject-empty">No posts yet for this ${escapeHtml(apiLabel(selected?.kind))}.</p>`;
     return;
   }
 
   state.feedPosts.forEach((post, index) => {
     subjectPosts.appendChild(renderSubjectPostCard(post, index));
   });
-
   if (state.requestedPostId) {
     window.requestAnimationFrame(() => highlightSubjectPost(state.requestedPostId));
   }
@@ -841,7 +960,12 @@ function renderAiMessages(container, messages, emptyText) {
 }
 
 function renderSubjectAiMessages(messages) {
-  renderAiMessages(subjectAiMessages, messages, 'Ask about this unit, its topics, or recent discussions.');
+  const subject = getSelectedSubject();
+  renderAiMessages(
+    subjectAiMessages,
+    messages,
+    `Ask about this ${apiLabel(subject?.kind)}, its topics, or the recent discussion around it.`
+  );
 }
 
 function resetSubjectAiState() {
@@ -861,14 +985,11 @@ function closeSubjectAiChatModal() {
 }
 
 async function openSubjectAiChatModal(subject) {
-  if (!subject || !subject.id || !subjectAiModal) return;
+  if (!subject || !subjectAiModal) return;
   activeSubjectAiSubjectId = subject.id;
-  if (subjectAiTitle) {
-    subjectAiTitle.textContent = `Unit AI: ${subject.subjectName || 'Untitled unit'}`;
-  }
-  if (subjectAiSubtitle) {
-    subjectAiSubtitle.textContent = 'Loading unit context...';
-  }
+  const capitalized = apiLabel(subject.kind, 'singular', true);
+  if (subjectAiTitle) subjectAiTitle.textContent = `${capitalized} AI: ${subject.subjectName || `Untitled ${apiLabel(subject.kind)}`}`;
+  if (subjectAiSubtitle) subjectAiSubtitle.textContent = `Loading ${apiLabel(subject.kind)} context...`;
   if (subjectAiMessage) subjectAiMessage.textContent = '';
   renderSubjectAiMessages([]);
   openModal(subjectAiModal);
@@ -877,20 +998,19 @@ async function openSubjectAiChatModal(subject) {
     const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/ask-ai/bootstrap`);
     const data = await response.json().catch(() => ({ ok: false }));
     if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Unable to load unit AI conversation.');
+      throw new Error(data.message || 'Unable to load AI conversation.');
     }
     if (subjectAiSubtitle) {
-      const summary = data.context && data.context.summary ? data.context.summary : 'Unit context ready.';
-      subjectAiSubtitle.textContent = `Focus: ${summary}`;
+      subjectAiSubtitle.textContent = `Focus: ${data.context?.summary || `${capitalized} context ready.`}`;
     }
     renderSubjectAiMessages(data.messages || []);
     if (subjectAiInput) subjectAiInput.focus();
   } catch (error) {
     if (subjectAiSubtitle) {
-      subjectAiSubtitle.textContent = 'Unit context could not be loaded.';
+      subjectAiSubtitle.textContent = `${capitalized} context could not be loaded.`;
     }
     if (subjectAiMessage) {
-      subjectAiMessage.textContent = error.message || 'Unable to load unit AI conversation.';
+      subjectAiMessage.textContent = error.message || 'Unable to load AI conversation.';
     }
   }
 }
@@ -920,13 +1040,11 @@ async function sendSubjectAiMessage(event) {
     }
     if (pendingBubble) {
       pendingBubble.classList.remove('pending');
-      pendingBubble.textContent = data.message && data.message.content ? data.message.content : 'No response generated.';
+      pendingBubble.textContent = data.message?.content || 'No response generated.';
     }
   } catch (error) {
     if (pendingBubble) pendingBubble.remove();
-    if (subjectAiMessage) {
-      subjectAiMessage.textContent = error.message || 'Unable to send message.';
-    }
+    if (subjectAiMessage) subjectAiMessage.textContent = error.message || 'Unable to send message.';
   } finally {
     isSendingSubjectAi = false;
     subjectAiInput.disabled = false;
@@ -935,11 +1053,7 @@ async function sendSubjectAiMessage(event) {
 }
 
 function renderSubjectPostAiMessages(messages) {
-  renderAiMessages(
-    subjectPostAiMessages,
-    messages,
-    'Ask about this post, the discussion around it, or related unit topics.'
-  );
+  renderAiMessages(subjectPostAiMessages, messages, 'Ask about this post, its arguments, or the surrounding discussion.');
 }
 
 function resetSubjectPostAiState() {
@@ -960,15 +1074,10 @@ function closeSubjectPostAiChatModal() {
 
 async function openSubjectPostAiChatModal(post) {
   const subject = getSelectedSubject();
-  if (!subject || !post || !post.id || !subjectPostAiModal) return;
-
-  activeSubjectPostAiContext = {
-    subjectId: subject.id,
-    postId: post.id,
-  };
-
+  if (!subject || !post || !subjectPostAiModal) return;
+  activeSubjectPostAiContext = { subjectId: subject.id, postId: post.id };
   if (subjectPostAiTitle) {
-    subjectPostAiTitle.textContent = `Ask AI: ${post.title || 'Unit post'}`;
+    subjectPostAiTitle.textContent = `Ask AI: ${post.title || `${apiLabel(subject.kind, 'singular', true)} post`}`;
   }
   if (subjectPostAiSubtitle) {
     subjectPostAiSubtitle.textContent = 'Loading post context...';
@@ -978,26 +1087,19 @@ async function openSubjectPostAiChatModal(post) {
   openModal(subjectPostAiModal);
 
   try {
-    const response = await fetch(
-      `/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/ask-ai/bootstrap`
-    );
+    const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/ask-ai/bootstrap`);
     const data = await response.json().catch(() => ({ ok: false }));
     if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Unable to load unit post AI conversation.');
+      throw new Error(data.message || 'Unable to load post AI conversation.');
     }
     if (subjectPostAiSubtitle) {
-      const summary = data.context && data.context.summary ? data.context.summary : 'Post context ready.';
-      subjectPostAiSubtitle.textContent = `Unit: ${data.context?.subjectTitle || subject.subjectName || 'Unit'} | Focus: ${summary}`;
+      subjectPostAiSubtitle.textContent = `${apiLabel(subject.kind, 'singular', true)}: ${data.context?.subjectTitle || subject.subjectName || 'Selected space'} | Focus: ${data.context?.summary || 'Post context ready.'}`;
     }
     renderSubjectPostAiMessages(data.messages || []);
     if (subjectPostAiInput) subjectPostAiInput.focus();
   } catch (error) {
-    if (subjectPostAiSubtitle) {
-      subjectPostAiSubtitle.textContent = 'Post context could not be loaded.';
-    }
-    if (subjectPostAiMessage) {
-      subjectPostAiMessage.textContent = error.message || 'Unable to load unit post AI conversation.';
-    }
+    if (subjectPostAiSubtitle) subjectPostAiSubtitle.textContent = 'Post context could not be loaded.';
+    if (subjectPostAiMessage) subjectPostAiMessage.textContent = error.message || 'Unable to load post AI conversation.';
   }
 }
 
@@ -1015,27 +1117,22 @@ async function sendSubjectPostAiMessage(event) {
   const pendingBubble = appendAiBubble(subjectPostAiMessages, 'assistant', 'Thinking...', { pending: true });
 
   try {
-    const response = await fetch(
-      `/api/subjects/${encodeURIComponent(activeSubjectPostAiContext.subjectId)}/posts/${encodeURIComponent(activeSubjectPostAiContext.postId)}/ask-ai/messages`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      }
-    );
+    const response = await fetch(`/api/subjects/${encodeURIComponent(activeSubjectPostAiContext.subjectId)}/posts/${encodeURIComponent(activeSubjectPostAiContext.postId)}/ask-ai/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
     const data = await response.json().catch(() => ({ ok: false }));
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Unable to send message.');
     }
     if (pendingBubble) {
       pendingBubble.classList.remove('pending');
-      pendingBubble.textContent = data.message && data.message.content ? data.message.content : 'No response generated.';
+      pendingBubble.textContent = data.message?.content || 'No response generated.';
     }
   } catch (error) {
     if (pendingBubble) pendingBubble.remove();
-    if (subjectPostAiMessage) {
-      subjectPostAiMessage.textContent = error.message || 'Unable to send message.';
-    }
+    if (subjectPostAiMessage) subjectPostAiMessage.textContent = error.message || 'Unable to send message.';
   } finally {
     isSendingSubjectPostAi = false;
     subjectPostAiInput.disabled = false;
@@ -1043,30 +1140,36 @@ async function sendSubjectPostAiMessage(event) {
   }
 }
 
+function updateSelectedSubjectMetadata(subjectUpdate) {
+  const selected = getSelectedSubject();
+  if (!selected || !subjectUpdate) return;
+  selected.kind = subjectUpdate.kind || selected.kind || 'unit';
+  selected.subjectName = subjectUpdate.subjectName || selected.subjectName || '';
+  selected.courseName = subjectUpdate.courseName || selected.courseName || '';
+  selected.description = subjectUpdate.description || selected.description || '';
+  selected.canModerate = subjectUpdate.canModerate === true;
+  selected.viewerCanPostWithoutApproval = subjectUpdate.viewerCanPostWithoutApproval === true;
+}
+
 async function fetchAndRenderSubjectFeed(subjectId) {
   if (!subjectId || state.loadingFeed || !subjectPosts) return;
   state.loadingFeed = true;
-  subjectPosts.innerHTML = '<p class="subject-empty">Loading unit feed...</p>';
-
+  subjectPosts.innerHTML = '<p class="subject-empty">Loading feed...</p>';
   try {
     const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/feed?page=1&pageSize=50`);
     const data = await response.json().catch(() => ({ ok: false }));
     if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Unable to load unit feed.');
+      throw new Error(data.message || 'Unable to load feed.');
     }
-
-    const selectedSubject = state.subjects.find((item) => item.id === subjectId) || null;
-    if (selectedSubject && data.subject) {
-      selectedSubject.description = data.subject.description || selectedSubject.description || '';
-      selectedSubject.subjectName = data.subject.subjectName || selectedSubject.subjectName || '';
-      selectedSubject.courseName = data.subject.courseName || selectedSubject.courseName || '';
+    updateSelectedSubjectMetadata(data.subject || null);
+    const selected = getSelectedSubject();
+    if (selected) {
+      setSubjectFeedHeader(selected);
     }
-
-    setSubjectFeedHeader(selectedSubject);
     renderPostList(data.posts || []);
     syncSubjectLocation(subjectId, state.requestedPostId);
   } catch (error) {
-    subjectPosts.innerHTML = `<p class="subject-empty">${escapeHtml(error.message || 'Unable to load unit feed.')}</p>`;
+    subjectPosts.innerHTML = `<p class="subject-empty">${escapeHtml(error.message || 'Unable to load feed.')}</p>`;
   } finally {
     state.loadingFeed = false;
   }
@@ -1079,34 +1182,24 @@ async function loadSubjectsBootstrap() {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Unable to load units.');
     }
-
     state.subjects = Array.isArray(data.subjects) ? data.subjects : [];
-    state.canCreate = Boolean(data.canCreate);
-    if (openCreateSubjectModal) {
-      openCreateSubjectModal.classList.toggle('is-hidden', !state.canCreate);
+    state.viewerRole = data.viewerRole || 'member';
+    state.canCreateUnit = Boolean(data.canCreateUnit);
+    state.canCreateThread = Boolean(data.canCreateThread);
+    state.threadTabLabel = data.threadTabLabel || 'Threads';
+    setCreateButtonsVisibility();
+    ensureTabSelectionIntegrity();
+    const selected = getSelectedSubject();
+    if (selected) {
+      state.activeTab = selected.kind || state.activeTab;
     }
-
-    const visibleSubjects = getFilteredSubjects();
-    if (!state.selectedSubjectId && visibleSubjects.length) {
-      state.selectedSubjectId = visibleSubjects[0].id;
-    } else if (
-      state.selectedSubjectId &&
-      !visibleSubjects.some((subject) => subject.id === state.selectedSubjectId)
-    ) {
-      state.selectedSubjectId = visibleSubjects.length ? visibleSubjects[0].id : null;
-      state.requestedPostId = null;
-    }
-
+    renderTabLabels();
     renderSubjects();
-    const selected = visibleSubjects.find((subject) => subject.id === state.selectedSubjectId) || null;
     setSubjectFeedHeader(selected);
     if (selected) {
-      syncSubjectLocation(selected.id, state.requestedPostId);
       await fetchAndRenderSubjectFeed(selected.id);
     } else if (subjectPosts) {
-      subjectPosts.innerHTML = state.subjects.length
-        ? '<p class="subject-empty">No units match your search.</p>'
-        : '<p class="subject-empty">No units available yet.</p>';
+      subjectPosts.innerHTML = '<p class="subject-empty">No units or threads are available yet.</p>';
       syncSubjectLocation(null);
     }
   } catch (error) {
@@ -1114,20 +1207,484 @@ async function loadSubjectsBootstrap() {
       subjectsList.innerHTML = `<p class="subject-empty">${escapeHtml(error.message)}</p>`;
     }
     if (subjectPosts) {
-      subjectPosts.innerHTML = '<p class="subject-empty">Unable to load unit feed.</p>';
+      subjectPosts.innerHTML = '<p class="subject-empty">Unable to load the feed.</p>';
     }
   }
 }
 
-if (openCreateSubjectModal) {
-  openCreateSubjectModal.addEventListener('click', () => {
-    if (createSubjectMessage) createSubjectMessage.textContent = '';
-    openModal(createSubjectModal);
+function configureCreateSubjectModal(kind) {
+  const singular = apiLabel(kind);
+  const capitalized = apiLabel(kind, 'singular', true);
+  if (createSubjectKindInput) createSubjectKindInput.value = kind;
+  if (createSubjectTitle) createSubjectTitle.textContent = `Create ${singular}`;
+  if (createSubjectNameLabel) createSubjectNameLabel.textContent = `${capitalized} name`;
+  if (createSubjectCodeLabel) createSubjectCodeLabel.textContent = `${capitalized} code (optional)`;
+  if (createSubjectDescriptionLabel) createSubjectDescriptionLabel.textContent = `${capitalized} description`;
+  if (createSubjectMessage) createSubjectMessage.textContent = '';
+  openModal(createSubjectModal);
+}
+
+function prepareCreatePostModal() {
+  const subject = getSelectedSubject();
+  if (!subject) return;
+  const singular = apiLabel(subject.kind);
+  if (createSubjectPostTitle) createSubjectPostTitle.textContent = `Create ${singular} post`;
+  if (createSubjectPostHelper) {
+    createSubjectPostHelper.textContent = subject.canModerate
+      ? `Posts from course staff publish immediately in this ${singular}.`
+      : `Student posts in this ${singular} stay pending until a professor or DepAdmin approves them.`;
+  }
+  if (createSubjectPostMessage) createSubjectPostMessage.textContent = '';
+  openModal(createSubjectPostModal);
+}
+
+async function openSubjectModeration(subject) {
+  if (!subject || subject.canModerate !== true) return;
+  state.moderation.subjectId = subject.id;
+  if (subjectModerationEyebrow) subjectModerationEyebrow.textContent = `${apiLabel(subject.kind, 'singular', true)} moderation`;
+  if (subjectModerationTitle) subjectModerationTitle.textContent = `${subject.subjectName || `Untitled ${apiLabel(subject.kind)}`} moderation`;
+  if (subjectModerationSubtitle) {
+    subjectModerationSubtitle.textContent = `Review student membership, approve queued posts, and act on reported ${apiLabel(subject.kind)} content.`;
+  }
+  if (subjectModerationMessage) subjectModerationMessage.textContent = '';
+  if (subjectModerationMembers) subjectModerationMembers.innerHTML = '<p class="subject-empty">Loading members...</p>';
+  if (subjectModerationPendingPosts) subjectModerationPendingPosts.innerHTML = '<p class="subject-empty">Loading post requests...</p>';
+  if (subjectModerationReports) subjectModerationReports.innerHTML = '<p class="subject-empty">Loading reports...</p>';
+  openModal(subjectModerationModal);
+  await loadSubjectModeration(subject.id);
+}
+
+function renderModerationEmpty(target, text) {
+  if (!target) return;
+  target.innerHTML = `<p class="subject-empty">${escapeHtml(text)}</p>`;
+}
+
+async function performMemberModerationAction(subjectId, memberUid, action) {
+  let endpoint = '';
+  const payload = {};
+  if (action === 'warn') {
+    endpoint = `/api/subjects/${encodeURIComponent(subjectId)}/members/${encodeURIComponent(memberUid)}/warn`;
+    payload.reason = window.prompt('Warning reason (optional):', '') || '';
+  } else if (action === 'suspend') {
+    endpoint = `/api/subjects/${encodeURIComponent(subjectId)}/members/${encodeURIComponent(memberUid)}/suspend`;
+    payload.reason = window.prompt('Suspension reason (optional):', '') || '';
+    const hoursRaw = window.prompt('Suspend duration in hours (1-8760):', '72');
+    if (hoursRaw === null) return;
+    const hours = Number(hoursRaw);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 8760) {
+      window.alert('Enter a whole number between 1 and 8760.');
+      return;
+    }
+    payload.durationHours = hours;
+  } else if (action === 'restore') {
+    endpoint = `/api/subjects/${encodeURIComponent(subjectId)}/members/${encodeURIComponent(memberUid)}/restore`;
+  } else if (action === 'ban-request') {
+    endpoint = `/api/subjects/${encodeURIComponent(subjectId)}/members/${encodeURIComponent(memberUid)}/ban-request`;
+    payload.reason = window.prompt('Ban request reason:', '') || '';
+    payload.note = window.prompt('Admin note (optional):', '') || '';
+  }
+  if (!endpoint) return;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to complete moderation action.');
+  }
+  if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
+  await loadSubjectModeration(subjectId);
+}
+
+async function handlePendingPostAction(subjectId, postId, action) {
+  const endpoint = action === 'approve'
+    ? `/api/subjects/${encodeURIComponent(subjectId)}/posts/${encodeURIComponent(postId)}/approve`
+    : `/api/subjects/${encodeURIComponent(subjectId)}/posts/${encodeURIComponent(postId)}/reject`;
+  const payload = {};
+  if (action === 'reject') {
+    payload.note = window.prompt('Rejection note (optional):', '') || '';
+  }
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to update post approval.');
+  }
+  if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
+  await Promise.all([loadSubjectModeration(subjectId), fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
+}
+
+async function handleReportModerationAction(subjectId, report) {
+  const statusSelect = document.querySelector(`select[data-report-status="${report.sourceType}:${report.id}"]`);
+  const actionSelect = document.querySelector(`select[data-report-action="${report.sourceType}:${report.id}"]`);
+  const status = statusSelect ? statusSelect.value : 'open';
+  const moderationAction = actionSelect ? actionSelect.value : 'none';
+  const payload = { status, moderationAction };
+  payload.note = window.prompt('Moderation note (optional):', '') || '';
+  if (moderationAction === 'suspend_target_user') {
+    const hoursRaw = window.prompt('Suspend duration in hours (1-8760):', '72');
+    if (hoursRaw === null) return;
+    const hours = Number(hoursRaw);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 8760) {
+      window.alert('Enter a whole number between 1 and 8760.');
+      return;
+    }
+    payload.durationHours = hours;
+  }
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/reports/${encodeURIComponent(report.sourceType)}/${encodeURIComponent(report.id)}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to apply moderation action.');
+  }
+  if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
+  await Promise.all([loadSubjectModeration(subjectId), fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
+}
+
+function renderModerationMembers(subjectId, members) {
+  if (!subjectModerationMembers) return;
+  if (subjectModerationMembersCount) subjectModerationMembersCount.textContent = String(members.length);
+  if (!members.length) {
+    renderModerationEmpty(subjectModerationMembers, 'No registered students yet.');
+    return;
+  }
+
+  subjectModerationMembers.innerHTML = '';
+  members.forEach((member) => {
+    const article = document.createElement('article');
+    article.className = 'subject-moderation-card';
+
+    const head = document.createElement('div');
+    head.className = 'subject-moderation-card-head';
+    head.appendChild(buildAvatarElement(member.photoLink, member.displayName, 'subject-post-avatar'));
+
+    const meta = document.createElement('div');
+    meta.className = 'subject-moderation-card-meta';
+    meta.innerHTML = `
+      <strong>${escapeHtml(member.displayName || 'Member')}</strong>
+      <span>${escapeHtml(member.state)}</span>
+      <span>Warnings: ${Number(member.warningCount || 0)} · Open ban requests: ${Number(member.openBanRequests || 0)}</span>
+    `;
+    head.appendChild(meta);
+    article.appendChild(head);
+
+    const detail = document.createElement('p');
+    detail.className = 'subject-moderation-detail';
+    detail.textContent = member.state === 'suspended' && member.suspendedUntil
+      ? `Suspended until ${formatDateTime(member.suspendedUntil)}${member.suspendedReason ? ` · ${member.suspendedReason}` : ''}`
+      : `Joined ${formatDateTime(member.joinedAt)}`;
+    article.appendChild(detail);
+
+    const actions = document.createElement('div');
+    actions.className = 'subject-moderation-actions';
+    const warnButton = document.createElement('button');
+    warnButton.type = 'button';
+    warnButton.className = 'secondary-button';
+    warnButton.textContent = 'Warn';
+    warnButton.addEventListener('click', async () => {
+      try {
+        await performMemberModerationAction(subjectId, member.uid, 'warn');
+      } catch (error) {
+        if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to issue warning.';
+      }
+    });
+    actions.appendChild(warnButton);
+
+    const suspendButton = document.createElement('button');
+    suspendButton.type = 'button';
+    suspendButton.className = member.state === 'suspended' ? 'secondary-button' : 'danger-button';
+    suspendButton.textContent = member.state === 'suspended' ? 'Restore' : 'Suspend';
+    suspendButton.addEventListener('click', async () => {
+      try {
+        await performMemberModerationAction(subjectId, member.uid, member.state === 'suspended' ? 'restore' : 'suspend');
+      } catch (error) {
+        if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to update suspension.';
+      }
+    });
+    actions.appendChild(suspendButton);
+
+    const banRequestButton = document.createElement('button');
+    banRequestButton.type = 'button';
+    banRequestButton.className = 'ghost-button';
+    banRequestButton.textContent = 'Request ban';
+    banRequestButton.addEventListener('click', async () => {
+      try {
+        await performMemberModerationAction(subjectId, member.uid, 'ban-request');
+      } catch (error) {
+        if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to submit ban request.';
+      }
+    });
+    actions.appendChild(banRequestButton);
+
+    article.appendChild(actions);
+    subjectModerationMembers.appendChild(article);
+  });
+}
+
+function renderModerationPendingPosts(subjectId, pendingPosts) {
+  if (!subjectModerationPendingPosts) return;
+  if (subjectModerationPendingCount) subjectModerationPendingCount.textContent = String(pendingPosts.length);
+  if (!pendingPosts.length) {
+    renderModerationEmpty(subjectModerationPendingPosts, 'No pending post requests.');
+    return;
+  }
+
+  subjectModerationPendingPosts.innerHTML = '';
+  pendingPosts.forEach((post) => {
+    const article = document.createElement('article');
+    article.className = 'subject-moderation-card';
+    article.innerHTML = `
+      <div class="subject-moderation-card-head">
+        <div class="subject-moderation-card-meta">
+          <strong>${escapeHtml(post.title || 'Untitled post')}</strong>
+          <span>${escapeHtml(post.authorName || 'Member')} · ${escapeHtml(formatDateTime(post.approvalRequestedAt || post.createdAt))}</span>
+        </div>
+      </div>
+      <p class="subject-moderation-detail">${escapeHtml(post.content || '')}</p>
+    `;
+    if (post.attachment?.link) {
+      const attachment = document.createElement('a');
+      attachment.href = post.attachment.link;
+      attachment.target = '_blank';
+      attachment.rel = 'noopener noreferrer';
+      attachment.className = 'subject-post-attachment';
+      attachment.innerHTML = `<img src="/assets/document.svg" alt="" /><span>${escapeHtml(post.attachment.title || 'Attached document')}</span>`;
+      article.appendChild(attachment);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'subject-moderation-actions';
+    const approveButton = document.createElement('button');
+    approveButton.type = 'button';
+    approveButton.className = 'primary-button';
+    approveButton.textContent = 'Approve';
+    approveButton.addEventListener('click', async () => {
+      try {
+        await handlePendingPostAction(subjectId, post.id, 'approve');
+      } catch (error) {
+        if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to approve post.';
+      }
+    });
+    actions.appendChild(approveButton);
+
+    const rejectButton = document.createElement('button');
+    rejectButton.type = 'button';
+    rejectButton.className = 'danger-button';
+    rejectButton.textContent = 'Reject';
+    rejectButton.addEventListener('click', async () => {
+      try {
+        await handlePendingPostAction(subjectId, post.id, 'reject');
+      } catch (error) {
+        if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to reject post.';
+      }
+    });
+    actions.appendChild(rejectButton);
+
+    article.appendChild(actions);
+    subjectModerationPendingPosts.appendChild(article);
+  });
+}
+
+function buildReportActionOptions(selected) {
+  const options = [
+    { value: 'none', label: 'No action' },
+    { value: 'take_down_subject_post', label: 'Take down post' },
+    { value: 'warn_target_user', label: 'Warn student' },
+    { value: 'suspend_target_user', label: 'Suspend student' },
+    { value: 'request_ban_target_user', label: 'Request ban' },
+  ];
+  return options
+    .map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === selected ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
+    .join('');
+}
+
+function buildReportStatusOptions(selected) {
+  const options = [
+    { value: 'open', label: 'Open' },
+    { value: 'under_review', label: 'Under review' },
+    { value: 'resolved_no_action', label: 'Resolved (no action)' },
+    { value: 'rejected', label: 'Rejected' },
+  ];
+  return options
+    .map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === selected ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
+    .join('');
+}
+
+function renderModerationReports(subjectId, reports) {
+  if (!subjectModerationReports) return;
+  if (subjectModerationReportsCount) subjectModerationReportsCount.textContent = String(reports.length);
+  if (!reports.length) {
+    renderModerationEmpty(subjectModerationReports, 'No open reports.');
+    return;
+  }
+
+  subjectModerationReports.innerHTML = '';
+  reports.forEach((report) => {
+    const key = `${report.sourceType}:${report.id}`;
+    const article = document.createElement('article');
+    article.className = 'subject-moderation-card';
+    const reportSummary = report.sourceType === 'ai'
+      ? `AI report · Risk ${report.riskLevel || 'unknown'}${report.riskScore !== null && report.riskScore !== undefined ? ` (${report.riskScore})` : ''}`
+      : `Manual report · ${report.reporterName || 'Member'}`;
+    const reasonText = report.sourceType === 'ai'
+      ? report.summary || (Array.isArray(report.flags) ? report.flags.join(', ') : '')
+      : report.reason || report.details || report.customReason || '';
+    article.innerHTML = `
+      <div class="subject-moderation-card-head">
+        <div class="subject-moderation-card-meta">
+          <strong>${escapeHtml(report.title || 'Untitled post')}</strong>
+          <span>${escapeHtml(reportSummary)}</span>
+          <span>${escapeHtml(report.authorName || 'Member')} · ${escapeHtml(formatDateTime(report.createdAt))}</span>
+        </div>
+      </div>
+      <p class="subject-moderation-detail">${escapeHtml(reasonText || 'No report summary provided.')}</p>
+      <div class="subject-report-actions-row">
+        <select class="small-select" data-report-status="${escapeHtml(key)}">
+          ${buildReportStatusOptions(report.status || 'open')}
+        </select>
+        <select class="small-select" data-report-action="${escapeHtml(key)}">
+          ${buildReportActionOptions(report.moderationAction || 'none')}
+        </select>
+        <button type="button" class="secondary-button" data-report-apply="${escapeHtml(key)}">Apply</button>
+      </div>
+    `;
+    const button = article.querySelector('button[data-report-apply]');
+    button.addEventListener('click', async () => {
+      try {
+        await handleReportModerationAction(subjectId, report);
+      } catch (error) {
+        if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to apply moderation action.';
+      }
+    });
+    subjectModerationReports.appendChild(article);
+  });
+}
+
+async function loadSubjectModeration(subjectId) {
+  try {
+    const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/moderation`);
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Unable to load moderation panel.');
+    }
+    state.moderation.subjectId = subjectId;
+    state.moderation.members = Array.isArray(data.members) ? data.members : [];
+    state.moderation.pendingPosts = Array.isArray(data.pendingPosts) ? data.pendingPosts : [];
+    state.moderation.reports = Array.isArray(data.reports) ? data.reports : [];
+    renderModerationMembers(subjectId, state.moderation.members);
+    renderModerationPendingPosts(subjectId, state.moderation.pendingPosts);
+    renderModerationReports(subjectId, state.moderation.reports);
+  } catch (error) {
+    if (subjectModerationMessage) subjectModerationMessage.textContent = error.message || 'Unable to load moderation panel.';
+    renderModerationEmpty(subjectModerationMembers, 'Unable to load students.');
+    renderModerationEmpty(subjectModerationPendingPosts, 'Unable to load post requests.');
+    renderModerationEmpty(subjectModerationReports, 'Unable to load reports.');
+  }
+}
+
+async function loadCurrentProfile() {
+  try {
+    const response = await fetch('/api/profile');
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (!response.ok || !data.ok) return;
+    setNavAvatar(data.profile?.photo_link || null, data.profile?.display_name || '');
+  } catch (_error) {
+    // keep fallback avatar
+  }
+}
+
+if (profileToggle && profileMenu) {
+  profileToggle.addEventListener('click', () => {
+    profileMenu.classList.toggle('is-hidden');
+  });
+  document.addEventListener('click', (event) => {
+    if (!profileMenu.contains(event.target) && !profileToggle.contains(event.target)) {
+      profileMenu.classList.add('is-hidden');
+    }
+  });
+}
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.subject-post-menu-wrap')) {
+    closeAllSubjectPostMenus();
+  }
+});
+
+if (logoutButton) {
+  logoutButton.addEventListener('click', async () => {
+    try {
+      await fetch('/api/logout', { method: 'POST' });
+    } catch (_error) {
+      // best effort
+    }
+    window.location.href = '/login';
+  });
+}
+
+if (subjectTabs) {
+  subjectTabs.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-tab]');
+    if (!button) return;
+    const nextTab = button.dataset.tab === 'thread' ? 'thread' : 'unit';
+    if (state.activeTab === nextTab) return;
+    state.activeTab = nextTab;
+    const visible = getVisibleSubjects();
+    state.selectedSubjectId = visible[0] ? visible[0].id : null;
+    state.requestedPostId = null;
+    renderTabLabels();
+    renderSubjects();
+    const selected = getSelectedSubject();
+    setSubjectFeedHeader(selected);
+    if (selected) {
+      await fetchAndRenderSubjectFeed(selected.id);
+    } else if (subjectPosts) {
+      subjectPosts.innerHTML = `<p class="subject-empty">No ${escapeHtml(apiLabel(nextTab, 'plural'))} are available in this view.</p>`;
+      syncSubjectLocation(null);
+    }
+  });
+}
+
+if (subjectSearchInput) {
+  subjectSearchInput.addEventListener('input', async () => {
+    state.subjectSearchQuery = subjectSearchInput.value || '';
+    ensureTabSelectionIntegrity();
+    renderTabLabels();
+    renderSubjects();
+    const selected = getSelectedSubject();
+    setSubjectFeedHeader(selected);
+    if (selected) {
+      await fetchAndRenderSubjectFeed(selected.id);
+    } else if (subjectPosts) {
+      subjectPosts.innerHTML = `<p class="subject-empty">No ${escapeHtml(apiLabel(state.activeTab, 'plural'))} match your search.</p>`;
+      syncSubjectLocation(null);
+    }
+  });
+}
+
+if (openCreateUnitModalButton) {
+  openCreateUnitModalButton.addEventListener('click', () => configureCreateSubjectModal('unit'));
+}
+
+if (openCreateThreadModalButton) {
+  openCreateThreadModalButton.addEventListener('click', () => configureCreateSubjectModal('thread'));
 }
 
 if (closeCreateSubjectModal) {
   closeCreateSubjectModal.addEventListener('click', () => closeModal(createSubjectModal));
+}
+
+if (createSubjectModal) {
+  createSubjectModal.addEventListener('click', (event) => {
+    if (event.target === createSubjectModal) closeModal(createSubjectModal);
+  });
 }
 
 if (createSubjectForm) {
@@ -1136,6 +1693,7 @@ if (createSubjectForm) {
     if (createSubjectMessage) createSubjectMessage.textContent = '';
     const formData = new FormData(createSubjectForm);
     const payload = {
+      kind: formData.get('kind'),
       subjectName: formData.get('subjectName'),
       subjectCode: formData.get('subjectCode'),
       courseName: formData.get('courseName'),
@@ -1150,24 +1708,27 @@ if (createSubjectForm) {
       });
       const data = await response.json().catch(() => ({ ok: false }));
       if (!response.ok || !data.ok) {
-        throw new Error(data.message || 'Unable to create unit.');
+        throw new Error(data.message || 'Unable to create item.');
       }
       closeModal(createSubjectModal);
       createSubjectForm.reset();
+      state.activeTab = payload.kind === 'thread' ? 'thread' : 'unit';
       await loadSubjectsBootstrap();
-    } catch (error) {
-      if (createSubjectMessage) {
-        createSubjectMessage.textContent = error.message || 'Unable to create unit.';
+      if (data.subject && data.subject.id) {
+        state.selectedSubjectId = Number(data.subject.id);
+        await fetchAndRenderSubjectFeed(state.selectedSubjectId);
       }
+    } catch (error) {
+      if (createSubjectMessage) createSubjectMessage.textContent = error.message || 'Unable to create item.';
     }
   });
 }
 
 if (openCreateSubjectPostModal) {
   openCreateSubjectPostModal.addEventListener('click', () => {
-    if (!state.selectedSubjectId) return;
-    if (createSubjectPostMessage) createSubjectPostMessage.textContent = '';
-    openModal(createSubjectPostModal);
+    const subject = getSelectedSubject();
+    if (!subject) return;
+    prepareCreatePostModal();
   });
 }
 
@@ -1175,19 +1736,24 @@ if (closeCreateSubjectPostModal) {
   closeCreateSubjectPostModal.addEventListener('click', () => closeModal(createSubjectPostModal));
 }
 
+if (createSubjectPostModal) {
+  createSubjectPostModal.addEventListener('click', (event) => {
+    if (event.target === createSubjectPostModal) closeModal(createSubjectPostModal);
+  });
+}
+
 if (createSubjectPostForm) {
   createSubjectPostForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!state.selectedSubjectId) return;
+    const subject = getSelectedSubject();
+    if (!subject) return;
     if (createSubjectPostMessage) createSubjectPostMessage.textContent = '';
-
     const formData = new FormData(createSubjectPostForm);
     const payload = {
       title: formData.get('title'),
       content: formData.get('content'),
       attachmentLibraryDocumentUuid: formData.get('attachmentLibraryDocumentUuid'),
     };
-
     const submitButton = createSubjectPostForm.querySelector('button[type="submit"]');
     if (submitButton) {
       submitButton.disabled = true;
@@ -1195,7 +1761,7 @@ if (createSubjectPostForm) {
     }
 
     try {
-      const response = await fetch(`/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts`, {
+      const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1206,14 +1772,12 @@ if (createSubjectPostForm) {
       }
       closeModal(createSubjectPostModal);
       createSubjectPostForm.reset();
-      state.requestedPostId = data.post && data.post.id ? Number(data.post.id) : null;
-      syncSubjectLocation(state.selectedSubjectId, state.requestedPostId);
-      await fetchAndRenderSubjectFeed(state.selectedSubjectId);
-      await loadSubjectsBootstrap();
+      state.requestedPostId = data.post?.id ? Number(data.post.id) : null;
+      syncSubjectLocation(subject.id, state.requestedPostId);
+      await Promise.all([fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()]);
+      if (createSubjectPostMessage) createSubjectPostMessage.textContent = data.message || '';
     } catch (error) {
-      if (createSubjectPostMessage) {
-        createSubjectPostMessage.textContent = error.message || 'Unable to create post.';
-      }
+      if (createSubjectPostMessage) createSubjectPostMessage.textContent = error.message || 'Unable to create post.';
     } finally {
       if (submitButton) {
         submitButton.disabled = false;
@@ -1227,10 +1791,17 @@ if (closeEditSubjectPostModal) {
   closeEditSubjectPostModal.addEventListener('click', () => closeEditSubjectPostDialog());
 }
 
+if (editSubjectPostModal) {
+  editSubjectPostModal.addEventListener('click', (event) => {
+    if (event.target === editSubjectPostModal) closeEditSubjectPostDialog();
+  });
+}
+
 if (editSubjectPostForm) {
   editSubjectPostForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!state.selectedSubjectId || !activeEditSubjectPostId) return;
+    const subject = getSelectedSubject();
+    if (!subject || !activeEditSubjectPostId) return;
     if (editSubjectPostMessage) editSubjectPostMessage.textContent = '';
 
     const formData = new FormData(editSubjectPostForm);
@@ -1239,7 +1810,6 @@ if (editSubjectPostForm) {
       content: formData.get('content'),
       attachmentLibraryDocumentUuid: formData.get('attachmentLibraryDocumentUuid'),
     };
-
     const submitButton = editSubjectPostForm.querySelector('button[type="submit"]');
     if (submitButton) {
       submitButton.disabled = true;
@@ -1247,35 +1817,47 @@ if (editSubjectPostForm) {
     }
 
     try {
-      const response = await fetch(
-        `/api/subjects/${encodeURIComponent(state.selectedSubjectId)}/posts/${encodeURIComponent(activeEditSubjectPostId)}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }
-      );
+      const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(activeEditSubjectPostId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
       const data = await response.json().catch(() => ({ ok: false }));
       if (!response.ok || !data.ok) {
-        throw new Error(data.message || 'Unable to update unit post.');
+        throw new Error(data.message || 'Unable to update post.');
       }
-
       const editedPostId = activeEditSubjectPostId;
-      state.requestedPostId = editedPostId;
-      setSubjectPostCommentsExpanded(editedPostId, true);
-      syncSubjectLocation(state.selectedSubjectId, editedPostId);
       closeEditSubjectPostDialog();
-      await fetchAndRenderSubjectFeed(state.selectedSubjectId);
+      state.requestedPostId = editedPostId;
+      syncSubjectLocation(subject.id, editedPostId);
+      await Promise.all([fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()]);
+      window.alert(data.message || 'Post updated.');
     } catch (error) {
-      if (editSubjectPostMessage) {
-        editSubjectPostMessage.textContent = error.message || 'Unable to update unit post.';
-      }
+      if (editSubjectPostMessage) editSubjectPostMessage.textContent = error.message || 'Unable to update post.';
     } finally {
       if (submitButton) {
         submitButton.disabled = false;
         submitButton.textContent = 'Save changes';
       }
     }
+  });
+}
+
+if (openSubjectModerationModalButton) {
+  openSubjectModerationModalButton.addEventListener('click', async () => {
+    const subject = getSelectedSubject();
+    if (!subject || subject.canModerate !== true) return;
+    await openSubjectModeration(subject);
+  });
+}
+
+if (closeSubjectModerationModal) {
+  closeSubjectModerationModal.addEventListener('click', () => closeModal(subjectModerationModal));
+}
+
+if (subjectModerationModal) {
+  subjectModerationModal.addEventListener('click', (event) => {
+    if (event.target === subjectModerationModal) closeModal(subjectModerationModal);
   });
 }
 
@@ -1297,17 +1879,13 @@ if (closeSubjectPostAiModal) {
 
 if (subjectAiModal) {
   subjectAiModal.addEventListener('click', (event) => {
-    if (event.target === subjectAiModal) {
-      closeSubjectAiChatModal();
-    }
+    if (event.target === subjectAiModal) closeSubjectAiChatModal();
   });
 }
 
 if (subjectPostAiModal) {
   subjectPostAiModal.addEventListener('click', (event) => {
-    if (event.target === subjectPostAiModal) {
-      closeSubjectPostAiChatModal();
-    }
+    if (event.target === subjectPostAiModal) closeSubjectPostAiChatModal();
   });
 }
 
@@ -1317,48 +1895,6 @@ if (subjectAiForm) {
 
 if (subjectPostAiForm) {
   subjectPostAiForm.addEventListener('submit', sendSubjectPostAiMessage);
-}
-
-if (createSubjectModal) {
-  createSubjectModal.addEventListener('click', (event) => {
-    if (event.target === createSubjectModal) {
-      closeModal(createSubjectModal);
-    }
-  });
-}
-
-if (createSubjectPostModal) {
-  createSubjectPostModal.addEventListener('click', (event) => {
-    if (event.target === createSubjectPostModal) {
-      closeModal(createSubjectPostModal);
-    }
-  });
-}
-
-if (editSubjectPostModal) {
-  editSubjectPostModal.addEventListener('click', (event) => {
-    if (event.target === editSubjectPostModal) {
-      closeEditSubjectPostDialog();
-    }
-  });
-}
-
-if (subjectSearchInput) {
-  subjectSearchInput.addEventListener('input', async () => {
-    state.subjectSearchQuery = subjectSearchInput.value || '';
-    await applySubjectSearch();
-  });
-}
-
-async function loadCurrentProfile() {
-  try {
-    const response = await fetch('/api/profile');
-    const data = await response.json().catch(() => ({ ok: false }));
-    if (!response.ok || !data.ok) return;
-    setNavAvatar(data.profile?.photo_link || null, data.profile?.display_name || '');
-  } catch (_error) {
-    // keep fallback avatar
-  }
 }
 
 async function initSubjectsPage() {

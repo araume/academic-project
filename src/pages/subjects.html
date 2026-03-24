@@ -53,12 +53,20 @@
       <div class="subjects-list-head">
         <div>
           <p class="eyebrow">Units</p>
-          <h1>Course units</h1>
+          <h1>Course spaces</h1>
+          <p class="subject-description">Official units and staff-led topic threads live side by side here.</p>
         </div>
-        <button type="button" class="primary-button is-hidden" id="openCreateSubjectModal">Create unit</button>
+        <div class="subjects-create-actions">
+          <button type="button" class="secondary-button is-hidden" id="openCreateUnitModal">Create unit</button>
+          <button type="button" class="primary-button is-hidden" id="openCreateThreadModal">Create thread</button>
+        </div>
+      </div>
+      <div class="subjects-tabs" id="subjectTabs">
+        <button type="button" class="subjects-tab is-active" data-tab="unit" id="unitsTabButton">Official units</button>
+        <button type="button" class="subjects-tab" data-tab="thread" id="threadsTabButton">Threads</button>
       </div>
       <label class="subjects-search-wrap">
-        <input type="text" id="subjectSearchInput" placeholder="Search units by name or code" />
+        <input type="text" id="subjectSearchInput" placeholder="Search units or threads by name, code, or creator" />
       </label>
       <div id="subjectsList" class="subjects-list"></div>
     </aside>
@@ -68,15 +76,17 @@
         <div>
           <p class="eyebrow" id="subjectCourseLabel">Select a unit</p>
           <h2 id="subjectTitle">Unit feed</h2>
-          <p id="subjectDescription" class="subject-description">Choose a unit on the left to load posts.</p>
+          <p id="subjectDescription" class="subject-description">Choose a unit or thread on the left to load posts.</p>
+          <p id="subjectApprovalHint" class="subject-approval-hint"></p>
         </div>
         <div class="subject-feed-actions">
+          <button type="button" class="secondary-button is-hidden" id="openSubjectModerationModal">Moderation</button>
           <button type="button" class="secondary-button" id="openSubjectAiModal" disabled>Unit AI</button>
-          <button type="button" class="primary-button" id="openCreateSubjectPostModal" disabled>New unit post</button>
+          <button type="button" class="primary-button" id="openCreateSubjectPostModal" disabled>New post</button>
         </div>
       </div>
       <div id="subjectPosts" class="subject-posts">
-        <p class="subject-empty">Choose a unit to view posts.</p>
+        <p class="subject-empty">Choose a unit or thread to view posts.</p>
       </div>
     </section>
   </main>
@@ -84,14 +94,15 @@
   <div class="modal is-hidden" id="createSubjectModal">
     <div class="modal-card">
       <button type="button" class="close-button" id="closeCreateSubjectModal">×</button>
-      <h3>Create unit</h3>
+      <h3 id="createSubjectTitle">Create unit</h3>
       <form id="createSubjectForm" class="subject-form">
+        <input type="hidden" name="kind" id="createSubjectKind" value="unit" />
         <label>
-          <span>Unit name</span>
+          <span id="createSubjectNameLabel">Unit name</span>
           <input type="text" name="subjectName" required />
         </label>
         <label>
-          <span>Unit code (optional)</span>
+          <span id="createSubjectCodeLabel">Unit code (optional)</span>
           <input type="text" name="subjectCode" />
         </label>
         <label>
@@ -99,7 +110,7 @@
           <input type="text" name="courseName" />
         </label>
         <label>
-          <span>Description</span>
+          <span id="createSubjectDescriptionLabel">Description</span>
           <textarea name="description" rows="3"></textarea>
         </label>
         <button type="submit" class="primary-button">Create</button>
@@ -111,7 +122,8 @@
   <div class="modal is-hidden" id="createSubjectPostModal">
     <div class="modal-card">
       <button type="button" class="close-button" id="closeCreateSubjectPostModal">×</button>
-      <h3>Create unit post</h3>
+      <h3 id="createSubjectPostTitle">Create unit post</h3>
+      <p id="createSubjectPostHelper" class="subject-description">Student posts are reviewed by course staff before they go live.</p>
       <form id="createSubjectPostForm" class="subject-form">
         <label>
           <span>Title</span>
@@ -134,7 +146,8 @@
   <div class="modal is-hidden" id="editSubjectPostModal">
     <div class="modal-card">
       <button type="button" class="close-button" id="closeEditSubjectPostModal">×</button>
-      <h3>Edit unit post</h3>
+      <h3 id="editSubjectPostTitle">Edit unit post</h3>
+      <p id="editSubjectPostHelper" class="subject-description">Student edits return to the moderation queue before they reappear.</p>
       <form id="editSubjectPostForm" class="subject-form">
         <label>
           <span>Title</span>
@@ -151,6 +164,43 @@
         <button type="submit" class="primary-button">Save changes</button>
         <p id="editSubjectPostMessage" class="form-message"></p>
       </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="subjectModerationModal">
+    <div class="modal-card moderation-modal-card">
+      <button type="button" class="close-button" id="closeSubjectModerationModal">×</button>
+      <div class="moderation-head">
+        <div>
+          <p class="eyebrow" id="subjectModerationEyebrow">Moderation</p>
+          <h3 id="subjectModerationTitle">Unit moderation</h3>
+          <p id="subjectModerationSubtitle" class="subject-description">Review members, approve student posts, and act on reports from one place.</p>
+        </div>
+        <p id="subjectModerationMessage" class="form-message"></p>
+      </div>
+      <div class="subject-moderation-grid">
+        <section class="subject-moderation-panel">
+          <div class="subject-moderation-panel-head">
+            <h4>Students</h4>
+            <span id="subjectModerationMembersCount">0</span>
+          </div>
+          <div id="subjectModerationMembers" class="subject-moderation-list"></div>
+        </section>
+        <section class="subject-moderation-panel">
+          <div class="subject-moderation-panel-head">
+            <h4>Post requests</h4>
+            <span id="subjectModerationPendingCount">0</span>
+          </div>
+          <div id="subjectModerationPendingPosts" class="subject-moderation-list"></div>
+        </section>
+        <section class="subject-moderation-panel subject-moderation-panel-wide">
+          <div class="subject-moderation-panel-head">
+            <h4>Reported content</h4>
+            <span id="subjectModerationReportsCount">0</span>
+          </div>
+          <div id="subjectModerationReports" class="subject-moderation-list"></div>
+        </section>
+      </div>
     </div>
   </div>
 

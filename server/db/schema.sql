@@ -796,6 +796,7 @@ CREATE TABLE IF NOT EXISTS subjects (
   id BIGSERIAL PRIMARY KEY,
   course_code TEXT,
   course_name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'unit' CHECK (kind IN ('unit', 'thread')),
   subject_code TEXT,
   subject_name TEXT NOT NULL,
   description TEXT,
@@ -803,7 +804,7 @@ CREATE TABLE IF NOT EXISTS subjects (
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (course_name, subject_name)
+  UNIQUE (course_name, kind, subject_name)
 );
 
 CREATE TABLE IF NOT EXISTS subject_memberships (
@@ -811,9 +812,12 @@ CREATE TABLE IF NOT EXISTS subject_memberships (
   subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
   user_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
   state TEXT NOT NULL DEFAULT 'member'
-    CHECK (state IN ('pending', 'member', 'left', 'banned')),
+    CHECK (state IN ('pending', 'member', 'left', 'suspended', 'banned')),
   joined_at TIMESTAMPTZ,
   left_at TIMESTAMPTZ,
+  suspended_until TIMESTAMPTZ,
+  suspended_reason TEXT,
+  suspended_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
   banned_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -829,6 +833,15 @@ CREATE TABLE IF NOT EXISTS subject_posts (
   attachment_library_document_uuid UUID REFERENCES documents(uuid) ON DELETE SET NULL,
   likes_count INTEGER NOT NULL DEFAULT 0,
   comments_count INTEGER NOT NULL DEFAULT 0,
+  approval_status TEXT NOT NULL DEFAULT 'approved'
+    CHECK (approval_status IN ('approved', 'pending', 'rejected')),
+  approval_required BOOLEAN NOT NULL DEFAULT false,
+  approval_requested_at TIMESTAMPTZ,
+  approved_at TIMESTAMPTZ,
+  approved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  rejected_at TIMESTAMPTZ,
+  rejected_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  rejection_note TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'taken_down')),
   taken_down_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
   taken_down_reason TEXT,
@@ -888,6 +901,31 @@ CREATE TABLE IF NOT EXISTS subject_post_reports (
   UNIQUE (post_id, reporter_uid)
 );
 
+CREATE TABLE IF NOT EXISTS subject_warnings (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  target_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  issued_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS subject_ban_requests (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  target_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  requested_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'under_review', 'approved_banned', 'rejected')),
+  reason TEXT,
+  request_note TEXT,
+  admin_note TEXT,
+  resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows(follower_uid);
 CREATE INDEX IF NOT EXISTS follows_target_idx ON follows(target_uid);
 CREATE INDEX IF NOT EXISTS follow_requests_target_status_idx ON follow_requests(target_uid, status);
@@ -928,10 +966,11 @@ CREATE INDEX IF NOT EXISTS community_post_reports_community_idx ON community_pos
 CREATE INDEX IF NOT EXISTS community_post_reports_post_idx ON community_post_reports(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS community_comment_reports_community_idx ON community_comment_reports(community_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS community_comment_reports_comment_idx ON community_comment_reports(comment_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS subjects_course_name_idx ON subjects(course_name, is_active);
-CREATE INDEX IF NOT EXISTS subject_memberships_user_state_idx ON subject_memberships(user_uid, state);
-CREATE INDEX IF NOT EXISTS subject_memberships_subject_state_idx ON subject_memberships(subject_id, state);
+CREATE INDEX IF NOT EXISTS subjects_course_name_idx ON subjects(course_name, kind, is_active);
+CREATE INDEX IF NOT EXISTS subject_memberships_user_state_idx ON subject_memberships(user_uid, state, suspended_until);
+CREATE INDEX IF NOT EXISTS subject_memberships_subject_state_idx ON subject_memberships(subject_id, state, suspended_until);
 CREATE INDEX IF NOT EXISTS subject_posts_subject_created_idx ON subject_posts(subject_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_posts_subject_approval_created_idx ON subject_posts(subject_id, approval_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_posts_subject_likes_idx ON subject_posts(subject_id, likes_count DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_comments_post_created_idx ON subject_comments(post_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS subject_post_likes_post_idx ON subject_post_likes(post_id, created_at DESC);
@@ -939,6 +978,11 @@ CREATE INDEX IF NOT EXISTS subject_post_likes_user_idx ON subject_post_likes(use
 CREATE INDEX IF NOT EXISTS subject_post_bookmarks_user_created_idx ON subject_post_bookmarks(user_uid, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_post_reports_subject_status_idx ON subject_post_reports(subject_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_post_reports_target_idx ON subject_post_reports(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_warnings_subject_created_idx ON subject_warnings(subject_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_warnings_target_created_idx ON subject_warnings(target_uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_ban_requests_status_created_idx ON subject_ban_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_ban_requests_target_status_idx ON subject_ban_requests(target_uid, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_ban_requests_subject_status_idx ON subject_ban_requests(subject_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS rooms (
   id BIGSERIAL PRIMARY KEY,

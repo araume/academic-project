@@ -103,7 +103,7 @@ function injectAdminNavLink(adminContext) {
   const accountLink = profileMenu.querySelector('a[href="/account"]');
   const link = document.createElement('a');
   link.href = '/admin';
-  link.textContent = 'Admin';
+  link.textContent = "Admin's console";
 
   if (accountLink && accountLink.nextSibling) {
     profileMenu.insertBefore(link, accountLink.nextSibling);

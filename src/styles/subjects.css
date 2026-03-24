@@ -55,6 +55,36 @@ body {
   gap: 10px;
 }
 
+.subjects-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.subjects-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.subjects-tab {
+  border: 1px solid var(--subjects-border);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--subjects-muted);
+  font: inherit;
+  font-weight: 700;
+  padding: 11px 12px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.subjects-tab.is-active {
+  background: var(--subjects-accent);
+  border-color: var(--subjects-accent);
+  color: #fff;
+}
+
 .subjects-search-wrap input {
   width: 100%;
   border: 1px solid var(--subjects-border);
@@ -85,6 +115,13 @@ body {
   display: grid;
   gap: 10px;
   padding-right: 4px;
+}
+
+.subject-item-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
 }
 
 .subject-item {
@@ -118,6 +155,18 @@ body {
   color: var(--subjects-muted);
 }
 
+.subject-item-moderate {
+  border: 1px solid var(--subjects-border);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--subjects-accent);
+  font: inherit;
+  font-weight: 700;
+  padding: 0 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .subject-feed-panel {
   min-height: 70vh;
   display: grid;
@@ -142,6 +191,16 @@ body {
   margin: 8px 0 0;
   color: var(--subjects-muted);
   line-height: 1.5;
+}
+
+.subject-approval-hint {
+  margin: 12px 0 0;
+  padding: 11px 13px;
+  border-radius: 14px;
+  background: var(--subjects-accent-soft);
+  color: var(--subjects-accent);
+  font-size: 0.86rem;
+  line-height: 1.55;
 }
 
 .subject-posts {
@@ -355,6 +414,18 @@ body {
   color: var(--subjects-accent);
 }
 
+.subject-post-badge.is-warning {
+  background: rgba(217, 164, 65, 0.14);
+  border-color: rgba(217, 164, 65, 0.38);
+  color: #8a5b08;
+}
+
+.subject-post-badge.is-danger {
+  background: rgba(167, 52, 41, 0.1);
+  border-color: rgba(167, 52, 41, 0.24);
+  color: #a73429;
+}
+
 .subject-post-attachment {
   display: inline-flex;
   align-items: center;
@@ -513,6 +584,17 @@ body {
   font-size: 0.85rem;
 }
 
+.subject-post-status-copy {
+  margin: 12px 0 0;
+  color: #8a5b08;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.subject-post-status-copy.is-danger {
+  color: #a73429;
+}
+
 .form-message {
   margin: 0;
   color: #b93a2d;
@@ -536,7 +618,9 @@ body {
 }
 
 .primary-button:disabled,
-.secondary-button:disabled {
+.secondary-button:disabled,
+.danger-button:disabled,
+.ghost-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -550,6 +634,38 @@ body {
   font-family: inherit;
   padding: 10px 15px;
   cursor: pointer;
+}
+
+.danger-button,
+.ghost-button,
+.small-select {
+  border-radius: 12px;
+  font: inherit;
+}
+
+.danger-button {
+  border: 1px solid rgba(167, 52, 41, 0.16);
+  background: #a73429;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 15px;
+  cursor: pointer;
+}
+
+.ghost-button {
+  border: 1px dashed var(--subjects-border);
+  background: transparent;
+  color: var(--subjects-accent);
+  font-weight: 700;
+  padding: 10px 15px;
+  cursor: pointer;
+}
+
+.small-select {
+  border: 1px solid var(--subjects-border);
+  background: #fff;
+  color: inherit;
+  padding: 9px 12px;
 }
 
 .modal {
@@ -577,6 +693,116 @@ body {
   padding: 22px;
   position: relative;
   box-shadow: 0 26px 50px rgba(15, 38, 57, 0.18);
+}
+
+.moderation-modal-card {
+  width: min(1100px, 100%);
+}
+
+.moderation-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.subject-moderation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.subject-moderation-panel {
+  border: 1px solid var(--subjects-border);
+  border-radius: 18px;
+  padding: 16px;
+  background: var(--subjects-card-soft);
+  display: grid;
+  gap: 14px;
+  min-height: 260px;
+}
+
+.subject-moderation-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.subject-moderation-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.subject-moderation-panel-head h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.subject-moderation-panel-head span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--subjects-border);
+  color: var(--subjects-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.subject-moderation-list {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  max-height: 52dvh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.subject-moderation-card {
+  border: 1px solid var(--subjects-border);
+  border-radius: 16px;
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.subject-moderation-card-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.subject-moderation-card-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.subject-moderation-card-meta strong {
+  font-size: 0.94rem;
+}
+
+.subject-moderation-card-meta span {
+  color: var(--subjects-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.subject-moderation-detail {
+  margin: 0;
+  color: #213546;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.subject-moderation-actions,
+.subject-report-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .subject-ai-modal-card {
@@ -663,7 +889,9 @@ body {
   .subject-feed-actions,
   .subject-comment-form,
   .subject-ai-form,
-  .subject-post-comments-head {
+  .subject-post-comments-head,
+  .moderation-head,
+  .subject-moderation-card-head {
     flex-direction: column;
     align-items: stretch;
   }
@@ -671,6 +899,15 @@ body {
   .subject-post-header,
   .subject-post-author-wrap {
     align-items: flex-start;
+  }
+
+  .subject-item-shell,
+  .subject-moderation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .subject-moderation-panel-wide {
+    grid-column: auto;
   }
 }
 
@@ -700,7 +937,15 @@ body.theme-dark .subject-post-menu-button,
 body.theme-dark .subject-post-menu,
 body.theme-dark .subject-post-badge,
 body.theme-dark .subject-post-attachment,
+body.theme-dark .subjects-tab,
 body.theme-dark .secondary-button,
+body.theme-dark .subject-item-moderate,
+body.theme-dark .danger-button,
+body.theme-dark .ghost-button,
+body.theme-dark .small-select,
+body.theme-dark .subject-moderation-panel,
+body.theme-dark .subject-moderation-card,
+body.theme-dark .subject-moderation-panel-head span,
 body.theme-dark .subjects-search-wrap input,
 body.theme-dark .subject-comment-form input,
 body.theme-dark .subject-form input,
@@ -718,13 +963,21 @@ body.theme-dark .subject-item.is-active,
 body.theme-dark .subject-post-action:hover,
 body.theme-dark .subject-post-action.is-active,
 body.theme-dark .subject-post-menu button:hover,
-body.theme-dark .subject-post-badge.is-accent {
+body.theme-dark .subject-post-badge.is-accent,
+body.theme-dark .subject-approval-hint {
   background: rgba(218, 155, 43, 0.18);
 }
 
 body.theme-dark .primary-button,
 body.theme-dark .subject-ai-bubble.user {
   background: #da9b2b;
+  color: #0f2639;
+}
+
+body.theme-dark .subjects-tab.is-active,
+body.theme-dark .danger-button {
+  background: #da9b2b;
+  border-color: #da9b2b;
   color: #0f2639;
 }
 
@@ -744,16 +997,25 @@ body.theme-dark .subject-post-comments-head span,
 body.theme-dark .subject-post-comments-empty,
 body.theme-dark .subject-comment-meta span,
 body.theme-dark .subject-description,
+body.theme-dark .subject-post-status-copy,
 body.theme-dark .subject-item p,
 body.theme-dark .subject-empty,
 body.theme-dark .eyebrow {
   color: var(--subjects-muted);
 }
 
-body.theme-dark .subject-comments-toggle {
-  color: var(--subjects-accent);
+body.theme-dark .subject-post-badge.is-warning {
+  background: rgba(218, 155, 43, 0.18);
+  border-color: rgba(218, 155, 43, 0.3);
+  color: var(--subjects-text);
 }
 
+body.theme-dark .subject-post-badge.is-danger,
+body.theme-dark .subject-post-status-copy.is-danger,
 body.theme-dark .subject-post-menu button.is-danger {
   color: #ffb1a4;
+}
+
+body.theme-dark .subject-comments-toggle {
+  color: var(--subjects-accent);
 }
