@@ -388,11 +388,11 @@ async function canViewerCreateSubjectKind(kind, user, client = pool, courseAcces
   const targetCourse = canonicalCourseNameForSubjects(courseName || resolveViewerMainCourseForSubjects(user, courseAccess));
   if (!targetCourse) return false;
 
+  if (role === 'owner' || role === 'admin') return true;
   if (normalizedKind === SUBJECT_KIND_UNIT) {
     if (role !== 'depadmin') return false;
     return hasDepAdminAssignmentForCourse(user.uid, targetCourse, client);
   }
-  if (role === 'owner' || role === 'admin') return true;
   if (role === 'depadmin') {
     return hasDepAdminAssignmentForCourse(user.uid, targetCourse, client);
   }

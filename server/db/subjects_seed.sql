@@ -1,5 +1,5 @@
--- Subject/unit seed data for Cloud SQL import
--- This script inserts canonical units for:
+-- Course + subject/unit seed data for Cloud SQL import
+-- This script inserts canonical courses and official units for:
 -- - Computer Science
 -- - History
 -- - Psychology
@@ -7,8 +7,8 @@
 -- - Civil Engineering
 --
 -- Safe to run multiple times.
-
-BEGIN;
+-- Intentionally avoids explicit BEGIN/COMMIT because some Cloud SQL import
+-- paths already wrap the file in a transaction.
 
 WITH subject_seed (course_name, subject_name) AS (
   VALUES
@@ -154,10 +154,31 @@ WITH subject_seed (course_name, subject_name) AS (
     ('Civil Engineering', 'Construction Methods and Project Management'),
     ('Civil Engineering', 'Computer Programs and Applications'),
     ('Civil Engineering', 'Professional Elective 1')
+),
+course_seed AS (
+  SELECT DISTINCT
+    course_name,
+    course_name AS course_code
+  FROM subject_seed
+),
+course_upsert AS (
+  INSERT INTO courses (
+    course_code,
+    course_name
+  )
+  SELECT
+    course_code,
+    course_name
+  FROM course_seed
+  ON CONFLICT (course_code)
+  DO UPDATE SET
+    course_name = EXCLUDED.course_name
+  RETURNING course_code, course_name
 )
 INSERT INTO subjects (
   course_code,
   course_name,
+  kind,
   subject_code,
   subject_name,
   description,
@@ -167,8 +188,9 @@ INSERT INTO subjects (
   updated_at
 )
 SELECT
-  c.course_code,
   seed.course_name,
+  seed.course_name,
+  'unit',
   NULL,
   seed.subject_name,
   '',
@@ -177,13 +199,8 @@ SELECT
   NOW(),
   NOW()
 FROM subject_seed seed
-LEFT JOIN courses c
-  ON lower(c.course_name) = lower(seed.course_name)
-ON CONFLICT (course_name, subject_name)
+ON CONFLICT (course_name, kind, subject_name)
 DO UPDATE SET
   course_code = COALESCE(EXCLUDED.course_code, subjects.course_code),
   is_active = true,
   updated_at = NOW();
-
-COMMIT;
-

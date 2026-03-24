@@ -335,9 +335,6 @@ function createSubjectListMeta(subject) {
   if (subject.subjectCode) lines.push(subject.subjectCode);
   if (subject.kind === 'thread' && subject.creatorName) lines.push(`By ${subject.creatorName}`);
   lines.push(`${Number(subject.postsCount || 0)} posts`);
-  if (subject.canModerate && Number(subject.pendingPostsCount || 0) > 0) {
-    lines.push(`${Number(subject.pendingPostsCount || 0)} pending`);
-  }
   return lines.join(' · ');
 }
 
@@ -353,11 +350,18 @@ function renderSubjects() {
   visibleSubjects.forEach((subject) => {
     const shell = document.createElement('div');
     shell.className = 'subject-item-shell';
+    if (subject.canModerate) shell.classList.add('has-moderation');
 
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `subject-item${subject.id === state.selectedSubjectId ? ' is-active' : ''}`;
+    const subjectLabel = subject.kind === 'thread' ? 'Thread' : 'Official unit';
+    const pendingCount = Number(subject.pendingPostsCount || 0);
     button.innerHTML = `
+      <div class="subject-item-head">
+        <span class="subject-item-label">${escapeHtml(subjectLabel)}</span>
+        ${subject.canModerate && pendingCount > 0 ? `<span class="subject-item-pending">${escapeHtml(`${pendingCount} pending`)}</span>` : ''}
+      </div>
       <h3>${escapeHtml(subject.subjectName || `Untitled ${apiLabel(subject.kind)}`)}</h3>
       <p>${escapeHtml(createSubjectListMeta(subject))}</p>
     `;
@@ -376,7 +380,8 @@ function renderSubjects() {
       const moderateButton = document.createElement('button');
       moderateButton.type = 'button';
       moderateButton.className = 'subject-item-moderate';
-      moderateButton.textContent = 'Moderate';
+      moderateButton.textContent = 'Manage';
+      moderateButton.setAttribute('aria-label', `Manage ${subject.subjectName || apiLabel(subject.kind)}`);
       moderateButton.addEventListener('click', async () => {
         state.selectedSubjectId = subject.id;
         renderSubjects();

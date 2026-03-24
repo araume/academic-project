@@ -64,25 +64,30 @@ body {
 .subjects-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--subjects-border);
+  border-radius: 16px;
+  background: #f4f6f8;
 }
 
 .subjects-tab {
-  border: 1px solid var(--subjects-border);
-  border-radius: 14px;
-  background: #fff;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
   color: var(--subjects-muted);
   font: inherit;
   font-weight: 700;
-  padding: 11px 12px;
+  padding: 9px 10px;
+  font-size: 0.84rem;
   cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .subjects-tab.is-active {
-  background: var(--subjects-accent);
-  border-color: var(--subjects-accent);
-  color: #fff;
+  background: #fff;
+  color: var(--subjects-accent);
+  box-shadow: 0 6px 16px rgba(15, 38, 57, 0.08);
 }
 
 .subjects-search-wrap input {
@@ -113,58 +118,103 @@ body {
 .subjects-list {
   overflow-y: auto;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding-right: 4px;
 }
 
 .subject-item-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: stretch;
+  position: relative;
 }
 
 .subject-item {
   border: 1px solid var(--subjects-border);
-  border-radius: 14px;
-  padding: 12px 13px;
-  background: #f5f6f7;
+  border-radius: 16px;
+  width: 100%;
+  padding: 14px 16px;
+  background:
+    linear-gradient(180deg, rgba(21, 58, 88, 0.02), transparent 70%),
+    #f8f9fb;
   cursor: pointer;
   text-align: left;
   color: inherit;
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.subject-item-shell.has-moderation .subject-item {
+  padding-right: 88px;
 }
 
 .subject-item:hover {
   transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 38, 57, 0.06);
 }
 
 .subject-item.is-active {
-  border-color: rgba(21, 58, 88, 0.4);
-  background: rgba(21, 58, 88, 0.1);
+  border-color: rgba(21, 58, 88, 0.34);
+  background:
+    linear-gradient(180deg, rgba(21, 58, 88, 0.08), transparent 85%),
+    rgba(21, 58, 88, 0.05);
+  box-shadow: 0 14px 28px rgba(15, 38, 57, 0.08);
+}
+
+.subject-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
 }
 
 .subject-item h3 {
   margin: 0;
   font-size: 0.95rem;
+  line-height: 1.35;
 }
 
 .subject-item p {
   margin: 4px 0 0;
   font-size: 0.8rem;
   color: var(--subjects-muted);
+  line-height: 1.45;
+}
+
+.subject-item-label,
+.subject-item-pending {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.subject-item-label {
+  background: rgba(21, 58, 88, 0.08);
+  color: var(--subjects-accent);
+}
+
+.subject-item-pending {
+  background: rgba(217, 164, 65, 0.16);
+  color: #8a5b08;
 }
 
 .subject-item-moderate {
   border: 1px solid var(--subjects-border);
-  border-radius: 14px;
+  border-radius: 999px;
   background: #fff;
   color: var(--subjects-accent);
   font: inherit;
   font-weight: 700;
-  padding: 0 14px;
+  font-size: 0.73rem;
+  line-height: 1;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 8px 11px;
   cursor: pointer;
   white-space: nowrap;
+  box-shadow: 0 8px 18px rgba(15, 38, 57, 0.06);
 }
 
 .subject-feed-panel {
@@ -901,13 +951,23 @@ body {
     align-items: flex-start;
   }
 
-  .subject-item-shell,
   .subject-moderation-grid {
     grid-template-columns: 1fr;
   }
 
   .subject-moderation-panel-wide {
     grid-column: auto;
+  }
+
+  .subject-item-shell.has-moderation .subject-item {
+    padding-right: 16px;
+    padding-bottom: 48px;
+  }
+
+  .subject-item-moderate {
+    top: auto;
+    bottom: 12px;
+    right: 12px;
   }
 }
 
@@ -1002,6 +1062,25 @@ body.theme-dark .subject-item p,
 body.theme-dark .subject-empty,
 body.theme-dark .eyebrow {
   color: var(--subjects-muted);
+}
+
+body.theme-dark .subjects-tabs {
+  background: rgba(24, 56, 81, 0.72);
+}
+
+body.theme-dark .subjects-tab.is-active {
+  background: rgba(218, 155, 43, 0.16);
+  color: var(--subjects-text);
+}
+
+body.theme-dark .subject-item-label {
+  background: rgba(218, 155, 43, 0.18);
+  color: var(--subjects-text);
+}
+
+body.theme-dark .subject-item-pending {
+  background: rgba(218, 155, 43, 0.24);
+  color: var(--subjects-text);
 }
 
 body.theme-dark .subject-post-badge.is-warning {
