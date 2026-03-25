@@ -119,6 +119,7 @@ const state = {
     sort: 'default',
   },
   loadingFeed: false,
+  feedRequestSerial: 0,
   feedPosts: [],
   requestedPostId: initialSelection.postId,
   expandedCommentPostIds: new Set(initialSelection.postId ? [initialSelection.postId] : []),
@@ -1309,38 +1310,45 @@ async function sendSubjectPostAiMessage(event) {
   }
 }
 
-function updateSelectedSubjectMetadata(subjectUpdate) {
-  const selected = getSelectedSubject();
-  if (!selected || !subjectUpdate) return;
-  selected.kind = subjectUpdate.kind || selected.kind || 'unit';
-  selected.subjectName = subjectUpdate.subjectName || selected.subjectName || '';
-  selected.courseName = subjectUpdate.courseName || selected.courseName || '';
-  selected.description = subjectUpdate.description || selected.description || '';
-  selected.canModerate = subjectUpdate.canModerate === true;
-  selected.viewerCanPostWithoutApproval = subjectUpdate.viewerCanPostWithoutApproval === true;
+function updateSubjectMetadata(subjectId, subjectUpdate) {
+  if (!subjectId || !subjectUpdate) return;
+  const target = state.subjects.find((item) => Number(item.id) === Number(subjectId));
+  if (!target) return;
+  target.kind = subjectUpdate.kind || target.kind || 'unit';
+  target.subjectName = subjectUpdate.subjectName || target.subjectName || '';
+  target.courseName = subjectUpdate.courseName || target.courseName || '';
+  target.description = subjectUpdate.description || target.description || '';
+  target.canModerate = subjectUpdate.canModerate === true;
+  target.viewerCanPostWithoutApproval = subjectUpdate.viewerCanPostWithoutApproval === true;
 }
 
 async function fetchAndRenderSubjectFeed(subjectId) {
-  if (!subjectId || state.loadingFeed || !subjectPosts) return;
+  if (!subjectId || !subjectPosts) return;
+  const requestSerial = state.feedRequestSerial + 1;
+  state.feedRequestSerial = requestSerial;
   state.loadingFeed = true;
   subjectPosts.innerHTML = '<p class="subject-empty">Loading feed...</p>';
   try {
     const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/feed?page=1&pageSize=50`);
     const data = await response.json().catch(() => ({ ok: false }));
+    if (requestSerial !== state.feedRequestSerial) return;
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Unable to load feed.');
     }
-    updateSelectedSubjectMetadata(data.subject || null);
+    updateSubjectMetadata(subjectId, data.subject || null);
     const selected = getSelectedSubject();
-    if (selected) {
+    if (selected && Number(selected.id) === Number(subjectId)) {
       setSubjectFeedHeader(selected);
     }
     renderPostList(data.posts || []);
     syncSubjectLocation(subjectId, state.requestedPostId);
   } catch (error) {
+    if (requestSerial !== state.feedRequestSerial) return;
     subjectPosts.innerHTML = `<p class="subject-empty">${escapeHtml(error.message || 'Unable to load feed.')}</p>`;
   } finally {
-    state.loadingFeed = false;
+    if (requestSerial === state.feedRequestSerial) {
+      state.loadingFeed = false;
+    }
   }
 }
 
