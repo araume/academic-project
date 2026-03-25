@@ -396,18 +396,40 @@ function getVisibleSubjects() {
 }
 
 function ensureTabSelectionIntegrity() {
+  const visible = getVisibleSubjects();
   const selected = getSelectedSubject();
-  if (selected) {
-    state.activeTab = selected.kind || 'unit';
+  if (selected && visible.some((subject) => Number(subject.id) === Number(selected.id))) {
     return;
   }
-  const visible = getVisibleSubjects();
   if (visible.length) {
     state.selectedSubjectId = visible[0].id;
     return;
   }
-  const fallbackTab = ['unit', 'thread'].find((tab) => state.subjects.some((item) => item.kind === tab));
-  if (fallbackTab) {
+
+  const hasAnySubjectsInActiveTab = state.subjects.some((item) => (item.kind || 'unit') === state.activeTab);
+  const shouldAutoFallback = !selected
+    && !String(state.subjectSearchQuery || '').trim()
+    && (state.activeTab !== 'thread' || !hasActiveThreadFilters());
+
+  if (!hasAnySubjectsInActiveTab && shouldAutoFallback) {
+    const fallbackTab = ['unit', 'thread'].find((tab) => (
+      tab !== state.activeTab && state.subjects.some((item) => (item.kind || 'unit') === tab)
+    ));
+    if (fallbackTab) {
+      state.activeTab = fallbackTab;
+      const nextVisible = getVisibleSubjects();
+      state.selectedSubjectId = nextVisible[0] ? nextVisible[0].id : null;
+      return;
+    }
+  }
+
+  if (hasAnySubjectsInActiveTab) {
+    state.selectedSubjectId = null;
+    return;
+  }
+
+  const fallbackTab = ['unit', 'thread'].find((tab) => state.subjects.some((item) => (item.kind || 'unit') === tab));
+  if (fallbackTab && fallbackTab !== state.activeTab) {
     state.activeTab = fallbackTab;
     const nextVisible = getVisibleSubjects();
     state.selectedSubjectId = nextVisible[0] ? nextVisible[0].id : null;
@@ -1916,6 +1938,7 @@ if (subjectTabs) {
     const nextTab = button.dataset.tab === 'thread' ? 'thread' : 'unit';
     if (state.activeTab === nextTab) return;
     state.activeTab = nextTab;
+    state.selectedSubjectId = null;
     state.requestedPostId = null;
     await refreshSidebarSelection(`No ${apiLabel(nextTab, 'plural')} are available in this view.`);
   });
