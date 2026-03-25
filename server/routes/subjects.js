@@ -878,11 +878,16 @@ async function ensureSubjectModerationAccess(subjectId, user, client = pool, cou
   return { status: 'ok', subject: subjectState.subject, canModerate: true };
 }
 
-async function ensureDepAdminCourseSpaceAccess(subjectId, user, client = pool, courseAccess = null) {
+async function ensureCourseSpaceManagementAccess(subjectId, user, client = pool, courseAccess = null) {
   const subjectState = await loadSubjectForViewer(subjectId, user, client, courseAccess);
   if (subjectState.status !== 'ok') {
     return subjectState;
   }
+
+  if (hasAdminPrivileges(user)) {
+    return { status: 'ok', subject: subjectState.subject };
+  }
+
   if (getPlatformRole(user) !== 'depadmin') {
     return { status: 'forbidden', subject: subjectState.subject };
   }
@@ -2570,7 +2575,7 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
         courseName: subject.course_name || '',
         subjectName: subject.subject_name || '',
         description: subject.description || '',
-        canManageCourseSpaces: getPlatformRole(req.user) === 'depadmin',
+        canManageCourseSpaces: hasAdminPrivileges(req.user) || getPlatformRole(req.user) === 'depadmin',
       },
       members: await Promise.all(
         membersResult.rows.map(async (row) => ({
@@ -2633,12 +2638,12 @@ router.get('/api/subjects/:id/course-spaces', async (req, res) => {
   }
 
   try {
-    const access = await ensureDepAdminCourseSpaceAccess(subjectId, req.user, pool, req.subjectCourseAccess);
+    const access = await ensureCourseSpaceManagementAccess(subjectId, req.user, pool, req.subjectCourseAccess);
     if (access.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Unit or thread not found.' });
     }
     if (access.status === 'forbidden') {
-      return res.status(403).json({ ok: false, message: 'Only the assigned DepAdmin can manage course spaces here.' });
+      return res.status(403).json({ ok: false, message: 'Only the owner, admins, or assigned DepAdmin can manage course spaces here.' });
     }
 
     const courseName = canonicalCourseNameForSubjects(access.subject.course_name);
@@ -2691,12 +2696,12 @@ router.delete('/api/subjects/:id/course-spaces/:targetId', async (req, res) => {
 
   const client = await pool.connect();
   try {
-    const access = await ensureDepAdminCourseSpaceAccess(subjectId, req.user, client, req.subjectCourseAccess);
+    const access = await ensureCourseSpaceManagementAccess(subjectId, req.user, client, req.subjectCourseAccess);
     if (access.status === 'not_found') {
       return res.status(404).json({ ok: false, message: 'Unit or thread not found.' });
     }
     if (access.status === 'forbidden') {
-      return res.status(403).json({ ok: false, message: 'Only the assigned DepAdmin can delete course spaces here.' });
+      return res.status(403).json({ ok: false, message: 'Only the owner, admins, or assigned DepAdmin can delete course spaces here.' });
     }
 
     const courseName = canonicalCourseNameForSubjects(access.subject.course_name);
