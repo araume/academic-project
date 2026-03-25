@@ -94,7 +94,14 @@ body {
 }
 
 .subjects-search-wrap {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.subjects-search-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
 .subjects-search-wrap input {
@@ -106,6 +113,47 @@ body {
   font-family: inherit;
   color: inherit;
   background: #fff;
+}
+
+.subjects-filter-toggle {
+  flex: 0 0 auto;
+  padding-inline: 13px;
+}
+
+.threads-filter-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--subjects-border);
+  border-radius: 16px;
+  background: #f7f9fb;
+}
+
+.threads-filter-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.threads-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--subjects-muted);
+  font-size: 0.8rem;
+}
+
+.threads-filter-grid select {
+  width: 100%;
+  border: 1px solid var(--subjects-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: inherit;
+  background: #fff;
+}
+
+.threads-filter-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .eyebrow {
@@ -770,6 +818,18 @@ body {
   align-items: flex-start;
 }
 
+.subject-moderation-head-actions {
+  min-width: min(280px, 36%);
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.subject-moderation-head-actions .form-message {
+  max-width: 32ch;
+  text-align: right;
+}
+
 .subject-moderation-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -869,6 +929,94 @@ body {
   gap: 10px;
 }
 
+.course-spaces-modal-card {
+  width: min(980px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.course-spaces-table-wrap {
+  border: 1px solid var(--subjects-border);
+  border-radius: 18px;
+  overflow: auto;
+  background: var(--subjects-card-soft);
+}
+
+.course-spaces-table {
+  width: 100%;
+  min-width: 700px;
+  border-collapse: collapse;
+}
+
+.course-spaces-table th,
+.course-spaces-table td {
+  padding: 14px 16px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--subjects-border);
+}
+
+.course-spaces-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+  color: var(--subjects-muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.course-spaces-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.course-spaces-kind,
+.course-spaces-current-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.course-spaces-kind {
+  padding: 5px 9px;
+  background: rgba(21, 58, 88, 0.08);
+  color: var(--subjects-accent);
+}
+
+.course-spaces-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.course-spaces-current-tag {
+  padding: 4px 8px;
+  background: rgba(217, 164, 65, 0.16);
+  color: #8a5b08;
+}
+
+.course-spaces-action-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.course-spaces-delete-button {
+  padding: 8px 12px;
+  font-size: 0.82rem;
+}
+
+.course-spaces-empty-cell {
+  padding-block: 22px;
+  text-align: center;
+}
+
 .subject-ai-modal-card {
   width: min(760px, 100%);
   display: grid;
@@ -949,15 +1097,27 @@ body {
     max-height: none;
   }
 
+  .subjects-search-row,
   .subject-feed-head,
   .subject-feed-actions,
   .subject-comment-form,
   .subject-ai-form,
   .subject-post-comments-head,
   .moderation-head,
+  .subject-moderation-head-actions,
   .subject-moderation-card-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .subject-moderation-head-actions {
+    min-width: 0;
+    justify-items: stretch;
+  }
+
+  .subject-moderation-head-actions .form-message {
+    max-width: none;
+    text-align: left;
   }
 
   .subject-post-header,
@@ -1012,6 +1172,7 @@ body.theme-dark .subject-post-menu,
 body.theme-dark .subject-post-badge,
 body.theme-dark .subject-post-attachment,
 body.theme-dark .subjects-tab,
+body.theme-dark .threads-filter-panel,
 body.theme-dark .secondary-button,
 body.theme-dark .subject-item-moderate,
 body.theme-dark .danger-button,
@@ -1021,6 +1182,7 @@ body.theme-dark .subject-moderation-panel,
 body.theme-dark .subject-moderation-card,
 body.theme-dark .subject-moderation-panel-head span,
 body.theme-dark .subjects-search-wrap input,
+body.theme-dark .threads-filter-grid select,
 body.theme-dark .subject-comment-form input,
 body.theme-dark .subject-form input,
 body.theme-dark .subject-form textarea,
@@ -1061,6 +1223,20 @@ body.theme-dark .subject-post-card::before {
 
 body.theme-dark .subject-post-body {
   color: #f2e3b7;
+}
+
+body.theme-dark .course-spaces-table thead th {
+  background: rgba(16, 41, 61, 0.98);
+}
+
+body.theme-dark .course-spaces-kind {
+  background: rgba(218, 155, 43, 0.18);
+  color: var(--subjects-text);
+}
+
+body.theme-dark .course-spaces-current-tag {
+  background: rgba(218, 155, 43, 0.2);
+  color: #f6d99b;
 }
 
 body.theme-dark .subject-post-action,

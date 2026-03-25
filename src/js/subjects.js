@@ -8,6 +8,12 @@ const unitsTabButton = document.getElementById('unitsTabButton');
 const threadsTabButton = document.getElementById('threadsTabButton');
 const subjectsList = document.getElementById('subjectsList');
 const subjectSearchInput = document.getElementById('subjectSearchInput');
+const toggleThreadsFilterPanelButton = document.getElementById('toggleThreadsFilterPanel');
+const threadsFilterPanel = document.getElementById('threadsFilterPanel');
+const threadCreatorFilterLabel = document.getElementById('threadCreatorFilterLabel');
+const threadCreatorFilter = document.getElementById('threadCreatorFilter');
+const threadSortFilter = document.getElementById('threadSortFilter');
+const clearThreadsFiltersButton = document.getElementById('clearThreadsFilters');
 const subjectCourseLabel = document.getElementById('subjectCourseLabel');
 const subjectTitle = document.getElementById('subjectTitle');
 const subjectDescription = document.getElementById('subjectDescription');
@@ -55,6 +61,14 @@ const subjectModerationPendingPosts = document.getElementById('subjectModeration
 const subjectModerationPendingCount = document.getElementById('subjectModerationPendingCount');
 const subjectModerationReports = document.getElementById('subjectModerationReports');
 const subjectModerationReportsCount = document.getElementById('subjectModerationReportsCount');
+const openCourseSpacesModalButton = document.getElementById('openCourseSpacesModal');
+const courseSpacesModal = document.getElementById('courseSpacesModal');
+const closeCourseSpacesModal = document.getElementById('closeCourseSpacesModal');
+const courseSpacesEyebrow = document.getElementById('courseSpacesEyebrow');
+const courseSpacesTitle = document.getElementById('courseSpacesTitle');
+const courseSpacesSubtitle = document.getElementById('courseSpacesSubtitle');
+const courseSpacesMessage = document.getElementById('courseSpacesMessage');
+const courseSpacesTableBody = document.getElementById('courseSpacesTableBody');
 
 const subjectAiModal = document.getElementById('subjectAiModal');
 const closeSubjectAiModal = document.getElementById('closeSubjectAiModal');
@@ -90,6 +104,7 @@ function readInitialSelection() {
 
 const initialSelection = readInitialSelection();
 const state = {
+  viewerUid: '',
   viewerRole: 'member',
   threadTabLabel: 'Threads',
   canCreateUnit: false,
@@ -98,15 +113,26 @@ const state = {
   activeTab: 'unit',
   selectedSubjectId: initialSelection.subjectId,
   subjectSearchQuery: '',
+  threadsFilterPanelOpen: false,
+  threadFilters: {
+    creator: 'all',
+    sort: 'default',
+  },
   loadingFeed: false,
   feedPosts: [],
   requestedPostId: initialSelection.postId,
   expandedCommentPostIds: new Set(initialSelection.postId ? [initialSelection.postId] : []),
   moderation: {
     subjectId: null,
+    subject: null,
     members: [],
     pendingPosts: [],
     reports: [],
+  },
+  courseSpaces: {
+    anchorSubjectId: null,
+    courseName: '',
+    spaces: [],
   },
 };
 
@@ -195,6 +221,94 @@ function isStaffRole() {
   return ['owner', 'admin', 'depadmin', 'professor'].includes(state.viewerRole);
 }
 
+function normalizeThreadSortValue(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['created_desc', 'created_asc', 'posts_desc', 'posts_asc'].includes(normalized)) {
+    return normalized;
+  }
+  return 'default';
+}
+
+function getThreadSubjects() {
+  return state.subjects.filter((subject) => (subject.kind || 'unit') === 'thread');
+}
+
+function buildThreadCreatorFilterOptions() {
+  if (isStaffRole()) {
+    return [
+      { value: 'all', label: 'All threads' },
+      { value: 'mine', label: 'Threads made by me' },
+      { value: 'others', label: 'Threads by other moderators' },
+    ];
+  }
+
+  const creators = new Map();
+  getThreadSubjects().forEach((subject) => {
+    const key = subject.createdByUid || `name:${subject.creatorName || 'Moderator'}`;
+    if (!creators.has(key)) {
+      creators.set(key, {
+        value: key,
+        label: subject.creatorName || 'Moderator',
+      });
+    }
+  });
+
+  return [
+    { value: 'all', label: 'All moderators' },
+    ...Array.from(creators.values()).sort((left, right) => left.label.localeCompare(right.label)),
+  ];
+}
+
+function ensureThreadFilterStateIntegrity() {
+  state.threadFilters.sort = normalizeThreadSortValue(state.threadFilters.sort);
+  const options = buildThreadCreatorFilterOptions();
+  if (!options.some((option) => option.value === state.threadFilters.creator)) {
+    state.threadFilters.creator = 'all';
+  }
+}
+
+function matchesThreadCreatorFilter(subject) {
+  if ((subject.kind || 'unit') !== 'thread') return true;
+  const filterValue = state.threadFilters.creator || 'all';
+  if (filterValue === 'all') return true;
+
+  if (isStaffRole()) {
+    if (filterValue === 'mine') {
+      return Boolean(state.viewerUid) && subject.createdByUid === state.viewerUid;
+    }
+    if (filterValue === 'others') {
+      return !state.viewerUid || subject.createdByUid !== state.viewerUid;
+    }
+    return true;
+  }
+
+  if (filterValue.startsWith('name:')) {
+    return `name:${subject.creatorName || 'Moderator'}` === filterValue;
+  }
+  return subject.createdByUid === filterValue;
+}
+
+function compareThreadSubjects(left, right) {
+  const sortMode = normalizeThreadSortValue(state.threadFilters.sort);
+  if (sortMode === 'default') return 0;
+
+  const leftCreated = left && left.createdAt ? new Date(left.createdAt).getTime() : 0;
+  const rightCreated = right && right.createdAt ? new Date(right.createdAt).getTime() : 0;
+  const leftPosts = Number(left && left.postsCount ? left.postsCount : 0);
+  const rightPosts = Number(right && right.postsCount ? right.postsCount : 0);
+
+  if (sortMode === 'created_desc' && leftCreated !== rightCreated) return rightCreated - leftCreated;
+  if (sortMode === 'created_asc' && leftCreated !== rightCreated) return leftCreated - rightCreated;
+  if (sortMode === 'posts_desc' && leftPosts !== rightPosts) return rightPosts - leftPosts;
+  if (sortMode === 'posts_asc' && leftPosts !== rightPosts) return leftPosts - rightPosts;
+
+  return String(left.subjectName || '').localeCompare(String(right.subjectName || ''));
+}
+
+function hasActiveThreadFilters() {
+  return state.threadFilters.creator !== 'all' || normalizeThreadSortValue(state.threadFilters.sort) !== 'default';
+}
+
 function subjectNeedsApprovalNotice(subject) {
   if (!subject) return '';
   if (subject.canModerate) {
@@ -232,10 +346,39 @@ function highlightSubjectPost(postId) {
   window.setTimeout(() => card.classList.remove('is-highlighted'), 2400);
 }
 
+function renderThreadFilterControls() {
+  const isThreadTab = state.activeTab === 'thread';
+  ensureThreadFilterStateIntegrity();
+
+  if (toggleThreadsFilterPanelButton) {
+    toggleThreadsFilterPanelButton.classList.toggle('is-hidden', !isThreadTab);
+    toggleThreadsFilterPanelButton.textContent = hasActiveThreadFilters() ? 'Filters active' : 'Filters';
+  }
+  if (threadsFilterPanel) {
+    threadsFilterPanel.classList.toggle('is-hidden', !isThreadTab || !state.threadsFilterPanelOpen);
+  }
+  if (!isThreadTab) return;
+
+  if (threadCreatorFilterLabel) {
+    threadCreatorFilterLabel.textContent = isStaffRole() ? 'Show' : 'Threads made by';
+  }
+  if (threadCreatorFilter) {
+    const options = buildThreadCreatorFilterOptions();
+    threadCreatorFilter.innerHTML = options
+      .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+      .join('');
+    threadCreatorFilter.value = state.threadFilters.creator;
+  }
+  if (threadSortFilter) {
+    threadSortFilter.value = normalizeThreadSortValue(state.threadFilters.sort);
+  }
+}
+
 function getVisibleSubjects() {
   const query = String(state.subjectSearchQuery || '').trim().toLowerCase();
-  return state.subjects.filter((subject) => {
+  const visible = state.subjects.filter((subject) => {
     if ((subject.kind || 'unit') !== state.activeTab) return false;
+    if (state.activeTab === 'thread' && !matchesThreadCreatorFilter(subject)) return false;
     if (!query) return true;
     return [
       subject.subjectName,
@@ -244,6 +387,11 @@ function getVisibleSubjects() {
       subject.creatorName,
     ].some((value) => String(value || '').toLowerCase().includes(query));
   });
+
+  if (state.activeTab === 'thread' && normalizeThreadSortValue(state.threadFilters.sort) !== 'default') {
+    return [...visible].sort(compareThreadSubjects);
+  }
+  return visible;
 }
 
 function ensureTabSelectionIntegrity() {
@@ -395,6 +543,22 @@ function renderSubjects() {
 
     subjectsList.appendChild(shell);
   });
+}
+
+async function refreshSidebarSelection(emptyMessage) {
+  ensureThreadFilterStateIntegrity();
+  ensureTabSelectionIntegrity();
+  renderTabLabels();
+  renderThreadFilterControls();
+  renderSubjects();
+  const selected = getSelectedSubject();
+  setSubjectFeedHeader(selected);
+  if (selected) {
+    await fetchAndRenderSubjectFeed(selected.id);
+  } else if (subjectPosts) {
+    subjectPosts.innerHTML = `<p class="subject-empty">${escapeHtml(emptyMessage)}</p>`;
+    syncSubjectLocation(null);
+  }
 }
 
 function createSubjectPostBadge(text, modifier = '') {
@@ -1188,25 +1352,13 @@ async function loadSubjectsBootstrap() {
       throw new Error(data.message || 'Unable to load units.');
     }
     state.subjects = Array.isArray(data.subjects) ? data.subjects : [];
+    state.viewerUid = data.viewerUid || '';
     state.viewerRole = data.viewerRole || 'member';
     state.canCreateUnit = Boolean(data.canCreateUnit);
     state.canCreateThread = Boolean(data.canCreateThread);
     state.threadTabLabel = data.threadTabLabel || 'Threads';
     setCreateButtonsVisibility();
-    ensureTabSelectionIntegrity();
-    const selected = getSelectedSubject();
-    if (selected) {
-      state.activeTab = selected.kind || state.activeTab;
-    }
-    renderTabLabels();
-    renderSubjects();
-    setSubjectFeedHeader(selected);
-    if (selected) {
-      await fetchAndRenderSubjectFeed(selected.id);
-    } else if (subjectPosts) {
-      subjectPosts.innerHTML = '<p class="subject-empty">No units or threads are available yet.</p>';
-      syncSubjectLocation(null);
-    }
+    await refreshSidebarSelection('No units or threads are available yet.');
   } catch (error) {
     if (subjectsList) {
       subjectsList.innerHTML = `<p class="subject-empty">${escapeHtml(error.message)}</p>`;
@@ -1246,12 +1398,16 @@ function prepareCreatePostModal() {
 async function openSubjectModeration(subject) {
   if (!subject || subject.canModerate !== true) return;
   state.moderation.subjectId = subject.id;
+  state.moderation.subject = subject;
   if (subjectModerationEyebrow) subjectModerationEyebrow.textContent = `${apiLabel(subject.kind, 'singular', true)} moderation`;
   if (subjectModerationTitle) subjectModerationTitle.textContent = `${subject.subjectName || `Untitled ${apiLabel(subject.kind)}`} moderation`;
   if (subjectModerationSubtitle) {
     subjectModerationSubtitle.textContent = `Review student membership, approve queued posts, and act on reported ${apiLabel(subject.kind)} content.`;
   }
   if (subjectModerationMessage) subjectModerationMessage.textContent = '';
+  if (openCourseSpacesModalButton) {
+    openCourseSpacesModalButton.classList.add('is-hidden');
+  }
   if (subjectModerationMembers) subjectModerationMembers.innerHTML = '<p class="subject-empty">Loading members...</p>';
   if (subjectModerationPendingPosts) subjectModerationPendingPosts.innerHTML = '<p class="subject-empty">Loading post requests...</p>';
   if (subjectModerationReports) subjectModerationReports.innerHTML = '<p class="subject-empty">Loading reports...</p>';
@@ -1573,6 +1729,113 @@ function renderModerationReports(subjectId, reports) {
   });
 }
 
+function renderCourseSpacesTable() {
+  if (!courseSpacesTableBody) return;
+  const spaces = Array.isArray(state.courseSpaces.spaces) ? state.courseSpaces.spaces : [];
+  if (!spaces.length) {
+    courseSpacesTableBody.innerHTML = '<tr><td colspan="5" class="course-spaces-empty-cell subject-empty">No active units or threads found for this course.</td></tr>';
+    return;
+  }
+
+  courseSpacesTableBody.innerHTML = spaces
+    .map((space) => {
+      const label = apiLabel(space.kind, 'singular', true);
+      const currentTag = Number(space.id) === Number(state.moderation.subjectId) ? ' <span class="course-spaces-current-tag">Current</span>' : '';
+      return `
+        <tr>
+          <td><span class="course-spaces-kind">${escapeHtml(label)}</span></td>
+          <td>
+            <div class="course-spaces-name">
+              <span>${escapeHtml(space.subjectName || `Untitled ${apiLabel(space.kind)}`)}</span>${currentTag}
+            </div>
+          </td>
+          <td>${escapeHtml(space.creatorName || 'System')}</td>
+          <td>${escapeHtml(formatDateTime(space.createdAt))}</td>
+          <td class="course-spaces-action-cell">
+            <button
+              type="button"
+              class="danger-button course-spaces-delete-button"
+              data-course-space-delete="${escapeHtml(space.id)}"
+            >Delete</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+async function loadCourseSpacesManager(anchorSubjectId) {
+  if (!anchorSubjectId) return;
+  state.courseSpaces.anchorSubjectId = anchorSubjectId;
+  if (courseSpacesMessage) courseSpacesMessage.textContent = '';
+  if (courseSpacesTableBody) {
+    courseSpacesTableBody.innerHTML = '<tr><td colspan="5" class="subject-empty">Loading course spaces...</td></tr>';
+  }
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(anchorSubjectId)}/course-spaces`);
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to load course spaces.');
+  }
+
+  state.courseSpaces.courseName = data.courseName || '';
+  state.courseSpaces.spaces = Array.isArray(data.spaces) ? data.spaces : [];
+  if (courseSpacesEyebrow) courseSpacesEyebrow.textContent = state.courseSpaces.courseName || 'Course spaces';
+  if (courseSpacesTitle) courseSpacesTitle.textContent = `${state.courseSpaces.courseName || 'Course'} units and threads`;
+  if (courseSpacesSubtitle) {
+    courseSpacesSubtitle.textContent = 'Review active spaces in this course and remove obsolete units or threads when needed.';
+  }
+  renderCourseSpacesTable();
+}
+
+async function openCourseSpacesManager() {
+  const anchorSubjectId = state.moderation.subjectId;
+  if (!anchorSubjectId) return;
+  if (courseSpacesMessage) courseSpacesMessage.textContent = '';
+  openModal(courseSpacesModal);
+  try {
+    await loadCourseSpacesManager(anchorSubjectId);
+  } catch (error) {
+    if (courseSpacesMessage) courseSpacesMessage.textContent = error.message || 'Unable to load course spaces.';
+  }
+}
+
+async function deleteCourseSpace(spaceId) {
+  const anchorSubjectId = state.courseSpaces.anchorSubjectId || state.moderation.subjectId;
+  if (!anchorSubjectId || !spaceId) return;
+  const target = (state.courseSpaces.spaces || []).find((item) => Number(item.id) === Number(spaceId));
+  const label = target ? `${apiLabel(target.kind)} "${target.subjectName || 'Untitled'}"` : 'this unit/thread';
+  if (!window.confirm(`Delete ${label}? This hides it from the course list.`)) return;
+
+  const response = await fetch(
+    `/api/subjects/${encodeURIComponent(anchorSubjectId)}/course-spaces/${encodeURIComponent(spaceId)}`,
+    { method: 'DELETE' }
+  );
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to delete unit/thread.');
+  }
+
+  const deletedCurrentModeration = Number(spaceId) === Number(state.moderation.subjectId);
+  if (courseSpacesMessage) courseSpacesMessage.textContent = data.message || 'Unit/thread deleted.';
+  if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Unit/thread deleted.';
+
+  await loadSubjectsBootstrap();
+
+  if (deletedCurrentModeration) {
+    closeModal(courseSpacesModal);
+    closeModal(subjectModerationModal);
+    state.moderation.subjectId = null;
+    state.moderation.subject = null;
+    return;
+  }
+
+  await Promise.all([
+    loadCourseSpacesManager(anchorSubjectId),
+    loadSubjectModeration(anchorSubjectId),
+  ]);
+}
+
 async function loadSubjectModeration(subjectId) {
   try {
     const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/moderation`);
@@ -1581,9 +1844,13 @@ async function loadSubjectModeration(subjectId) {
       throw new Error(data.message || 'Unable to load moderation panel.');
     }
     state.moderation.subjectId = subjectId;
+    state.moderation.subject = data.subject || null;
     state.moderation.members = Array.isArray(data.members) ? data.members : [];
     state.moderation.pendingPosts = Array.isArray(data.pendingPosts) ? data.pendingPosts : [];
     state.moderation.reports = Array.isArray(data.reports) ? data.reports : [];
+    if (openCourseSpacesModalButton) {
+      openCourseSpacesModalButton.classList.toggle('is-hidden', !(data.subject && data.subject.canManageCourseSpaces === true));
+    }
     renderModerationMembers(subjectId, state.moderation.members);
     renderModerationPendingPosts(subjectId, state.moderation.pendingPosts);
     renderModerationReports(subjectId, state.moderation.reports);
@@ -1641,36 +1908,44 @@ if (subjectTabs) {
     const nextTab = button.dataset.tab === 'thread' ? 'thread' : 'unit';
     if (state.activeTab === nextTab) return;
     state.activeTab = nextTab;
-    const visible = getVisibleSubjects();
-    state.selectedSubjectId = visible[0] ? visible[0].id : null;
     state.requestedPostId = null;
-    renderTabLabels();
-    renderSubjects();
-    const selected = getSelectedSubject();
-    setSubjectFeedHeader(selected);
-    if (selected) {
-      await fetchAndRenderSubjectFeed(selected.id);
-    } else if (subjectPosts) {
-      subjectPosts.innerHTML = `<p class="subject-empty">No ${escapeHtml(apiLabel(nextTab, 'plural'))} are available in this view.</p>`;
-      syncSubjectLocation(null);
-    }
+    await refreshSidebarSelection(`No ${apiLabel(nextTab, 'plural')} are available in this view.`);
   });
 }
 
 if (subjectSearchInput) {
   subjectSearchInput.addEventListener('input', async () => {
     state.subjectSearchQuery = subjectSearchInput.value || '';
-    ensureTabSelectionIntegrity();
-    renderTabLabels();
-    renderSubjects();
-    const selected = getSelectedSubject();
-    setSubjectFeedHeader(selected);
-    if (selected) {
-      await fetchAndRenderSubjectFeed(selected.id);
-    } else if (subjectPosts) {
-      subjectPosts.innerHTML = `<p class="subject-empty">No ${escapeHtml(apiLabel(state.activeTab, 'plural'))} match your search.</p>`;
-      syncSubjectLocation(null);
-    }
+    await refreshSidebarSelection(`No ${apiLabel(state.activeTab, 'plural')} match your search.`);
+  });
+}
+
+if (toggleThreadsFilterPanelButton) {
+  toggleThreadsFilterPanelButton.addEventListener('click', () => {
+    state.threadsFilterPanelOpen = !state.threadsFilterPanelOpen;
+    renderThreadFilterControls();
+  });
+}
+
+if (threadCreatorFilter) {
+  threadCreatorFilter.addEventListener('change', async () => {
+    state.threadFilters.creator = threadCreatorFilter.value || 'all';
+    await refreshSidebarSelection('No threads match the current filters.');
+  });
+}
+
+if (threadSortFilter) {
+  threadSortFilter.addEventListener('change', async () => {
+    state.threadFilters.sort = normalizeThreadSortValue(threadSortFilter.value);
+    await refreshSidebarSelection('No threads match the current filters.');
+  });
+}
+
+if (clearThreadsFiltersButton) {
+  clearThreadsFiltersButton.addEventListener('click', async () => {
+    state.threadFilters.creator = 'all';
+    state.threadFilters.sort = 'default';
+    await refreshSidebarSelection('No threads match the current filters.');
   });
 }
 
@@ -1863,6 +2138,38 @@ if (closeSubjectModerationModal) {
 if (subjectModerationModal) {
   subjectModerationModal.addEventListener('click', (event) => {
     if (event.target === subjectModerationModal) closeModal(subjectModerationModal);
+  });
+}
+
+if (openCourseSpacesModalButton) {
+  openCourseSpacesModalButton.addEventListener('click', async () => {
+    try {
+      await openCourseSpacesManager();
+    } catch (error) {
+      if (courseSpacesMessage) courseSpacesMessage.textContent = error.message || 'Unable to load course spaces.';
+    }
+  });
+}
+
+if (closeCourseSpacesModal) {
+  closeCourseSpacesModal.addEventListener('click', () => closeModal(courseSpacesModal));
+}
+
+if (courseSpacesModal) {
+  courseSpacesModal.addEventListener('click', (event) => {
+    if (event.target === courseSpacesModal) closeModal(courseSpacesModal);
+  });
+}
+
+if (courseSpacesTableBody) {
+  courseSpacesTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-course-space-delete]');
+    if (!button) return;
+    try {
+      await deleteCourseSpace(button.dataset.courseSpaceDelete);
+    } catch (error) {
+      if (courseSpacesMessage) courseSpacesMessage.textContent = error.message || 'Unable to delete unit/thread.';
+    }
   });
 }
 

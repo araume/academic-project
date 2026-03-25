@@ -878,6 +878,28 @@ async function ensureSubjectModerationAccess(subjectId, user, client = pool, cou
   return { status: 'ok', subject: subjectState.subject, canModerate: true };
 }
 
+async function ensureDepAdminCourseSpaceAccess(subjectId, user, client = pool, courseAccess = null) {
+  const subjectState = await loadSubjectForViewer(subjectId, user, client, courseAccess);
+  if (subjectState.status !== 'ok') {
+    return subjectState;
+  }
+  if (getPlatformRole(user) !== 'depadmin') {
+    return { status: 'forbidden', subject: subjectState.subject };
+  }
+
+  const subjectCourse = canonicalCourseNameForSubjects(subjectState.subject.course_name);
+  if (!subjectCourse) {
+    return { status: 'forbidden', subject: subjectState.subject };
+  }
+
+  const allowed = await hasDepAdminAssignmentForCourse(user.uid, subjectCourse, client);
+  if (!allowed) {
+    return { status: 'forbidden', subject: subjectState.subject };
+  }
+
+  return { status: 'ok', subject: subjectState.subject };
+}
+
 function canAccessDocumentRow(document, user) {
   return canUserAccessLibraryDocumentRow(document, user, null);
 }
@@ -1167,8 +1189,9 @@ router.get('/api/subjects/bootstrap', async (req, res) => {
         subjects: [],
         canCreateUnit: false,
         canCreateThread: false,
+        viewerUid: req.user.uid,
         viewerRole,
-        threadTabLabel: viewerRole === 'professor' || viewerRole === 'depadmin' ? 'Threads by me' : 'Threads',
+        threadTabLabel: 'Threads',
         policy: {
           accessModel: SUBJECTS_ACCESS_MODEL,
           viewerCourse: null,
@@ -1242,16 +1265,7 @@ router.get('/api/subjects/bootstrap', async (req, res) => {
       (viewerRole === 'depadmin' &&
         Boolean(courseForCreation) &&
         (await hasDepAdminAssignmentForCourse(req.user.uid, courseForCreation, pool)));
-    const showOwnThreadsOnly =
-      !hasAdminPrivileges(req.user) && (viewerRole === 'professor' || viewerRole === 'depadmin');
-
     const subjects = result.rows
-      .filter((row) => {
-        const kind = normalizeSubjectKind(row.kind, SUBJECT_KIND_UNIT);
-        if (kind !== SUBJECT_KIND_THREAD) return true;
-        if (!showOwnThreadsOnly) return true;
-        return row.created_by_uid === req.user.uid;
-      })
       .map((row) => ({
         id: Number(row.id),
         kind: normalizeSubjectKind(row.kind, SUBJECT_KIND_UNIT),
@@ -1276,8 +1290,9 @@ router.get('/api/subjects/bootstrap', async (req, res) => {
       subjects,
       canCreateUnit,
       canCreateThread,
+      viewerUid: req.user.uid,
       viewerRole,
-      threadTabLabel: viewerRole === 'professor' || viewerRole === 'depadmin' ? 'Threads by me' : 'Threads',
+      threadTabLabel: 'Threads',
       policy: {
         accessModel: SUBJECTS_ACCESS_MODEL,
         viewerCourse: effectiveViewerCourse || null,
@@ -2555,6 +2570,7 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
         courseName: subject.course_name || '',
         subjectName: subject.subject_name || '',
         description: subject.description || '',
+        canManageCourseSpaces: getPlatformRole(req.user) === 'depadmin',
       },
       members: await Promise.all(
         membersResult.rows.map(async (row) => ({
@@ -2607,6 +2623,119 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
   } catch (error) {
     console.error('Subject moderation payload failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load the moderation panel.' });
+  }
+});
+
+router.get('/api/subjects/:id/course-spaces', async (req, res) => {
+  const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
+  if (!subjectId) {
+    return res.status(400).json({ ok: false, message: 'Invalid unit/thread id.' });
+  }
+
+  try {
+    const access = await ensureDepAdminCourseSpaceAccess(subjectId, req.user, pool, req.subjectCourseAccess);
+    if (access.status === 'not_found') {
+      return res.status(404).json({ ok: false, message: 'Unit or thread not found.' });
+    }
+    if (access.status === 'forbidden') {
+      return res.status(403).json({ ok: false, message: 'Only the assigned DepAdmin can manage course spaces here.' });
+    }
+
+    const courseName = canonicalCourseNameForSubjects(access.subject.course_name);
+    const result = await pool.query(
+      `SELECT
+         s.id,
+         s.kind,
+         s.subject_name,
+         s.created_at,
+         s.created_by_uid,
+         COALESCE(pr.display_name, a.display_name, a.username, a.email) AS creator_name
+       FROM subjects s
+       LEFT JOIN accounts a
+         ON a.uid = s.created_by_uid
+       LEFT JOIN profiles pr
+         ON pr.uid = s.created_by_uid
+       WHERE lower(s.course_name) = lower($1)
+         AND s.is_active = true
+       ORDER BY
+         CASE WHEN s.kind = 'unit' THEN 0 ELSE 1 END,
+         s.created_at DESC,
+         lower(s.subject_name) ASC`,
+      [courseName]
+    );
+
+    return res.json({
+      ok: true,
+      courseName,
+      spaces: result.rows.map((row) => ({
+        id: Number(row.id),
+        kind: normalizeSubjectKind(row.kind, SUBJECT_KIND_UNIT),
+        subjectName: row.subject_name || '',
+        createdAt: row.created_at || null,
+        createdByUid: row.created_by_uid || null,
+        creatorName: row.creator_name || 'System',
+      })),
+    });
+  } catch (error) {
+    console.error('Course spaces listing failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load course spaces.' });
+  }
+});
+
+router.delete('/api/subjects/:id/course-spaces/:targetId', async (req, res) => {
+  const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
+  const targetId = parsePositiveInt(req.params.targetId, 0, Number.MAX_SAFE_INTEGER);
+  if (!subjectId || !targetId) {
+    return res.status(400).json({ ok: false, message: 'Invalid unit/thread target.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const access = await ensureDepAdminCourseSpaceAccess(subjectId, req.user, client, req.subjectCourseAccess);
+    if (access.status === 'not_found') {
+      return res.status(404).json({ ok: false, message: 'Unit or thread not found.' });
+    }
+    if (access.status === 'forbidden') {
+      return res.status(403).json({ ok: false, message: 'Only the assigned DepAdmin can delete course spaces here.' });
+    }
+
+    const courseName = canonicalCourseNameForSubjects(access.subject.course_name);
+    const targetResult = await client.query(
+      `SELECT id, kind, subject_name
+       FROM subjects
+       WHERE id = $1
+         AND lower(course_name) = lower($2)
+         AND is_active = true
+       LIMIT 1`,
+      [targetId, courseName]
+    );
+    if (!targetResult.rows.length) {
+      return res.status(404).json({ ok: false, message: 'Unit or thread not found in this course.' });
+    }
+
+    await client.query(
+      `UPDATE subjects
+       SET is_active = false,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [targetId]
+    );
+
+    const target = targetResult.rows[0];
+    return res.json({
+      ok: true,
+      deleted: {
+        id: Number(target.id),
+        kind: normalizeSubjectKind(target.kind, SUBJECT_KIND_UNIT),
+        subjectName: target.subject_name || '',
+      },
+      message: `${formatSubjectLabel(target.kind)[0].toUpperCase()}${formatSubjectLabel(target.kind).slice(1)} deleted.`,
+    });
+  } catch (error) {
+    console.error('Course space deletion failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to delete unit/thread.' });
+  } finally {
+    client.release();
   }
 });
 

@@ -65,9 +65,33 @@
         <button type="button" class="subjects-tab is-active" data-tab="unit" id="unitsTabButton">Official units</button>
         <button type="button" class="subjects-tab" data-tab="thread" id="threadsTabButton">Threads</button>
       </div>
-      <label class="subjects-search-wrap">
-        <input type="text" id="subjectSearchInput" placeholder="Search units or threads by name, code, or creator" />
-      </label>
+      <div class="subjects-search-row">
+        <label class="subjects-search-wrap">
+          <input type="text" id="subjectSearchInput" placeholder="Search units or threads by name, code, or creator" />
+        </label>
+        <button type="button" class="secondary-button subjects-filter-toggle is-hidden" id="toggleThreadsFilterPanel">Filters</button>
+      </div>
+      <div class="threads-filter-panel is-hidden" id="threadsFilterPanel">
+        <div class="threads-filter-grid">
+          <label>
+            <span id="threadCreatorFilterLabel">Show</span>
+            <select id="threadCreatorFilter"></select>
+          </label>
+          <label>
+            <span>Sort threads</span>
+            <select id="threadSortFilter">
+              <option value="default">Default order</option>
+              <option value="created_desc">Date created: newest first</option>
+              <option value="created_asc">Date created: oldest first</option>
+              <option value="posts_desc">Most posts first</option>
+              <option value="posts_asc">Least posts first</option>
+            </select>
+          </label>
+        </div>
+        <div class="threads-filter-actions">
+          <button type="button" class="ghost-button" id="clearThreadsFilters">Clear filters</button>
+        </div>
+      </div>
       <div id="subjectsList" class="subjects-list"></div>
     </aside>
 
@@ -176,7 +200,10 @@
           <h3 id="subjectModerationTitle">Unit moderation</h3>
           <p id="subjectModerationSubtitle" class="subject-description">Review members, approve student posts, and act on reports from one place.</p>
         </div>
-        <p id="subjectModerationMessage" class="form-message"></p>
+        <div class="subject-moderation-head-actions">
+          <button type="button" class="secondary-button is-hidden" id="openCourseSpacesModal">Manage course spaces</button>
+          <p id="subjectModerationMessage" class="form-message"></p>
+        </div>
       </div>
       <div class="subject-moderation-grid">
         <section class="subject-moderation-panel">
@@ -200,6 +227,34 @@
           </div>
           <div id="subjectModerationReports" class="subject-moderation-list"></div>
         </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="courseSpacesModal">
+    <div class="modal-card course-spaces-modal-card">
+      <button type="button" class="close-button" id="closeCourseSpacesModal">×</button>
+      <div class="moderation-head">
+        <div>
+          <p class="eyebrow" id="courseSpacesEyebrow">Course spaces</p>
+          <h3 id="courseSpacesTitle">Manage units and threads</h3>
+          <p id="courseSpacesSubtitle" class="subject-description">Review all active units and threads in this course and remove outdated spaces when needed.</p>
+        </div>
+        <p id="courseSpacesMessage" class="form-message"></p>
+      </div>
+      <div class="course-spaces-table-wrap">
+        <table class="course-spaces-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Name</th>
+              <th>Created by</th>
+              <th>Created</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="courseSpacesTableBody"></tbody>
+        </table>
       </div>
     </div>
   </div>
