@@ -23,6 +23,11 @@ function normalizePostId(value) {
   return String(value || '').trim();
 }
 
+function queryParam(name) {
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get(name) || '').trim();
+}
+
 function postUrlForId(postId) {
   const safe = normalizePostId(postId);
   return safe ? `/posts/${encodeURIComponent(safe)}` : '/home';
@@ -453,6 +458,10 @@ function extractPostIdFromPath() {
   return normalizePostId(decodeURIComponent(parts[1] || ''));
 }
 
+function isRemovedPostLanding() {
+  return queryParam('removed') === '1';
+}
+
 function bindNavMenu() {
   if (profileToggle && profileMenu) {
     profileToggle.addEventListener('click', () => {
@@ -492,7 +501,8 @@ async function initPostPage() {
     currentPost = await fetchPost(currentPostId);
     await Promise.all([renderCurrentPost(), loadComments()]);
   } catch (error) {
-    setError(error.message || 'Unable to load post.');
+    const removedMessage = 'This post was removed by moderation and is no longer available.';
+    setError(isRemovedPostLanding() ? removedMessage : (error.message || 'Unable to load post.'));
     if (postCommentForm) {
       postCommentForm.classList.add('is-hidden');
     }

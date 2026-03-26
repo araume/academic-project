@@ -167,6 +167,13 @@ body {
   box-shadow: var(--shadow);
 }
 
+.library-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .library-header h1 {
   margin: 8px 0 6px;
   font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
@@ -737,6 +744,129 @@ body {
   justify-self: end;
 }
 
+.my-uploads-modal-card {
+  max-width: 860px;
+  display: grid;
+  gap: 16px;
+}
+
+.my-uploads-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.my-uploads-filter {
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.my-uploads-filter select {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #ccd8e0;
+  font-family: inherit;
+}
+
+.my-uploads-list {
+  max-height: 62vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+  padding-right: 4px;
+}
+
+.my-upload-card {
+  border: 1px solid #d8e4ed;
+  border-radius: 18px;
+  background: #f9fcff;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.my-upload-card.is-highlighted {
+  border-color: rgba(219, 123, 28, 0.55);
+  box-shadow: 0 0 0 3px rgba(219, 123, 28, 0.12);
+}
+
+.my-upload-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.my-upload-title-wrap {
+  display: grid;
+  gap: 6px;
+}
+
+.my-upload-title-wrap h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.my-upload-meta {
+  margin: 0;
+  color: #5c7181;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.my-upload-badges,
+.my-upload-utility-row,
+.my-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.my-upload-badges {
+  justify-content: flex-end;
+}
+
+.my-upload-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #26465d;
+  font-size: 0.77rem;
+  font-weight: 600;
+}
+
+.my-upload-badge.is-warning {
+  background: #fff2d8;
+  color: #8b5c0f;
+}
+
+.my-upload-badge.is-danger {
+  background: #fde3e0;
+  color: #9c2d28;
+}
+
+.my-upload-badge.is-accent {
+  background: #dfeefb;
+  color: #19496b;
+}
+
+.my-upload-description,
+.my-upload-status-copy {
+  margin: 0;
+  color: #28465d;
+  line-height: 1.6;
+}
+
+.my-upload-status-copy.is-danger {
+  color: #9c2d28;
+}
+
 .uploader-filter-modal-card {
   max-width: 640px;
   display: grid;
@@ -855,6 +985,14 @@ body {
   .library-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .library-header-actions,
+  .my-uploads-head,
+  .my-upload-head {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .filters {

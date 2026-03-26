@@ -68,6 +68,26 @@ function shouldMarkDepartmentReportResolved(status) {
   return ['resolved_action_taken', 'resolved_no_action', 'rejected'].includes(status);
 }
 
+function buildRemovedMainPostTargetUrl(postId) {
+  const safePostId = sanitizeText(postId, 120);
+  if (!safePostId) return '/home';
+  return `/posts/${encodeURIComponent(safePostId)}?removed=1`;
+}
+
+function buildRemovedSubjectPostTargetUrl(subjectId, postId) {
+  const safeSubjectId = parsePositiveInt(subjectId);
+  const safePostId = parsePositiveInt(postId);
+  if (!safeSubjectId) return '/subjects';
+  const params = new URLSearchParams();
+  params.set('subjectId', String(safeSubjectId));
+  params.set('myPosts', '1');
+  params.set('myPostStatus', 'removed');
+  if (safePostId) {
+    params.set('myPostId', String(safePostId));
+  }
+  return `/subjects?${params.toString()}`;
+}
+
 function buildAiScanParsePayload(row) {
   const resultPayload = row && row.result && typeof row.result === 'object' ? row.result : {};
   const flagged =
@@ -233,6 +253,9 @@ async function takeDownDepartmentHomePost(postIdValue, actorUid, reason) {
     { projection: { _id: 1, title: 1, uploaderUid: 1, course: 1, moderationStatus: 1 } }
   );
   if (!post) return null;
+  if (String(post.moderationStatus || '').toLowerCase() === 'restricted') {
+    return post;
+  }
   await postsCollection.updateOne(
     { _id: postId },
     {
@@ -244,6 +267,22 @@ async function takeDownDepartmentHomePost(postIdValue, actorUid, reason) {
       },
     }
   );
+  if (post.uploaderUid && post.uploaderUid !== actorUid) {
+    createNotification({
+      recipientUid: post.uploaderUid,
+      actorUid,
+      type: 'post_deleted',
+      entityType: 'post',
+      entityId: String(post._id),
+      targetUrl: buildRemovedMainPostTargetUrl(String(post._id)),
+      meta: {
+        postTitle: post.title || 'Untitled post',
+        reason: sanitizeText(reason, 1000) || 'Removed by department moderation',
+      },
+    }).catch((error) => {
+      console.error('Department home post removal notification failed:', error);
+    });
+  }
   return post;
 }
 
@@ -251,21 +290,44 @@ async function takeDownDepartmentUnitPost(postId, actorUid, reason, client = poo
   const numericPostId = parsePositiveInt(postId);
   if (!numericPostId) return null;
   const result = await client.query(
-    `UPDATE subject_posts
+    `UPDATE subject_posts sp
      SET status = 'taken_down',
          taken_down_by_uid = $2,
          taken_down_reason = $3,
          updated_at = NOW()
-     WHERE id = $1
-       AND status = 'active'
-     RETURNING id, subject_id, author_uid, title`,
+     FROM subjects s
+     WHERE sp.id = $1
+       AND sp.status = 'active'
+       AND s.id = sp.subject_id
+     RETURNING sp.id, sp.subject_id, sp.author_uid, sp.title, s.kind, s.subject_name, s.course_name`,
     [
       numericPostId,
       sanitizeText(actorUid, 120) || null,
       sanitizeText(reason, 1000) || 'Taken down by department moderation',
     ]
   );
-  return result.rows[0] || null;
+  const row = result.rows[0] || null;
+  if (row && row.author_uid && row.author_uid !== actorUid) {
+    createNotification({
+      recipientUid: row.author_uid,
+      actorUid,
+      type: 'subject_post_deleted',
+      entityType: 'subject_post',
+      entityId: String(row.id),
+      targetUrl: buildRemovedSubjectPostTargetUrl(row.subject_id, row.id),
+      meta: {
+        postTitle: row.title || 'Untitled post',
+        subjectId: Number(row.subject_id || 0) || null,
+        subjectKind: row.kind || 'unit',
+        subjectName: row.subject_name || '',
+        courseName: row.course_name || '',
+        reason: sanitizeText(reason, 1000) || 'Removed by department moderation',
+      },
+    }).catch((error) => {
+      console.error('Department unit post removal notification failed:', error);
+    });
+  }
+  return row;
 }
 
 async function suspendTargetUserForDepartmentAction(targetUid, actorViewer, note, durationHours) {
@@ -734,7 +796,7 @@ router.post('/api/department/documents/:uuid/approve', async (req, res) => {
         type: 'document_upload_approved',
         entityType: 'document',
         entityId: row.uuid,
-        targetUrl: '/open-library',
+        targetUrl: `/open-library?documentUuid=${encodeURIComponent(row.uuid)}`,
         meta: {
           documentUuid: row.uuid,
           documentTitle: row.title || 'Untitled document',
@@ -786,7 +848,7 @@ router.post('/api/department/documents/:uuid/reject', async (req, res) => {
         type: 'document_upload_rejected',
         entityType: 'document',
         entityId: row.uuid,
-        targetUrl: '/personal',
+        targetUrl: `/open-library?myUploads=1&uploadStatus=rejected&uploadUuid=${encodeURIComponent(row.uuid)}`,
         meta: {
           documentUuid: row.uuid,
           documentTitle: row.title || 'Untitled document',

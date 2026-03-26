@@ -952,6 +952,11 @@ body {
   gap: 12px;
 }
 
+.my-subject-post-card.is-highlighted {
+  border-color: rgba(219, 123, 28, 0.55);
+  box-shadow: 0 0 0 3px rgba(219, 123, 28, 0.12);
+}
+
 .my-subject-post-head {
   display: flex;
   align-items: flex-start;

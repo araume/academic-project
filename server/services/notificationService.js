@@ -5,8 +5,19 @@ const NOTIFICATION_TYPES = new Set([
   'following_new_post',
   'post_liked',
   'post_commented',
+  'post_deleted',
   'document_liked',
   'document_commented',
+  'document_deleted',
+  'document_upload_pending_approval',
+  'document_upload_approved',
+  'document_upload_rejected',
+  'subject_post_liked',
+  'subject_post_commented',
+  'subject_post_approved',
+  'subject_post_rejected',
+  'subject_post_deleted',
+  'user_followed',
   'community_rules_required',
   'admin_custom',
 ]);
@@ -15,8 +26,18 @@ const TYPE_SETTING_COLUMN = {
   following_new_post: 'notify_new_posts_from_following',
   post_liked: 'notify_post_activity',
   post_commented: 'notify_post_activity',
+  post_deleted: 'notify_post_activity',
   document_liked: 'notify_document_activity',
   document_commented: 'notify_document_activity',
+  document_deleted: 'notify_document_activity',
+  document_upload_pending_approval: 'notify_document_activity',
+  document_upload_approved: 'notify_document_activity',
+  document_upload_rejected: 'notify_document_activity',
+  subject_post_liked: 'notify_post_activity',
+  subject_post_commented: 'notify_post_activity',
+  subject_post_approved: 'notify_post_activity',
+  subject_post_rejected: 'notify_post_activity',
+  subject_post_deleted: 'notify_post_activity',
 };
 
 let ensurePromise = null;
@@ -100,8 +121,19 @@ async function ensureNotificationsTables() {
           'following_new_post',
           'post_liked',
           'post_commented',
+          'post_deleted',
           'document_liked',
           'document_commented',
+          'document_deleted',
+          'document_upload_pending_approval',
+          'document_upload_approved',
+          'document_upload_rejected',
+          'subject_post_liked',
+          'subject_post_commented',
+          'subject_post_approved',
+          'subject_post_rejected',
+          'subject_post_deleted',
+          'user_followed',
           'community_rules_required',
           'admin_custom'
         )
@@ -137,8 +169,19 @@ async function ensureNotificationsTables() {
           'following_new_post',
           'post_liked',
           'post_commented',
+          'post_deleted',
           'document_liked',
           'document_commented',
+          'document_deleted',
+          'document_upload_pending_approval',
+          'document_upload_approved',
+          'document_upload_rejected',
+          'subject_post_liked',
+          'subject_post_commented',
+          'subject_post_approved',
+          'subject_post_rejected',
+          'subject_post_deleted',
+          'user_followed',
           'community_rules_required',
           'admin_custom'
         )
@@ -417,9 +460,16 @@ function buildPushPayload({ type, actorDisplayName, entityType, entityId, target
   const safeActor = actorDisplayName || 'Someone';
   const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle.trim() : 'your post';
   const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle.trim() : 'your upload';
+  const subjectLabel = typeof meta.subjectKind === 'string' && meta.subjectKind.trim().toLowerCase() === 'thread'
+    ? 'thread'
+    : 'unit';
   const communityName = typeof meta.communityName === 'string' ? meta.communityName.trim() : 'your community';
-  const customTitle = typeof meta.title === 'string' ? meta.title.trim() : 'Admin notice';
-  const customMessage = typeof meta.message === 'string' ? meta.message.trim() : 'A new admin notice is available.';
+  const customTitle = typeof meta.title === 'string'
+    ? meta.title.trim()
+    : (typeof meta.customTitle === 'string' ? meta.customTitle.trim() : 'Admin notice');
+  const customMessage = typeof meta.message === 'string'
+    ? meta.message.trim()
+    : (typeof meta.customMessage === 'string' ? meta.customMessage.trim() : 'A new admin notice is available.');
 
   if (type === 'following_new_post') {
     return {
@@ -442,6 +492,13 @@ function buildPushPayload({ type, actorDisplayName, entityType, entityId, target
       data: { type, entityType, entityId, targetUrl },
     };
   }
+  if (type === 'post_deleted') {
+    return {
+      title: 'Your post was removed',
+      body: `${safeActor} removed ${postTitle || 'your post'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
   if (type === 'document_liked') {
     return {
       title: 'Your document got a like',
@@ -453,6 +510,76 @@ function buildPushPayload({ type, actorDisplayName, entityType, entityId, target
     return {
       title: 'New comment on your document',
       body: `${safeActor} commented on ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'document_deleted') {
+    return {
+      title: 'Your upload was removed',
+      body: `${safeActor} removed ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'document_upload_pending_approval') {
+    return {
+      title: 'Document approval requested',
+      body: `${safeActor} submitted ${documentTitle || 'an upload'} for approval.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'document_upload_approved') {
+    return {
+      title: 'Your upload was approved',
+      body: `${safeActor} approved ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'document_upload_rejected') {
+    return {
+      title: 'Your upload was rejected',
+      body: `${safeActor} rejected ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'subject_post_liked') {
+    return {
+      title: `Your ${subjectLabel} post got a like`,
+      body: `${safeActor} liked ${postTitle || `your ${subjectLabel} post`}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'subject_post_commented') {
+    return {
+      title: `New comment on your ${subjectLabel} post`,
+      body: `${safeActor} commented on ${postTitle || `your ${subjectLabel} post`}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'subject_post_approved') {
+    return {
+      title: `Your ${subjectLabel} post was approved`,
+      body: `${safeActor} approved ${postTitle || `your ${subjectLabel} post`}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'subject_post_rejected') {
+    return {
+      title: `Your ${subjectLabel} post was rejected`,
+      body: `${safeActor} rejected ${postTitle || `your ${subjectLabel} post`}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'subject_post_deleted') {
+    return {
+      title: `Your ${subjectLabel} post was removed`,
+      body: `${safeActor} removed ${postTitle || `your ${subjectLabel} post`}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'user_followed') {
+    return {
+      title: 'New follower',
+      body: `${safeActor} started following you.`,
       data: { type, entityType, entityId, targetUrl },
     };
   }

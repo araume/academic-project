@@ -5,6 +5,7 @@ const requireAuthApi = require('../middleware/requireAuthApi');
 const { getSignedUrl, uploadToStorage } = require('../services/storage');
 const { sendPushToUsers } = require('../services/pushService');
 const { parseReportPayload } = require('../services/reporting');
+const { createNotification } = require('../services/notificationService');
 
 const router = express.Router();
 const MESSAGE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
@@ -108,6 +109,11 @@ function formatReplySnippet(body) {
   const compact = String(body).replace(/\s+/g, ' ').trim();
   if (!compact) return '';
   return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
+}
+
+function buildFollowerNotificationTarget(uid) {
+  const safeUid = sanitizeText(uid, 120);
+  return safeUid ? `/profile?uid=${encodeURIComponent(safeUid)}` : '/connections';
 }
 
 async function mapChatMessageRow(row) {
@@ -1146,6 +1152,17 @@ router.post('/api/connections/follow/request', async (req, res) => {
         [req.user.uid, targetUid]
       );
 
+      createNotification({
+        recipientUid: targetUid,
+        actorUid: req.user.uid,
+        type: 'user_followed',
+        entityType: 'profile',
+        entityId: req.user.uid,
+        targetUrl: buildFollowerNotificationTarget(req.user.uid),
+      }).catch((error) => {
+        console.error('Follow notification failed:', error);
+      });
+
       return res.json({ ok: true, state: 'following', requiresApproval: false });
     }
 
@@ -1239,6 +1256,18 @@ router.post('/api/connections/follow/respond', async (req, res) => {
       );
 
       await client.query('COMMIT');
+
+      createNotification({
+        recipientUid: request.target_uid,
+        actorUid: request.requester_uid,
+        type: 'user_followed',
+        entityType: 'profile',
+        entityId: request.requester_uid,
+        targetUrl: buildFollowerNotificationTarget(request.requester_uid),
+      }).catch((error) => {
+        console.error('Follow acceptance notification failed:', error);
+      });
+
       return res.json({ ok: true, state: 'accepted' });
     }
 

@@ -102,11 +102,22 @@ function parsePositiveInteger(value, max = Number.MAX_SAFE_INTEGER) {
   return Math.min(parsed, max);
 }
 
+function normalizeMySubjectPostsFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['approved', 'pending', 'rejected', 'removed'].includes(normalized)) {
+    return normalized;
+  }
+  return 'all';
+}
+
 function readInitialSelection() {
   const params = new URLSearchParams(window.location.search);
   return {
     subjectId: parsePositiveInteger(params.get('subjectId')),
     postId: parsePositiveInteger(params.get('postId')),
+    myPostsOpen: params.get('myPosts') === '1',
+    myPostId: parsePositiveInteger(params.get('myPostId')),
+    myPostStatus: normalizeMySubjectPostsFilter(params.get('myPostStatus')),
   };
 }
 
@@ -134,6 +145,10 @@ const state = {
   myPosts: {
     subjectId: null,
     posts: [],
+    filterStatus: initialSelection.myPostsOpen ? initialSelection.myPostStatus : 'all',
+    focusPostId: initialSelection.myPostId,
+    openRequested: initialSelection.myPostsOpen,
+    initializedFromUrl: false,
   },
   moderation: {
     subjectId: null,
@@ -154,6 +169,7 @@ let isSendingSubjectAi = false;
 let activeSubjectPostAiContext = null;
 let isSendingSubjectPostAi = false;
 let activeEditSubjectPostId = null;
+let initialSubjectSelectionApplied = false;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -350,6 +366,30 @@ function syncSubjectLocation(subjectId, postId = null) {
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
+function syncMySubjectPostsLocation({ open = false, postId = null, status = 'all' } = {}) {
+  if (!window.history || typeof window.history.replaceState !== 'function') return;
+  const url = new URL(window.location.href);
+  if (open) {
+    url.searchParams.set('myPosts', '1');
+    const normalizedStatus = normalizeMySubjectPostsFilter(status);
+    if (normalizedStatus === 'all') {
+      url.searchParams.delete('myPostStatus');
+    } else {
+      url.searchParams.set('myPostStatus', normalizedStatus);
+    }
+    if (postId) {
+      url.searchParams.set('myPostId', String(postId));
+    } else {
+      url.searchParams.delete('myPostId');
+    }
+  } else {
+    url.searchParams.delete('myPosts');
+    url.searchParams.delete('myPostStatus');
+    url.searchParams.delete('myPostId');
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 function highlightSubjectPost(postId) {
   if (!postId) return;
   const card = document.getElementById(`subject-post-${postId}`);
@@ -474,7 +514,7 @@ function setSubjectFeedHeader(subject) {
     && state.myPosts.subjectId
     && (!subject || Number(state.myPosts.subjectId) !== Number(subject.id))
   ) {
-    closeModal(mySubjectPostsModal);
+    closeMySubjectPostsManager();
   }
 
   if (!subject) {
@@ -849,26 +889,52 @@ function getMySubjectPostsModalSubject() {
 }
 
 function approvalToneForPost(post) {
+  if (String(post && post.status ? post.status : 'active').toLowerCase() === 'removed') {
+    return { label: 'Removed', modifier: 'is-danger' };
+  }
   const status = String(post && post.approvalStatus ? post.approvalStatus : 'approved').toLowerCase();
   if (status === 'pending') return { label: 'Pending approval', modifier: 'is-warning' };
   if (status === 'rejected') return { label: 'Rejected', modifier: 'is-danger' };
   return { label: 'Posted', modifier: 'is-accent' };
 }
 
+function highlightMySubjectPost(postId) {
+  if (!postId) return;
+  const card = document.getElementById(`my-subject-post-${postId}`);
+  if (!card) return;
+  card.classList.add('is-highlighted');
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  window.setTimeout(() => card.classList.remove('is-highlighted'), 2400);
+}
+
 function renderMySubjectPosts() {
   if (!mySubjectPostsList) return;
   const subject = getMySubjectPostsModalSubject();
   const posts = Array.isArray(state.myPosts.posts) ? state.myPosts.posts : [];
+  const filterStatus = normalizeMySubjectPostsFilter(state.myPosts.filterStatus);
+  const visiblePosts = filterStatus === 'all'
+    ? posts
+    : posts.filter((post) => {
+        if (filterStatus === 'removed') {
+          return String(post.status || 'active').toLowerCase() === 'removed';
+        }
+        return String(post.status || 'active').toLowerCase() !== 'removed'
+          && String(post.approvalStatus || 'approved').toLowerCase() === filterStatus;
+      });
   mySubjectPostsList.innerHTML = '';
 
-  if (!posts.length) {
-    mySubjectPostsList.innerHTML = `<p class="subject-empty">You have no posts in this ${escapeHtml(apiLabel(subject?.kind))} yet.</p>`;
+  if (!visiblePosts.length) {
+    const filteredMessage = filterStatus === 'all'
+      ? `You have no posts in this ${escapeHtml(apiLabel(subject?.kind))} yet.`
+      : `You have no ${escapeHtml(filterStatus)} posts in this ${escapeHtml(apiLabel(subject?.kind))}.`;
+    mySubjectPostsList.innerHTML = `<p class="subject-empty">${filteredMessage}</p>`;
     return;
   }
 
-  posts.forEach((post) => {
+  visiblePosts.forEach((post) => {
     const article = document.createElement('article');
     article.className = 'my-subject-post-card';
+    article.id = `my-subject-post-${post.id}`;
 
     const head = document.createElement('div');
     head.className = 'my-subject-post-head';
@@ -882,7 +948,10 @@ function renderMySubjectPosts() {
 
     const meta = document.createElement('p');
     meta.className = 'my-subject-post-meta';
-    meta.textContent = `Created ${formatDateTime(post.createdAt)}${post.updatedAt && post.updatedAt !== post.createdAt ? ` · Updated ${formatDateTime(post.updatedAt)}` : ''}`;
+    const removedStatus = String(post.status || 'active').toLowerCase() === 'removed';
+    meta.textContent = removedStatus
+      ? `Created ${formatDateTime(post.createdAt)} · Removed ${formatDateTime(post.removedAt || post.updatedAt)}`
+      : `Created ${formatDateTime(post.createdAt)}${post.updatedAt && post.updatedAt !== post.createdAt ? ` · Updated ${formatDateTime(post.updatedAt)}` : ''}`;
     titleWrap.appendChild(meta);
     head.appendChild(titleWrap);
 
@@ -907,7 +976,14 @@ function renderMySubjectPosts() {
     article.appendChild(utilityRow);
 
     const approvalStatus = String(post.approvalStatus || 'approved').toLowerCase();
-    if (approvalStatus === 'pending') {
+    if (removedStatus) {
+      const removed = document.createElement('p');
+      removed.className = 'subject-post-status-copy is-danger';
+      removed.textContent = post.removalReason
+        ? `Removed by moderation: ${post.removalReason}`
+        : 'Removed by moderation for this unit/thread.';
+      article.appendChild(removed);
+    } else if (approvalStatus === 'pending') {
       const pending = document.createElement('p');
       pending.className = 'subject-post-status-copy';
       pending.textContent = `Submitted ${timeAgo(post.approvalRequestedAt || post.createdAt)} and hidden until approval.`;
@@ -924,22 +1000,28 @@ function renderMySubjectPosts() {
 
     const actions = document.createElement('div');
     actions.className = 'my-subject-post-actions';
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = approvalStatus === 'pending' ? 'ghost-button' : 'danger-button';
-    deleteButton.textContent = approvalStatus === 'pending' ? 'Cancel pending' : 'Delete post';
-    deleteButton.addEventListener('click', async () => {
-      try {
-        await removeMySubjectPost(post);
-      } catch (error) {
-        if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to remove your post.';
-      }
-    });
-    actions.appendChild(deleteButton);
-    article.appendChild(actions);
+    if (!removedStatus) {
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = approvalStatus === 'pending' ? 'ghost-button' : 'danger-button';
+      deleteButton.textContent = approvalStatus === 'pending' ? 'Cancel pending' : 'Delete post';
+      deleteButton.addEventListener('click', async () => {
+        try {
+          await removeMySubjectPost(post);
+        } catch (error) {
+          if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to remove your post.';
+        }
+      });
+      actions.appendChild(deleteButton);
+      article.appendChild(actions);
+    }
 
     mySubjectPostsList.appendChild(article);
   });
+
+  if (state.myPosts.focusPostId) {
+    highlightMySubjectPost(state.myPosts.focusPostId);
+  }
 }
 
 async function loadMySubjectPosts(subjectId) {
@@ -966,19 +1048,60 @@ async function loadMySubjectPosts(subjectId) {
     mySubjectPostsTitle.textContent = `My posts in ${subject.subjectName || `this ${apiLabel(kind)}`}`;
   }
   if (mySubjectPostsSubtitle) {
-    mySubjectPostsSubtitle.textContent = `Review your posted, pending, and rejected submissions for this ${apiLabel(kind)} and remove them when needed.`;
+    const filterStatus = normalizeMySubjectPostsFilter(state.myPosts.filterStatus);
+    mySubjectPostsSubtitle.textContent = filterStatus === 'all'
+      ? `Review your posted, pending, rejected, and removed submissions for this ${apiLabel(kind)} and remove them when needed.`
+      : `Showing your ${filterStatus} submissions for this ${apiLabel(kind)}.`;
   }
   renderMySubjectPosts();
 }
 
-async function openMySubjectPostsManager() {
+async function openMySubjectPostsManager(options = {}) {
   const subject = getSelectedSubject();
   if (!subject) return;
+  state.myPosts.filterStatus = normalizeMySubjectPostsFilter(
+    Object.prototype.hasOwnProperty.call(options, 'filterStatus') ? options.filterStatus : state.myPosts.filterStatus
+  );
+  state.myPosts.focusPostId = Object.prototype.hasOwnProperty.call(options, 'focusPostId')
+    ? options.focusPostId
+    : state.myPosts.focusPostId;
+  syncMySubjectPostsLocation({
+    open: true,
+    status: state.myPosts.filterStatus,
+    postId: state.myPosts.focusPostId,
+  });
   openModal(mySubjectPostsModal);
   try {
     await loadMySubjectPosts(subject.id);
   } catch (error) {
     if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to load your posts.';
+  }
+}
+
+function closeMySubjectPostsManager() {
+  state.myPosts.filterStatus = 'all';
+  state.myPosts.focusPostId = null;
+  closeModal(mySubjectPostsModal);
+  syncMySubjectPostsLocation({ open: false });
+}
+
+async function applyInitialMyPostsSelection() {
+  if (state.myPosts.initializedFromUrl) return;
+  state.myPosts.initializedFromUrl = true;
+  if (!state.myPosts.openRequested) return;
+  const subject = getSelectedSubject();
+  if (!subject || (initialSelection.subjectId && Number(subject.id) !== Number(initialSelection.subjectId))) {
+    state.myPosts.openRequested = false;
+    syncMySubjectPostsLocation({ open: false });
+    return;
+  }
+  try {
+    await openMySubjectPostsManager({
+      filterStatus: state.myPosts.filterStatus,
+      focusPostId: state.myPosts.focusPostId,
+    });
+  } finally {
+    state.myPosts.openRequested = false;
   }
 }
 
@@ -1003,6 +1126,14 @@ async function removeMySubjectPost(post) {
 
   if (state.requestedPostId === post.id) {
     state.requestedPostId = null;
+  }
+  if (Number(state.myPosts.focusPostId) === Number(post.id)) {
+    state.myPosts.focusPostId = null;
+    syncMySubjectPostsLocation({
+      open: true,
+      status: state.myPosts.filterStatus,
+      postId: null,
+    });
   }
   setSubjectPostCommentsExpanded(post.id, false);
   if (mySubjectPostsMessage) {
@@ -1601,6 +1732,13 @@ async function loadSubjectsBootstrap() {
     state.canCreateUnit = Boolean(data.canCreateUnit);
     state.canCreateThread = Boolean(data.canCreateThread);
     state.threadTabLabel = data.threadTabLabel || 'Threads';
+    if (!initialSubjectSelectionApplied && initialSelection.subjectId) {
+      const requestedSubject = state.subjects.find((item) => Number(item.id) === Number(initialSelection.subjectId));
+      if (requestedSubject) {
+        state.activeTab = requestedSubject.kind === 'thread' ? 'thread' : 'unit';
+      }
+      initialSubjectSelectionApplied = true;
+    }
     setCreateButtonsVisibility();
     await refreshSidebarSelection('No units or threads are available yet.');
   } catch (error) {
@@ -1721,6 +1859,9 @@ async function handlePendingPostAction(subjectId, postId, action) {
     throw new Error(data.message || 'Unable to update post approval.');
   }
   if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
+  if (action === 'approve' && ['depadmin', 'professor'].includes(state.viewerRole)) {
+    closeModal(subjectModerationModal);
+  }
   await Promise.all([loadSubjectModeration(subjectId), fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
 }
 
@@ -2392,7 +2533,7 @@ if (openSubjectModerationModalButton) {
 if (openMySubjectPostsModalButton) {
   openMySubjectPostsModalButton.addEventListener('click', async () => {
     try {
-      await openMySubjectPostsManager();
+      await openMySubjectPostsManager({ filterStatus: 'all', focusPostId: null });
     } catch (error) {
       if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to load your posts.';
     }
@@ -2400,12 +2541,12 @@ if (openMySubjectPostsModalButton) {
 }
 
 if (closeMySubjectPostsModal) {
-  closeMySubjectPostsModal.addEventListener('click', () => closeModal(mySubjectPostsModal));
+  closeMySubjectPostsModal.addEventListener('click', () => closeMySubjectPostsManager());
 }
 
 if (mySubjectPostsModal) {
   mySubjectPostsModal.addEventListener('click', (event) => {
-    if (event.target === mySubjectPostsModal) closeModal(mySubjectPostsModal);
+    if (event.target === mySubjectPostsModal) closeMySubjectPostsManager();
   });
 }
 
@@ -2489,6 +2630,7 @@ if (subjectPostAiForm) {
 
 async function initSubjectsPage() {
   await Promise.all([loadCurrentProfile(), loadSubjectsBootstrap()]);
+  await applyInitialMyPostsSelection();
 }
 
 initSubjectsPage();

@@ -716,6 +716,16 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
     if (!doc) {
       return res.status(404).json({ ok: false, message: 'Document not found.' });
     }
+    const likedResult = req.user && req.user.uid
+      ? await pool.query(
+          `SELECT 1
+           FROM document_likes
+           WHERE document_uuid = $1
+             AND user_uid = $2
+           LIMIT 1`,
+          [uuid, req.user.uid]
+        )
+      : { rowCount: 0 };
     const [link, thumbnailLink] = await Promise.all([
       signIfNeeded(doc.link, { ensureExists: true }),
       signIfNeeded(doc.thumbnail_link, { ensureExists: true }),
@@ -726,11 +736,75 @@ router.get('/api/library/documents/:uuid', async (req, res) => {
         ...doc,
         link,
         thumbnail_link: thumbnailLink,
+        liked: likedResult.rowCount > 0,
+        is_owner: Boolean(req.user && req.user.uid && doc.uploader_uid === req.user.uid),
       },
     });
   } catch (error) {
     console.error('Document fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Failed to load document.' });
+  }
+});
+
+router.get('/api/library/my-documents', async (req, res) => {
+  if (!req.user || !req.user.uid) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         uuid::text AS uuid,
+         title,
+         description,
+         filename,
+         course,
+         subject,
+         views,
+         popularity,
+         visibility,
+         source,
+         aiallowed,
+         upload_approval_status,
+         upload_approval_required,
+         upload_approval_requested_at,
+         upload_approved_at,
+         upload_rejected_at,
+         upload_rejection_note,
+         uploaddate
+       FROM documents
+       WHERE uploader_uid = $1
+         AND source = 'library'
+       ORDER BY uploaddate DESC, id DESC`,
+      [req.user.uid]
+    );
+
+    return res.json({
+      ok: true,
+      documents: result.rows.map((row) => ({
+        uuid: row.uuid,
+        title: row.title || 'Untitled document',
+        description: row.description || '',
+        filename: row.filename || '',
+        course: row.course || '',
+        subject: row.subject || '',
+        views: Number(row.views || 0),
+        popularity: Number(row.popularity || 0),
+        visibility: row.visibility || 'public',
+        source: row.source || 'library',
+        aiAllowed: row.aiallowed !== false,
+        approvalStatus: normalizeDocumentApprovalStatus(row.upload_approval_status, 'approved'),
+        approvalRequired: row.upload_approval_required === true,
+        approvalRequestedAt: row.upload_approval_requested_at || null,
+        approvedAt: row.upload_approved_at || null,
+        rejectedAt: row.upload_rejected_at || null,
+        rejectionNote: row.upload_rejection_note || null,
+        uploadedAt: row.uploaddate || null,
+      })),
+    });
+  } catch (error) {
+    console.error('My library documents fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load your uploads.' });
   }
 });
 
@@ -1231,7 +1305,7 @@ router.post('/api/library/like', async (req, res) => {
             type: 'document_liked',
             entityType: 'document',
             entityId: documentUuid,
-            targetUrl: '/open-library',
+            targetUrl: `/open-library?documentUuid=${encodeURIComponent(documentUuid)}`,
             meta: {
               documentTitle: doc.title || 'Untitled document',
               documentUuid,
@@ -1535,7 +1609,7 @@ router.post('/api/library/comments', async (req, res) => {
             type: 'document_commented',
             entityType: 'document',
             entityId: documentUuid,
-            targetUrl: '/open-library',
+            targetUrl: `/open-library?documentUuid=${encodeURIComponent(documentUuid)}`,
             meta: {
               documentTitle: doc.title || 'Untitled document',
               documentUuid,

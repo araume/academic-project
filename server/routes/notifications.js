@@ -21,9 +21,16 @@ function buildNotificationMessage(row) {
   const meta = row.meta && typeof row.meta === 'object' ? row.meta : {};
   const postTitle = typeof meta.postTitle === 'string' ? meta.postTitle : 'a post';
   const documentTitle = typeof meta.documentTitle === 'string' ? meta.documentTitle : 'a document';
+  const subjectKind = typeof meta.subjectKind === 'string' && meta.subjectKind.toLowerCase() === 'thread'
+    ? 'thread'
+    : 'unit';
   const communityName = typeof meta.communityName === 'string' ? meta.communityName : 'this community';
-  const customTitle = typeof meta.title === 'string' ? meta.title : 'Admin notice';
-  const customMessage = typeof meta.message === 'string' ? meta.message : 'A new admin notice is available.';
+  const customTitle = typeof meta.title === 'string'
+    ? meta.title
+    : (typeof meta.customTitle === 'string' ? meta.customTitle : 'Admin notice');
+  const customMessage = typeof meta.message === 'string'
+    ? meta.message
+    : (typeof meta.customMessage === 'string' ? meta.customMessage : 'A new admin notice is available.');
 
   if (row.type === 'following_new_post') {
     return `shared a new post: ${postTitle}`;
@@ -34,11 +41,44 @@ function buildNotificationMessage(row) {
   if (row.type === 'post_commented') {
     return `commented on your post: ${postTitle}`;
   }
+  if (row.type === 'post_deleted') {
+    return `removed your post: ${postTitle}`;
+  }
   if (row.type === 'document_liked') {
     return `liked your upload: ${documentTitle}`;
   }
   if (row.type === 'document_commented') {
     return `commented on your upload: ${documentTitle}`;
+  }
+  if (row.type === 'document_deleted') {
+    return `removed your upload: ${documentTitle}`;
+  }
+  if (row.type === 'document_upload_pending_approval') {
+    return `submitted an upload for approval: ${documentTitle}`;
+  }
+  if (row.type === 'document_upload_approved') {
+    return `approved your upload: ${documentTitle}`;
+  }
+  if (row.type === 'document_upload_rejected') {
+    return `rejected your upload: ${documentTitle}`;
+  }
+  if (row.type === 'subject_post_liked') {
+    return `liked your ${subjectKind} post: ${postTitle}`;
+  }
+  if (row.type === 'subject_post_commented') {
+    return `commented on your ${subjectKind} post: ${postTitle}`;
+  }
+  if (row.type === 'subject_post_approved') {
+    return `approved your ${subjectKind} post: ${postTitle}`;
+  }
+  if (row.type === 'subject_post_rejected') {
+    return `rejected your ${subjectKind} post: ${postTitle}`;
+  }
+  if (row.type === 'subject_post_deleted') {
+    return `removed your ${subjectKind} post: ${postTitle}`;
+  }
+  if (row.type === 'user_followed') {
+    return 'started following you.';
   }
   if (row.type === 'community_rules_required') {
     return `Please agree to the community rules for ${communityName} to interact.`;

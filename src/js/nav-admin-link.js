@@ -360,6 +360,9 @@ function extractPostIdFromTargetUrl(value) {
   try {
     const parsed = new URL(targetUrl, window.location.origin);
     if (parsed.pathname.startsWith('/posts/')) {
+      if (parsed.search || parsed.hash) {
+        return '';
+      }
       const parts = parsed.pathname.split('/').filter(Boolean);
       return (parts[1] || '').trim();
     }

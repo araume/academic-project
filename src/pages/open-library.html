@@ -55,7 +55,10 @@
         <h1>Find and share academic resources.</h1>
         <p class="subcopy">Search, filter, and discuss uploaded materials across your community.</p>
       </div>
-      <button class="primary-button" id="uploadToggle">Upload document</button>
+      <div class="library-header-actions">
+        <button class="ghost-button" id="openMyUploadsModal">My uploads</button>
+        <button class="primary-button" id="uploadToggle">Upload document</button>
+      </div>
     </section>
 
     <section class="library-controls">
@@ -254,6 +257,31 @@
         <button type="submit" class="primary-button">Upload</button>
         <p class="form-message" id="uploadMessage"></p>
       </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="myUploadsModal">
+    <div class="modal-card my-uploads-modal-card">
+      <button class="close-button" id="myUploadsClose">×</button>
+      <div class="my-uploads-head">
+        <div>
+          <p class="eyebrow">Open Library</p>
+          <h2>My uploads</h2>
+          <p class="detail-description" id="myUploadsSubtitle">Review your approved, pending, and rejected library uploads here.</p>
+        </div>
+        <label class="my-uploads-filter">
+          <span>Status</span>
+          <select id="myUploadsStatusFilter">
+            <option value="all">All uploads</option>
+            <option value="approved">Approved</option>
+            <option value="pending">Pending approval</option>
+            <option value="rejected">Rejected</option>
+            <option value="removed">Removed</option>
+          </select>
+        </label>
+      </div>
+      <p class="form-message" id="myUploadsMessage"></p>
+      <div class="my-uploads-list" id="myUploadsList"></div>
     </div>
   </div>
 

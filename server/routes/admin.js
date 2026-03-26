@@ -56,6 +56,35 @@ function parseSuspensionDurationHours(value, fallback = DEFAULT_SUSPENSION_HOURS
   return clampInteger(parsed == null ? fallback : parsed, 1, MAX_SUSPENSION_HOURS, fallback);
 }
 
+function buildRemovedMainPostTargetUrl(postId) {
+  const safePostId = sanitizeText(postId, 120);
+  if (!safePostId) return '/home';
+  return `/posts/${encodeURIComponent(safePostId)}?removed=1`;
+}
+
+function buildRemovedLibraryDocumentTargetUrl(uuid) {
+  const safeUuid = sanitizeText(uuid, 120);
+  if (!safeUuid) return '/open-library';
+  return `/open-library?myUploads=1&uploadStatus=removed&removedDocumentUuid=${encodeURIComponent(safeUuid)}`;
+}
+
+async function notifySingleRecipient(input = {}) {
+  const recipientUid = sanitizeText(input.recipientUid, 120);
+  const actorUid = sanitizeText(input.actorUid, 120);
+  if (!recipientUid || !actorUid || recipientUid === actorUid) {
+    return;
+  }
+  await createNotificationsForRecipients({
+    recipientUids: [recipientUid],
+    actorUid,
+    type: input.type,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    targetUrl: input.targetUrl,
+    meta: input.meta || {},
+  });
+}
+
 function normalizeSubjectBanRequestStatus(value, fallback = 'open') {
   const normalized = sanitizeText(value, 40).toLowerCase();
   if (['open', 'under_review', 'approved_banned', 'rejected'].includes(normalized)) {
@@ -710,10 +739,10 @@ async function purgeRestrictedTarget(item, actorUid = null) {
   if (!item) return false;
   const actor = sanitizeText(actorUid, 120) || null;
   if (item.source === 'main_post') {
-    return deleteMainPostById(item.target_id);
+    return deleteMainPostById(item.target_id, actor, item.reason || '');
   }
   if (item.source === 'library_document') {
-    return deleteLibraryDocumentByUuid(item.target_id);
+    return deleteLibraryDocumentByUuid(item.target_id, actor, item.reason || '');
   }
   if (item.source === 'community_post') {
     const postId = parsePositiveInt(item.target_id);
@@ -1149,7 +1178,7 @@ async function loadAdminReportActionsMap(reportKeys) {
   return new Map(rows.map((item) => [item.reportKey, item]));
 }
 
-async function deleteMainPostById(postIdValue) {
+async function deleteMainPostById(postIdValue, actorUid = null, reason = '') {
   if (!postIdValue) return false;
   const postId = ObjectId.isValid(postIdValue) ? new ObjectId(postIdValue) : null;
   if (!postId) return false;
@@ -1177,15 +1206,35 @@ async function deleteMainPostById(postIdValue) {
   await db.collection('post_comments').deleteMany({ postId });
   await db.collection('post_bookmarks').deleteMany({ postId });
   await db.collection('post_reports').deleteMany({ postId });
-  return true;
+  if (post.uploaderUid && actorUid && post.uploaderUid !== actorUid) {
+    notifySingleRecipient({
+      recipientUid: post.uploaderUid,
+      actorUid,
+      type: 'post_deleted',
+      entityType: 'post',
+      entityId: String(post._id),
+      targetUrl: buildRemovedMainPostTargetUrl(String(post._id)),
+      meta: {
+        postTitle: post.title || 'Untitled post',
+        reason: sanitizeText(reason, 1000) || 'Removed by admin moderation',
+      },
+    }).catch((error) => {
+      console.error('Admin post removal notification failed:', error);
+    });
+  }
+  return {
+    id: String(post._id),
+    uploaderUid: post.uploaderUid || null,
+    title: post.title || 'Untitled post',
+  };
 }
 
-async function deleteLibraryDocumentByUuid(uuid) {
+async function deleteLibraryDocumentByUuid(uuid, actorUid = null, reason = '') {
   const docUuid = sanitizeText(uuid, 120);
   if (!docUuid) return false;
 
   const docResult = await pool.query(
-    `SELECT uuid, link, thumbnail_link
+    `SELECT uuid, link, thumbnail_link, uploader_uid, title
      FROM documents
      WHERE uuid = $1
      LIMIT 1`,
@@ -1209,7 +1258,27 @@ async function deleteLibraryDocumentByUuid(uuid) {
 
   const db = await getMongoDb();
   await db.collection('document_reports').deleteMany({ documentUuid: docUuid });
-  return true;
+  if (doc.uploader_uid && actorUid && doc.uploader_uid !== actorUid) {
+    notifySingleRecipient({
+      recipientUid: doc.uploader_uid,
+      actorUid,
+      type: 'document_deleted',
+      entityType: 'document',
+      entityId: docUuid,
+      targetUrl: buildRemovedLibraryDocumentTargetUrl(docUuid),
+      meta: {
+        documentTitle: doc.title || 'Untitled document',
+        reason: sanitizeText(reason, 1000) || 'Removed by admin moderation',
+      },
+    }).catch((error) => {
+      console.error('Admin document removal notification failed:', error);
+    });
+  }
+  return {
+    uuid: docUuid,
+    uploaderUid: doc.uploader_uid || null,
+    title: doc.title || 'Untitled document',
+  };
 }
 
 async function deleteChatMessageById(messageId, adminUid) {
@@ -2504,7 +2573,7 @@ router.post('/api/admin/reports/action', async (req, res) => {
             hiddenByUid: adminUid,
           });
         } else {
-          const removed = await deleteMainPostById(targetId);
+          const removed = await deleteMainPostById(targetId, adminUid, resolutionNote || report.reason || '');
           if (!removed) {
             return res.status(404).json({ ok: false, message: 'Target post no longer exists.' });
           }
@@ -2670,7 +2739,7 @@ router.post('/api/admin/reports/action', async (req, res) => {
             hiddenByUid: adminUid,
           });
         } else {
-          const removed = await deleteLibraryDocumentByUuid(targetId);
+          const removed = await deleteLibraryDocumentByUuid(targetId, adminUid, resolutionNote || report.reason || '');
           if (!removed) {
             return res.status(404).json({ ok: false, message: 'Target document no longer exists.' });
           }
@@ -5118,33 +5187,12 @@ router.delete('/api/admin/content/main-posts/:id', async (req, res) => {
   }
 
   try {
-    const db = await getMongoDb();
-    const postId = new ObjectId(id);
-    const postsCollection = db.collection('posts');
-    const post = await postsCollection.findOne({ _id: postId });
-    if (!post) {
+    const removed = await deleteMainPostById(id, req.adminViewer && req.adminViewer.uid ? req.adminViewer.uid : req.user.uid, 'Removed by admin moderation');
+    if (!removed) {
       return res.status(404).json({ ok: false, message: 'Post not found.' });
     }
-
-    const attachmentKey =
-      post.attachment &&
-      (post.attachment.type === 'image' || post.attachment.type === 'video')
-        ? post.attachment.key
-        : null;
-    if (attachmentKey && !String(attachmentKey).startsWith('http')) {
-      try {
-        await deleteFromStorage(attachmentKey);
-      } catch (storageError) {
-        console.error('Admin post attachment delete failed:', storageError);
-      }
-    }
-
-    await postsCollection.deleteOne({ _id: postId });
-    await db.collection('post_likes').deleteMany({ postId });
-    await db.collection('post_comments').deleteMany({ postId });
-    await db.collection('post_bookmarks').deleteMany({ postId });
-    await db.collection('post_reports').deleteMany({ postId });
-    await db.collection('admin_report_actions').deleteMany({ source: 'main_post', targetId: String(postId) });
+    const db = await getMongoDb();
+    await db.collection('admin_report_actions').deleteMany({ source: 'main_post', targetId: id });
     return res.json({ ok: true });
   } catch (error) {
     console.error('Admin delete main post failed:', error);
@@ -5602,33 +5650,17 @@ router.delete('/api/admin/content/library-documents/:uuid', async (req, res) => 
   }
 
   try {
-    const docResult = await pool.query(
-      `SELECT uuid, link, thumbnail_link
-       FROM documents
-       WHERE uuid = $1
-       LIMIT 1`,
-      [uuid]
+    const removed = await deleteLibraryDocumentByUuid(
+      uuid,
+      req.adminViewer && req.adminViewer.uid ? req.adminViewer.uid : req.user.uid,
+      'Removed by admin moderation'
     );
-    if (!docResult.rows.length) {
+    if (!removed) {
       return res.status(404).json({ ok: false, message: 'Document not found.' });
     }
-    const doc = docResult.rows[0];
-
-    await pool.query('DELETE FROM documents WHERE uuid = $1', [uuid]);
     const db = await getMongoDb();
     await db.collection('document_reports').deleteMany({ documentUuid: uuid });
     await db.collection('admin_report_actions').deleteMany({ source: 'library_document', targetId: uuid });
-
-    const keys = [doc.link, doc.thumbnail_link].filter(Boolean);
-    for (const key of keys) {
-      if (!String(key).startsWith('http')) {
-        try {
-          await deleteFromStorage(key);
-        } catch (storageError) {
-          console.error('Admin document storage delete failed:', storageError);
-        }
-      }
-    }
 
     return res.json({ ok: true });
   } catch (error) {

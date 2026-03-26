@@ -9,7 +9,7 @@ const { autoScanIncomingContent, isInappropriateScan } = require('../services/ai
 const { ensureAiGovernanceReady } = require('../services/aiGovernanceService');
 const { getOpenAIClient, getOpenAIModel, getOpenAIKey } = require('../services/openaiClient');
 const { parseReportPayload } = require('../services/reporting');
-const { createNotificationsForRecipients } = require('../services/notificationService');
+const { createNotificationsForRecipients, isBlockedEitherDirection } = require('../services/notificationService');
 const {
   ensureDepartmentWorkflowReady,
   loadUserCourseAccess,
@@ -382,6 +382,69 @@ function formatSubjectLabel(kind, plural = false) {
   return plural ? 'units' : 'unit';
 }
 
+function buildSubjectPostTargetUrl(subjectId, postId) {
+  if (!subjectId || !postId) return '/subjects';
+  return `/subjects?subjectId=${encodeURIComponent(subjectId)}&postId=${encodeURIComponent(postId)}`;
+}
+
+function buildSubjectMyPostsTargetUrl(subjectId, { postId = null, status = 'all' } = {}) {
+  if (!subjectId) return '/subjects';
+  const params = new URLSearchParams();
+  params.set('subjectId', String(subjectId));
+  params.set('myPosts', '1');
+  const normalizedStatus = ['approved', 'pending', 'rejected', 'removed'].includes(String(status || '').toLowerCase())
+    ? String(status).toLowerCase()
+    : 'all';
+  if (normalizedStatus !== 'all') {
+    params.set('myPostStatus', normalizedStatus);
+  }
+  if (postId) {
+    params.set('myPostId', String(postId));
+  }
+  return `/subjects?${params.toString()}`;
+}
+
+function getSubjectNotificationName(subject) {
+  return subject && (subject.subject_name || subject.subjectName) ? subject.subject_name || subject.subjectName : '';
+}
+
+async function createSubjectPostOwnerNotification({
+  recipientUid,
+  actorUid,
+  type,
+  subject,
+  postId,
+  postTitle,
+  targetUrl,
+}) {
+  const safeRecipientUid = normalizeText(recipientUid, 120);
+  const safeActorUid = normalizeText(actorUid, 120);
+  if (!safeRecipientUid || !safeActorUid || safeRecipientUid === safeActorUid) {
+    return;
+  }
+
+  const blocked = await isBlockedEitherDirection(safeActorUid, safeRecipientUid);
+  if (blocked) {
+    return;
+  }
+
+  await createNotificationsForRecipients({
+    recipientUids: [safeRecipientUid],
+    actorUid: safeActorUid,
+    type,
+    entityType: 'subject_post',
+    entityId: String(postId || ''),
+    targetUrl,
+    meta: {
+      postTitle: postTitle || 'Untitled post',
+      subjectId: Number(subject && subject.id ? subject.id : 0) || null,
+      subjectKind: normalizeSubjectKind(subject && (subject.kind || subject.subject_kind), SUBJECT_KIND_UNIT),
+      subjectName: getSubjectNotificationName(subject),
+      courseName: subject && (subject.course_name || subject.courseName) ? subject.course_name || subject.courseName : '',
+    },
+  });
+}
+
 async function canViewerCreateSubjectKind(kind, user, client = pool, courseAccess = null, courseName = '') {
   const role = getPlatformRole(user);
   const normalizedKind = normalizeSubjectKind(kind, SUBJECT_KIND_UNIT);
@@ -601,17 +664,40 @@ async function ensureSubjectGovernanceTarget(subjectId, targetUid, actorUid, cli
 
 async function takeDownSubjectPost(postId, actorUid, reason, client = pool) {
   const result = await client.query(
-    `UPDATE subject_posts
+    `UPDATE subject_posts sp
      SET status = 'taken_down',
          taken_down_by_uid = $2,
          taken_down_reason = $3,
          updated_at = NOW()
-     WHERE id = $1
-       AND status = 'active'
-     RETURNING id`,
+     FROM subjects s
+     WHERE sp.id = $1
+       AND sp.status = 'active'
+       AND s.id = sp.subject_id
+     RETURNING sp.id, sp.subject_id, sp.author_uid, sp.title, s.kind, s.subject_name, s.course_name`,
     [postId, actorUid || null, normalizeText(reason, 1000) || null]
   );
-  return result.rowCount > 0;
+  const row = result.rows[0] || null;
+  if (row && row.author_uid && actorUid && row.author_uid !== actorUid) {
+    createNotificationsForRecipients({
+      recipientUids: [row.author_uid],
+      actorUid,
+      type: 'subject_post_deleted',
+      entityType: 'subject_post',
+      entityId: String(row.id),
+      targetUrl: buildSubjectMyPostsTargetUrl(row.subject_id, { postId: row.id, status: 'removed' }),
+      meta: {
+        postTitle: row.title || 'Untitled post',
+        subjectId: Number(row.subject_id || 0) || null,
+        subjectKind: normalizeSubjectKind(row.kind, SUBJECT_KIND_UNIT),
+        subjectName: row.subject_name || '',
+        courseName: row.course_name || '',
+        reason: normalizeText(reason, 1000) || 'Removed by moderation',
+      },
+    }).catch((error) => {
+      console.error('Subject post removal notification failed:', error);
+    });
+  }
+  return Boolean(row);
 }
 
 function resolveViewerMainCourseForSubjects(user, courseAccess = null) {
@@ -1692,12 +1778,13 @@ router.get('/api/subjects/:id/my-posts', async (req, res) => {
          sp.approved_at,
          sp.rejected_at,
          sp.rejection_note,
+         sp.status,
+         sp.taken_down_reason,
          sp.created_at,
          sp.updated_at
        FROM subject_posts sp
        WHERE sp.subject_id = $1
          AND sp.author_uid = $2
-         AND sp.status = 'active'
        ORDER BY sp.created_at DESC, sp.id DESC`,
       [subjectId, req.user.uid]
     );
@@ -1760,6 +1847,9 @@ router.get('/api/subjects/:id/my-posts', async (req, res) => {
         approvedAt: row.approved_at || null,
         rejectedAt: row.rejected_at || null,
         rejectionNote: row.rejection_note || null,
+        status: normalizeText(row.status, 40).toLowerCase() === 'taken_down' ? 'removed' : 'active',
+        removedAt: normalizeText(row.status, 40).toLowerCase() === 'taken_down' ? row.updated_at : null,
+        removalReason: row.taken_down_reason || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         attachment: row.attachment_library_document_uuid
@@ -2285,6 +2375,7 @@ router.post('/api/subjects/:id/posts/:postId/like', async (req, res) => {
       return res.status(403).json({ ok: false, message: 'Only approved posts can receive reactions.' });
     }
 
+    let shouldNotifyLike = false;
     if (action === 'unlike') {
       await client.query(
         `DELETE FROM subject_post_likes
@@ -2294,12 +2385,13 @@ router.post('/api/subjects/:id/posts/:postId/like', async (req, res) => {
         [subjectId, postId, req.user.uid]
       );
     } else {
-      await client.query(
+      const insertResult = await client.query(
         `INSERT INTO subject_post_likes (subject_id, post_id, user_uid)
          VALUES ($1, $2, $3)
          ON CONFLICT (subject_id, post_id, user_uid) DO NOTHING`,
         [subjectId, postId, req.user.uid]
       );
+      shouldNotifyLike = insertResult.rowCount > 0;
     }
 
     const updateResult = await client.query(
@@ -2327,6 +2419,22 @@ router.post('/api/subjects/:id/posts/:postId/like', async (req, res) => {
       [subjectId, postId, req.user.uid]
     );
     await client.query('COMMIT');
+
+    if (shouldNotifyLike && postAccess.post.author_uid && postAccess.post.author_uid !== req.user.uid) {
+      try {
+        await createSubjectPostOwnerNotification({
+          recipientUid: postAccess.post.author_uid,
+          actorUid: req.user.uid,
+          type: 'subject_post_liked',
+          subject: postAccess.subject,
+          postId,
+          postTitle: postAccess.post.title || 'Untitled post',
+          targetUrl: buildSubjectPostTargetUrl(subjectId, postId),
+        });
+      } catch (error) {
+        console.error('Subject post like notification failed:', error);
+      }
+    }
 
     return res.json({
       ok: true,
@@ -2884,11 +2992,28 @@ router.post('/api/subjects/:id/posts/:postId/approve', async (req, res) => {
          AND subject_id = $1
          AND status = 'active'
          AND approval_status IN ('pending', 'rejected')
-       RETURNING id`,
+       RETURNING id, author_uid, title`,
       [subjectId, postId, req.user.uid]
     );
     if (!result.rowCount) {
       return res.status(404).json({ ok: false, message: 'Pending post not found.' });
+    }
+
+    const row = result.rows[0];
+    if (row && row.author_uid && row.author_uid !== req.user.uid) {
+      try {
+        await createSubjectPostOwnerNotification({
+          recipientUid: row.author_uid,
+          actorUid: req.user.uid,
+          type: 'subject_post_approved',
+          subject: moderationAccess.subject,
+          postId,
+          postTitle: row.title || 'Untitled post',
+          targetUrl: buildSubjectPostTargetUrl(subjectId, postId),
+        });
+      } catch (error) {
+        console.error('Subject post approval notification failed:', error);
+      }
     }
 
     return res.json({ ok: true, message: 'Post approved.' });
@@ -2929,11 +3054,28 @@ router.post('/api/subjects/:id/posts/:postId/reject', async (req, res) => {
          AND subject_id = $1
          AND status = 'active'
          AND approval_status = 'pending'
-       RETURNING id`,
+       RETURNING id, author_uid, title`,
       [subjectId, postId, req.user.uid, note || null]
     );
     if (!result.rowCount) {
       return res.status(404).json({ ok: false, message: 'Pending post not found.' });
+    }
+
+    const row = result.rows[0];
+    if (row && row.author_uid && row.author_uid !== req.user.uid) {
+      try {
+        await createSubjectPostOwnerNotification({
+          recipientUid: row.author_uid,
+          actorUid: req.user.uid,
+          type: 'subject_post_rejected',
+          subject: moderationAccess.subject,
+          postId,
+          postTitle: row.title || 'Untitled post',
+          targetUrl: buildSubjectMyPostsTargetUrl(subjectId, { postId, status: 'rejected' }),
+        });
+      } catch (error) {
+        console.error('Subject post rejection notification failed:', error);
+      }
     }
 
     return res.json({ ok: true, message: 'Post rejected.' });
@@ -3558,6 +3700,22 @@ router.post('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
     await client.query('COMMIT');
 
     const row = insertResult.rows[0];
+    if (postAccess.post.author_uid && postAccess.post.author_uid !== req.user.uid) {
+      try {
+        await createSubjectPostOwnerNotification({
+          recipientUid: postAccess.post.author_uid,
+          actorUid: req.user.uid,
+          type: 'subject_post_commented',
+          subject: postAccess.subject,
+          postId,
+          postTitle: postAccess.post.title || 'Untitled post',
+          targetUrl: buildSubjectPostTargetUrl(subjectId, postId),
+        });
+      } catch (error) {
+        console.error('Subject comment notification failed:', error);
+      }
+    }
+
     return res.json({
       ok: true,
       commentsCount: Number(countResult.rows[0]?.comments_count || 0),

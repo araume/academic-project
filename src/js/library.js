@@ -12,10 +12,17 @@ const uploadCourse = document.getElementById('uploadCourse');
 const uploadCourseList = document.getElementById('uploadCourseList');
 const uploadCoursePolicyHint = document.getElementById('uploadCoursePolicyHint');
 const uploadToggle = document.getElementById('uploadToggle');
+const openMyUploadsModalButton = document.getElementById('openMyUploadsModal');
 const uploadModal = document.getElementById('uploadModal');
 const uploadClose = document.getElementById('uploadClose');
 const uploadForm = document.getElementById('uploadForm');
 const uploadMessage = document.getElementById('uploadMessage');
+const myUploadsModal = document.getElementById('myUploadsModal');
+const myUploadsClose = document.getElementById('myUploadsClose');
+const myUploadsSubtitle = document.getElementById('myUploadsSubtitle');
+const myUploadsStatusFilter = document.getElementById('myUploadsStatusFilter');
+const myUploadsMessage = document.getElementById('myUploadsMessage');
+const myUploadsList = document.getElementById('myUploadsList');
 
 const detailModal = document.getElementById('detailModal');
 const detailClose = document.getElementById('detailClose');
@@ -74,6 +81,8 @@ let isFetching = false;
 let activeDocAiUuid = null;
 let isSendingDocAi = false;
 let isDocumentUploading = false;
+let initialDocumentSelectionApplied = false;
+let initialMyUploadsSelectionApplied = false;
 
 const state = {
   page: 1,
@@ -84,7 +93,43 @@ const state = {
   uploaderName: '',
   sort: 'recent',
   total: 0,
+  myUploads: {
+    documents: [],
+    filterStatus: 'all',
+    focusUuid: '',
+    removedDocumentUuid: '',
+    openRequested: false,
+  },
 };
+
+function normalizeMyUploadsFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['approved', 'pending', 'rejected', 'removed'].includes(normalized)) {
+    return normalized;
+  }
+  return 'all';
+}
+
+function readInitialDocumentSelection() {
+  const params = new URLSearchParams(window.location.search);
+  const documentUuid = String(params.get('documentUuid') || '').trim();
+  const uploadUuid = String(params.get('uploadUuid') || params.get('documentUuid') || '').trim();
+  return {
+    documentUuid,
+    myUploadsOpen: params.get('myUploads') === '1',
+    uploadStatus: normalizeMyUploadsFilter(params.get('uploadStatus')),
+    uploadUuid,
+    removedDocumentUuid: String(params.get('removedDocumentUuid') || '').trim(),
+  };
+}
+
+const initialDocumentSelection = readInitialDocumentSelection();
+state.myUploads.filterStatus = initialDocumentSelection.myUploadsOpen ? initialDocumentSelection.uploadStatus : 'all';
+state.myUploads.focusUuid = initialDocumentSelection.myUploadsOpen ? initialDocumentSelection.uploadUuid : '';
+state.myUploads.removedDocumentUuid = initialDocumentSelection.myUploadsOpen
+  ? initialDocumentSelection.removedDocumentUuid
+  : '';
+state.myUploads.openRequested = initialDocumentSelection.myUploadsOpen;
 
 const uploadAccessState = {
   loaded: false,
@@ -96,6 +141,47 @@ const uploadAccessState = {
 
 function normalizeCourseName(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function syncDocumentLocation(documentUuid) {
+  if (!window.history || typeof window.history.replaceState !== 'function') return;
+  const url = new URL(window.location.href);
+  if (documentUuid) {
+    url.searchParams.set('documentUuid', String(documentUuid));
+  } else {
+    url.searchParams.delete('documentUuid');
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function syncMyUploadsLocation({ open = false, status = 'all', uploadUuid = '', removedDocumentUuid = '' } = {}) {
+  if (!window.history || typeof window.history.replaceState !== 'function') return;
+  const url = new URL(window.location.href);
+  if (open) {
+    url.searchParams.set('myUploads', '1');
+    const normalizedStatus = normalizeMyUploadsFilter(status);
+    if (normalizedStatus === 'all') {
+      url.searchParams.delete('uploadStatus');
+    } else {
+      url.searchParams.set('uploadStatus', normalizedStatus);
+    }
+    if (uploadUuid) {
+      url.searchParams.set('uploadUuid', uploadUuid);
+    } else {
+      url.searchParams.delete('uploadUuid');
+    }
+    if (removedDocumentUuid) {
+      url.searchParams.set('removedDocumentUuid', removedDocumentUuid);
+    } else {
+      url.searchParams.delete('removedDocumentUuid');
+    }
+  } else {
+    url.searchParams.delete('myUploads');
+    url.searchParams.delete('uploadStatus');
+    url.searchParams.delete('uploadUuid');
+    url.searchParams.delete('removedDocumentUuid');
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 function findUploadCoursePolicy(courseName) {
@@ -391,6 +477,7 @@ function renderPagination() {
 
 async function openDetail(doc) {
   currentDoc = doc;
+  syncDocumentLocation(doc && doc.uuid ? doc.uuid : null);
   updateDocumentAvailabilityUI(doc);
   detailTitle.textContent = doc.title;
   const approvalStatus = String(doc.upload_approval_status || 'approved').toLowerCase();
@@ -428,6 +515,298 @@ async function openDetail(doc) {
 
   detailModal.classList.remove('is-hidden');
   await loadComments(doc.uuid);
+}
+
+function closeDetailModal() {
+  currentDoc = null;
+  if (editSection) {
+    editSection.classList.add('is-hidden');
+  }
+  closeModal(detailModal);
+  syncDocumentLocation(null);
+}
+
+function documentApprovalStatusTone(doc) {
+  const status = String(doc && doc.approvalStatus ? doc.approvalStatus : doc && doc.upload_approval_status ? doc.upload_approval_status : 'approved').toLowerCase();
+  if (status === 'pending') return { label: 'Pending approval', modifier: 'is-warning' };
+  if (status === 'rejected') return { label: 'Rejected', modifier: 'is-danger' };
+  if (status === 'removed') return { label: 'Removed', modifier: 'is-danger' };
+  return { label: 'Approved', modifier: 'is-accent' };
+}
+
+function createDocumentStatusBadge(text, modifier = '') {
+  const badge = document.createElement('span');
+  badge.className = `my-upload-badge${modifier ? ` ${modifier}` : ''}`;
+  badge.textContent = text;
+  return badge;
+}
+
+function highlightMyUpload(uuid) {
+  if (!uuid) return;
+  const card = document.getElementById(`my-upload-doc-${uuid}`);
+  if (!card) return;
+  card.classList.add('is-highlighted');
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  window.setTimeout(() => card.classList.remove('is-highlighted'), 2400);
+}
+
+function renderMyUploads() {
+  if (!myUploadsList) return;
+  if (myUploadsMessage) {
+    myUploadsMessage.textContent = '';
+  }
+  const filterStatus = normalizeMyUploadsFilter(state.myUploads.filterStatus);
+  const documents = Array.isArray(state.myUploads.documents) ? state.myUploads.documents : [];
+  const visibleDocuments = filterStatus === 'all'
+    ? documents
+    : documents.filter((doc) => String(doc.approvalStatus || 'approved').toLowerCase() === filterStatus);
+
+  myUploadsList.innerHTML = '';
+
+  if (myUploadsSubtitle) {
+    myUploadsSubtitle.textContent = filterStatus === 'all'
+      ? 'Review your approved, pending, and rejected library uploads here.'
+      : `Showing your ${filterStatus} Open Library uploads.`;
+  }
+
+  if (!visibleDocuments.length) {
+    const empty = document.createElement('p');
+    empty.className = 'detail-description';
+    if (filterStatus === 'removed') {
+      empty.textContent = 'Removed uploads are no longer available in your library list.';
+    } else if (filterStatus === 'all') {
+      empty.textContent = 'You have not uploaded any Open Library documents yet.';
+    } else {
+      empty.textContent = `You have no ${filterStatus} Open Library uploads.`;
+    }
+    myUploadsList.appendChild(empty);
+    if (myUploadsMessage && state.myUploads.removedDocumentUuid && filterStatus === 'removed') {
+      myUploadsMessage.textContent = 'One of your uploads was removed by moderation and is no longer available.';
+    }
+    return;
+  }
+
+  visibleDocuments.forEach((doc) => {
+    const article = document.createElement('article');
+    article.className = 'my-upload-card';
+    article.id = `my-upload-doc-${doc.uuid}`;
+
+    const head = document.createElement('div');
+    head.className = 'my-upload-head';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'my-upload-title-wrap';
+    const title = document.createElement('h4');
+    title.textContent = doc.title || 'Untitled document';
+    const meta = document.createElement('p');
+    meta.className = 'my-upload-meta';
+    meta.textContent = `${doc.course || 'No course'} • ${doc.subject || 'No subject'} • Uploaded ${new Date(doc.uploadedAt || Date.now()).toLocaleString()}`;
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(meta);
+    head.appendChild(titleWrap);
+
+    const badges = document.createElement('div');
+    badges.className = 'my-upload-badges';
+    const tone = documentApprovalStatusTone(doc);
+    badges.appendChild(createDocumentStatusBadge(tone.label, tone.modifier));
+    badges.appendChild(createDocumentStatusBadge(doc.visibility || 'public'));
+    head.appendChild(badges);
+    article.appendChild(head);
+
+    if (doc.description) {
+      const description = document.createElement('p');
+      description.className = 'my-upload-description';
+      description.textContent = doc.description;
+      article.appendChild(description);
+    }
+
+    const utility = document.createElement('div');
+    utility.className = 'my-upload-utility-row';
+    utility.appendChild(createDocumentStatusBadge(doc.filename || 'Unknown file'));
+    utility.appendChild(createDocumentStatusBadge(`${Number(doc.popularity || 0)} likes`));
+    utility.appendChild(createDocumentStatusBadge(`${Number(doc.views || 0)} views`));
+    article.appendChild(utility);
+
+    if (String(doc.approvalStatus || 'approved').toLowerCase() === 'pending') {
+      const pending = document.createElement('p');
+      pending.className = 'my-upload-status-copy';
+      pending.textContent = `Submitted ${new Date(doc.approvalRequestedAt || doc.uploadedAt || Date.now()).toLocaleString()} and hidden until approval.`;
+      article.appendChild(pending);
+    }
+    if (String(doc.approvalStatus || 'approved').toLowerCase() === 'rejected') {
+      const rejected = document.createElement('p');
+      rejected.className = 'my-upload-status-copy is-danger';
+      rejected.textContent = doc.rejectionNote
+        ? `Rejected: ${doc.rejectionNote}`
+        : 'Rejected by the assigned DepAdmin for the selected subcourse.';
+      article.appendChild(rejected);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'my-upload-actions';
+
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'ghost-button';
+    openButton.textContent = 'Open details';
+    openButton.addEventListener('click', async () => {
+      try {
+        state.myUploads.focusUuid = doc.uuid;
+        syncMyUploadsLocation({
+          open: true,
+          status: state.myUploads.filterStatus,
+          uploadUuid: state.myUploads.focusUuid,
+          removedDocumentUuid: state.myUploads.removedDocumentUuid,
+        });
+        closeMyUploadsManager();
+        await openDocumentFromNotification(doc.uuid);
+      } catch (error) {
+        if (myUploadsMessage) myUploadsMessage.textContent = error.message || 'Unable to open document details.';
+      }
+    });
+    actions.appendChild(openButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = String(doc.approvalStatus || 'approved').toLowerCase() === 'pending' ? 'ghost-button' : 'primary-button';
+    deleteButton.textContent = String(doc.approvalStatus || 'approved').toLowerCase() === 'pending' ? 'Cancel pending' : 'Delete upload';
+    deleteButton.addEventListener('click', async () => {
+      try {
+        await removeMyUpload(doc);
+      } catch (error) {
+        if (myUploadsMessage) myUploadsMessage.textContent = error.message || 'Unable to remove upload.';
+      }
+    });
+    actions.appendChild(deleteButton);
+
+    article.appendChild(actions);
+    myUploadsList.appendChild(article);
+  });
+
+  if (state.myUploads.focusUuid) {
+    highlightMyUpload(state.myUploads.focusUuid);
+  }
+}
+
+async function loadMyUploads() {
+  if (!myUploadsList) return;
+  if (myUploadsMessage) {
+    myUploadsMessage.textContent = '';
+  }
+  myUploadsList.innerHTML = '<p class="detail-description">Loading your uploads...</p>';
+  const response = await fetch('/api/library/my-documents');
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to load your uploads.');
+  }
+  state.myUploads.documents = Array.isArray(data.documents) ? data.documents : [];
+  renderMyUploads();
+}
+
+async function openMyUploadsManager(options = {}) {
+  if (detailModal && !detailModal.classList.contains('is-hidden')) {
+    closeDetailModal();
+  } else {
+    syncDocumentLocation(null);
+  }
+  state.myUploads.filterStatus = normalizeMyUploadsFilter(
+    Object.prototype.hasOwnProperty.call(options, 'filterStatus') ? options.filterStatus : state.myUploads.filterStatus
+  );
+  state.myUploads.focusUuid = Object.prototype.hasOwnProperty.call(options, 'focusUuid')
+    ? String(options.focusUuid || '').trim()
+    : state.myUploads.focusUuid;
+  state.myUploads.removedDocumentUuid = Object.prototype.hasOwnProperty.call(options, 'removedDocumentUuid')
+    ? String(options.removedDocumentUuid || '').trim()
+    : state.myUploads.removedDocumentUuid;
+  if (myUploadsStatusFilter) {
+    myUploadsStatusFilter.value = state.myUploads.filterStatus;
+  }
+  syncMyUploadsLocation({
+    open: true,
+    status: state.myUploads.filterStatus,
+    uploadUuid: state.myUploads.focusUuid,
+    removedDocumentUuid: state.myUploads.removedDocumentUuid,
+  });
+  openModal(myUploadsModal);
+  await loadMyUploads();
+}
+
+function closeMyUploadsManager() {
+  closeModal(myUploadsModal);
+  state.myUploads.filterStatus = 'all';
+  state.myUploads.focusUuid = '';
+  state.myUploads.removedDocumentUuid = '';
+  syncMyUploadsLocation({ open: false });
+}
+
+async function removeMyUpload(doc) {
+  if (!doc || !doc.uuid) return;
+  const approvalStatus = String(doc.approvalStatus || 'approved').toLowerCase();
+  const confirmText = approvalStatus === 'pending'
+    ? 'Cancel this pending upload?'
+    : 'Delete this upload?';
+  if (!window.confirm(confirmText)) return;
+  const response = await fetch(`/api/library/documents/${encodeURIComponent(doc.uuid)}`, {
+    method: 'DELETE',
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to remove upload.');
+  }
+  if (currentDoc && currentDoc.uuid === doc.uuid) {
+    closeDetailModal();
+  }
+  if (state.myUploads.focusUuid === doc.uuid) {
+    state.myUploads.focusUuid = '';
+  }
+  syncMyUploadsLocation({
+    open: true,
+    status: state.myUploads.filterStatus,
+    uploadUuid: state.myUploads.focusUuid,
+    removedDocumentUuid: state.myUploads.removedDocumentUuid,
+  });
+  if (myUploadsMessage) {
+    myUploadsMessage.textContent = approvalStatus === 'pending' ? 'Pending upload canceled.' : 'Upload deleted.';
+  }
+  await Promise.all([loadMyUploads(), fetchDocuments()]);
+}
+
+async function openDocumentFromNotification(uuid) {
+  const safeUuid = String(uuid || '').trim();
+  if (!safeUuid) return;
+  const response = await fetch(`/api/library/documents/${encodeURIComponent(safeUuid)}`);
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok || !data.document) {
+    throw new Error(data.message || 'Unable to load the document from this notification.');
+  }
+  await openDetail(data.document);
+}
+
+async function applyInitialDocumentSelection() {
+  if (initialDocumentSelectionApplied) return;
+  initialDocumentSelectionApplied = true;
+  if (state.myUploads.openRequested || (myUploadsModal && !myUploadsModal.classList.contains('is-hidden'))) return;
+  if (!initialDocumentSelection.documentUuid) return;
+  try {
+    await openDocumentFromNotification(initialDocumentSelection.documentUuid);
+  } catch (_error) {
+    syncDocumentLocation(null);
+  }
+}
+
+async function applyInitialMyUploadsSelection() {
+  if (initialMyUploadsSelectionApplied) return;
+  initialMyUploadsSelectionApplied = true;
+  if (!state.myUploads.openRequested) return;
+  try {
+    await openMyUploadsManager({
+      filterStatus: state.myUploads.filterStatus,
+      focusUuid: state.myUploads.focusUuid,
+      removedDocumentUuid: state.myUploads.removedDocumentUuid,
+    });
+  } finally {
+    state.myUploads.openRequested = false;
+  }
 }
 
 async function loadComments(documentUuid) {
@@ -815,8 +1194,48 @@ if (uploadToggle) {
   });
 }
 
+if (openMyUploadsModalButton) {
+  openMyUploadsModalButton.addEventListener('click', async () => {
+    try {
+      await openMyUploadsManager({ filterStatus: 'all', focusUuid: '', removedDocumentUuid: '' });
+    } catch (error) {
+      if (myUploadsMessage) {
+        myUploadsMessage.textContent = error.message || 'Unable to load your uploads.';
+      }
+    }
+  });
+}
+
 if (uploadClose) {
   uploadClose.addEventListener('click', () => closeModal(uploadModal));
+}
+
+if (myUploadsClose) {
+  myUploadsClose.addEventListener('click', () => closeMyUploadsManager());
+}
+
+if (myUploadsModal) {
+  myUploadsModal.addEventListener('click', (event) => {
+    if (event.target === myUploadsModal) {
+      closeMyUploadsManager();
+    }
+  });
+}
+
+if (myUploadsStatusFilter) {
+  myUploadsStatusFilter.addEventListener('change', () => {
+    state.myUploads.filterStatus = normalizeMyUploadsFilter(myUploadsStatusFilter.value);
+    if (state.myUploads.filterStatus !== 'removed') {
+      state.myUploads.removedDocumentUuid = '';
+    }
+    syncMyUploadsLocation({
+      open: true,
+      status: state.myUploads.filterStatus,
+      uploadUuid: state.myUploads.focusUuid,
+      removedDocumentUuid: state.myUploads.removedDocumentUuid,
+    });
+    renderMyUploads();
+  });
 }
 
 if (uploadCourse) {
@@ -825,7 +1244,7 @@ if (uploadCourse) {
 }
 
 if (detailClose) {
-  detailClose.addEventListener('click', () => closeModal(detailModal));
+  detailClose.addEventListener('click', () => closeDetailModal());
 }
 
 if (detailLike) {
@@ -938,7 +1357,7 @@ if (detailDelete) {
     });
     const data = await response.json();
     if (response.ok && data.ok) {
-      closeModal(detailModal);
+      closeDetailModal();
       fetchDocuments();
     }
   });
@@ -1136,8 +1555,13 @@ setInterval(() => {
   }
 }, 10000);
 
-loadCourses();
-loadUploadAccess();
-updateActiveUploaderFilterUI();
-fetchDocuments();
-loadNavAvatar();
+async function initLibraryPage() {
+  loadCourses();
+  loadUploadAccess();
+  updateActiveUploaderFilterUI();
+  await Promise.all([fetchDocuments(), loadNavAvatar()]);
+  await applyInitialMyUploadsSelection();
+  await applyInitialDocumentSelection();
+}
+
+initLibraryPage();
