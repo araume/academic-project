@@ -655,12 +655,33 @@ body {
   gap: 10px;
 }
 
+.subject-comment-meta-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .subject-comment-meta strong {
   font-size: 0.84rem;
 }
 
 .subject-comment p {
   line-height: 1.55;
+}
+
+.subject-comment-menu-wrap {
+  margin-left: auto;
+}
+
+.subject-comment-menu-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.subject-comment-menu {
+  top: 40px;
+  min-width: 162px;
 }
 
 .subject-comment-form {
@@ -920,6 +941,11 @@ body {
   color: #213546;
   white-space: pre-wrap;
   line-height: 1.55;
+}
+
+.subject-moderation-detail.is-secondary {
+  color: var(--subjects-muted);
+  font-size: 0.92rem;
 }
 
 .subject-moderation-actions,

@@ -39,6 +39,7 @@ const SUBJECT_REPORT_STATUSES = new Set([
 const SUBJECT_REPORT_ACTIONS = new Set([
   'none',
   'take_down_subject_post',
+  'take_down_subject_comment',
   'warn_target_user',
   'suspend_target_user',
   'request_ban_target_user',
@@ -262,6 +263,33 @@ async function ensureSubjectEngagementReady(client = pool) {
           ON subject_post_reports(subject_id, status, created_at DESC);
         CREATE INDEX IF NOT EXISTS subject_post_reports_target_idx
           ON subject_post_reports(post_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS subject_comment_reports (
+          id BIGSERIAL PRIMARY KEY,
+          subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+          comment_id BIGINT NOT NULL REFERENCES subject_comments(id) ON DELETE CASCADE,
+          reporter_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+          target_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          category TEXT,
+          custom_reason TEXT,
+          details TEXT,
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open'
+            CHECK (status IN ('open', 'under_review', 'resolved_action_taken', 'resolved_no_action', 'rejected')),
+          moderation_action TEXT,
+          resolution_note TEXT,
+          resolved_at TIMESTAMPTZ,
+          resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (comment_id, reporter_uid)
+        );
+
+        CREATE INDEX IF NOT EXISTS subject_comment_reports_subject_status_idx
+          ON subject_comment_reports(subject_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS subject_comment_reports_target_idx
+          ON subject_comment_reports(comment_id, created_at DESC);
+
         CREATE INDEX IF NOT EXISTS subject_posts_subject_approval_created_idx
           ON subject_posts(subject_id, approval_status, created_at DESC);
         CREATE INDEX IF NOT EXISTS subject_memberships_user_state_suspended_idx
@@ -662,6 +690,25 @@ async function ensureSubjectGovernanceTarget(subjectId, targetUid, actorUid, cli
   };
 }
 
+async function refreshSubjectPostCommentCount(subjectId, postId, client = pool) {
+  const result = await client.query(
+    `UPDATE subject_posts sp
+     SET comments_count = (
+       SELECT COUNT(*)::int
+       FROM subject_comments sc
+       WHERE sc.subject_id = sp.subject_id
+         AND sc.post_id = sp.id
+         AND sc.status = 'active'
+     ),
+         updated_at = NOW()
+     WHERE sp.subject_id = $1
+       AND sp.id = $2
+     RETURNING comments_count`,
+    [subjectId, postId]
+  );
+  return Number(result.rows[0]?.comments_count || 0);
+}
+
 async function takeDownSubjectPost(postId, actorUid, reason, client = pool) {
   const result = await client.query(
     `UPDATE subject_posts sp
@@ -698,6 +745,24 @@ async function takeDownSubjectPost(postId, actorUid, reason, client = pool) {
     });
   }
   return Boolean(row);
+}
+
+async function takeDownSubjectComment(commentId, actorUid, reason, client = pool) {
+  const result = await client.query(
+    `UPDATE subject_comments sc
+     SET status = 'taken_down',
+         taken_down_by_uid = $2,
+         taken_down_reason = $3,
+         updated_at = NOW()
+     WHERE sc.id = $1
+       AND sc.status = 'active'
+     RETURNING sc.id, sc.subject_id, sc.post_id, sc.author_uid, sc.content`,
+    [commentId, actorUid || null, normalizeText(reason, 1000) || null]
+  );
+  const row = result.rows[0] || null;
+  if (!row) return false;
+  await refreshSubjectPostCommentCount(row.subject_id, row.post_id, client);
+  return true;
 }
 
 function resolveViewerMainCourseForSubjects(user, courseAccess = null) {
@@ -1082,6 +1147,62 @@ async function loadSubjectPostForViewer(subjectId, postId, user, client = pool, 
     membershipState: subjectAccess.membershipState,
     canModerate: subjectAccess.canModerate === true,
     post,
+  };
+}
+
+async function loadSubjectCommentForViewer(subjectId, commentId, user, client = pool, courseAccess = null) {
+  const subjectAccess = await ensureSubjectInteractionAccess(subjectId, user, client, courseAccess);
+  if (subjectAccess.status !== 'ok') {
+    return subjectAccess;
+  }
+
+  const commentResult = await client.query(
+    `SELECT
+       sc.id,
+       sc.subject_id,
+       sc.post_id,
+       sc.author_uid,
+       sc.content,
+       sc.status,
+       sc.taken_down_reason,
+       sc.created_at,
+       sc.updated_at,
+       sp.author_uid AS post_author_uid,
+       sp.title AS post_title,
+       sp.status AS post_status,
+       sp.approval_status AS post_approval_status
+     FROM subject_comments sc
+     JOIN subject_posts sp
+       ON sp.id = sc.post_id
+      AND sp.subject_id = sc.subject_id
+     WHERE sc.subject_id = $1
+       AND sc.id = $2
+     LIMIT 1`,
+    [subjectId, commentId]
+  );
+  const comment = commentResult.rows[0] || null;
+  if (!comment) {
+    return { status: 'not_found', subject: subjectAccess.subject, membershipState: subjectAccess.membershipState };
+  }
+
+  const postStatus = normalizeText(comment.post_status, 40).toLowerCase() || 'active';
+  const postApprovalStatus = normalizeSubjectPostApprovalStatus(comment.post_approval_status, 'approved');
+  if (postStatus !== 'active' || postApprovalStatus !== 'approved') {
+    return { status: 'not_found', subject: subjectAccess.subject, membershipState: subjectAccess.membershipState };
+  }
+
+  if (normalizeText(comment.status, 40).toLowerCase() !== 'active'
+    && comment.author_uid !== user.uid
+    && subjectAccess.canModerate !== true) {
+    return { status: 'not_found', subject: subjectAccess.subject, membershipState: subjectAccess.membershipState };
+  }
+
+  return {
+    status: 'ok',
+    subject: subjectAccess.subject,
+    membershipState: subjectAccess.membershipState,
+    canModerate: subjectAccess.canModerate === true,
+    comment,
   };
 }
 
@@ -1668,6 +1789,7 @@ router.get('/api/subjects/:id/feed', async (req, res) => {
            sc.author_uid,
            sc.content,
            sc.created_at,
+           sc.updated_at,
            COALESCE(pr.display_name, a.display_name, a.username, a.email) AS author_name
          FROM subject_comments sc
          JOIN accounts a ON a.uid = sc.author_uid
@@ -1690,6 +1812,7 @@ router.get('/api/subjects/:id/feed', async (req, res) => {
           authorName: row.author_name || 'Member',
           content: row.content || '',
           createdAt: row.created_at,
+          updatedAt: row.updated_at || row.created_at,
         });
       });
     }
@@ -2593,7 +2716,7 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
     }
 
     const subject = moderationAccess.subject;
-    const [membersResult, pendingPostsResult, reportsResult, aiReportsResult] = await Promise.all([
+    const [membersResult, pendingPostsResult, reportsResult, commentReportsResult, aiReportsResult] = await Promise.all([
       pool.query(
         `SELECT
            sm.user_uid,
@@ -2674,7 +2797,48 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
            ON aa.uid = sp.author_uid
          LEFT JOIN profiles ap
            ON ap.uid = sp.author_uid
+        WHERE r.subject_id = $1
+          AND sp.status = 'active'
+          AND r.status IN ('open', 'under_review')
+        ORDER BY CASE WHEN r.status = 'open' THEN 0 ELSE 1 END, r.created_at DESC`,
+        [subjectId]
+      ),
+      pool.query(
+        `SELECT
+           r.id,
+           r.comment_id,
+           r.category,
+           r.custom_reason,
+           r.details,
+           r.reason,
+           r.status,
+           r.moderation_action,
+           r.resolution_note,
+           r.created_at,
+           r.target_uid,
+           sc.post_id,
+           sc.content,
+           sc.author_uid,
+           sp.title AS post_title,
+           COALESCE(rp.display_name, ra.display_name, ra.username, ra.email) AS reporter_name,
+           COALESCE(ap.display_name, aa.display_name, aa.username, aa.email) AS author_name
+         FROM subject_comment_reports r
+         JOIN subject_comments sc
+           ON sc.id = r.comment_id
+          AND sc.subject_id = r.subject_id
+         JOIN subject_posts sp
+           ON sp.id = sc.post_id
+          AND sp.subject_id = sc.subject_id
+         JOIN accounts ra
+           ON ra.uid = r.reporter_uid
+         LEFT JOIN profiles rp
+           ON rp.uid = r.reporter_uid
+         LEFT JOIN accounts aa
+           ON aa.uid = sc.author_uid
+         LEFT JOIN profiles ap
+           ON ap.uid = sc.author_uid
          WHERE r.subject_id = $1
+           AND sc.status = 'active'
            AND sp.status = 'active'
            AND r.status IN ('open', 'under_review')
          ORDER BY CASE WHEN r.status = 'open' THEN 0 ELSE 1 END, r.created_at DESC`,
@@ -2784,6 +2948,56 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
       })
       .filter(Boolean);
 
+    const combinedReports = [
+      ...reportsResult.rows.map((row) => ({
+        sourceType: 'manual',
+        targetType: 'post',
+        id: Number(row.id),
+        postId: Number(row.post_id),
+        title: row.title || '',
+        postTitle: row.title || '',
+        content: row.content || '',
+        authorUid: row.author_uid || row.target_uid || null,
+        authorName: row.author_name || 'Member',
+        reporterName: row.reporter_name || 'Member',
+        category: row.category || null,
+        customReason: row.custom_reason || null,
+        details: row.details || null,
+        reason: row.reason || '',
+        status: normalizeSubjectReportStatus(row.status, 'open'),
+        moderationAction: normalizeSubjectReportAction(row.moderation_action, 'none'),
+        resolutionNote: row.resolution_note || '',
+        createdAt: row.created_at || null,
+      })),
+      ...commentReportsResult.rows.map((row) => ({
+        sourceType: 'comment',
+        targetType: 'comment',
+        id: Number(row.id),
+        commentId: Number(row.comment_id),
+        postId: Number(row.post_id),
+        title: row.post_title ? `Comment on ${row.post_title}` : 'Comment report',
+        postTitle: row.post_title || '',
+        content: row.content || '',
+        authorUid: row.author_uid || row.target_uid || null,
+        authorName: row.author_name || 'Member',
+        reporterName: row.reporter_name || 'Member',
+        category: row.category || null,
+        customReason: row.custom_reason || null,
+        details: row.details || null,
+        reason: row.reason || '',
+        status: normalizeSubjectReportStatus(row.status, 'open'),
+        moderationAction: normalizeSubjectReportAction(row.moderation_action, 'none'),
+        resolutionNote: row.resolution_note || '',
+        createdAt: row.created_at || null,
+      })),
+      ...aiReports,
+    ].sort((left, right) => {
+      const statusRank = (value) => (normalizeSubjectReportStatus(value, 'open') === 'open' ? 0 : 1);
+      const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+      const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+      return statusRank(left.status) - statusRank(right.status) || rightTime - leftTime || right.id - left.id;
+    });
+
     return res.json({
       ok: true,
       subject: {
@@ -2820,27 +3034,7 @@ router.get('/api/subjects/:id/moderation', async (req, res) => {
           ? pendingDocumentMap.get(row.attachment_library_document_uuid) || null
           : null,
       })),
-      reports: [
-        ...reportsResult.rows.map((row) => ({
-          sourceType: 'manual',
-          id: Number(row.id),
-          postId: Number(row.post_id),
-          title: row.title || '',
-          content: row.content || '',
-          authorUid: row.author_uid || row.target_uid || null,
-          authorName: row.author_name || 'Member',
-          reporterName: row.reporter_name || 'Member',
-          category: row.category || null,
-          customReason: row.custom_reason || null,
-          details: row.details || null,
-          reason: row.reason || '',
-          status: normalizeSubjectReportStatus(row.status, 'open'),
-          moderationAction: normalizeSubjectReportAction(row.moderation_action, 'none'),
-          resolutionNote: row.resolution_note || '',
-          createdAt: row.created_at || null,
-        })),
-        ...aiReports,
-      ],
+      reports: combinedReports,
     });
   } catch (error) {
     console.error('Subject moderation payload failed:', error);
@@ -3235,7 +3429,7 @@ router.post('/api/subjects/:id/reports/:reportType/:reportId/action', async (req
   const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
   const reportId = parsePositiveInt(req.params.reportId, 0, Number.MAX_SAFE_INTEGER);
   const reportType = normalizeText(req.params.reportType, 40).toLowerCase();
-  if (!subjectId || !reportId || !['manual', 'ai'].includes(reportType)) {
+  if (!subjectId || !reportId || !['manual', 'comment', 'ai'].includes(reportType)) {
     return res.status(400).json({ ok: false, message: 'Invalid moderation target.' });
   }
 
@@ -3262,6 +3456,7 @@ router.post('/api/subjects/:id/reports/:reportType/:reportId/action', async (req
 
     let targetUid = '';
     let postId = null;
+    let commentId = null;
     let defaultReason = '';
 
     if (reportType === 'manual') {
@@ -3279,6 +3474,32 @@ router.post('/api/subjects/:id/reports/:reportType/:reportId/action', async (req
       }
       targetUid = report.target_uid || '';
       postId = Number(report.post_id || 0) || null;
+      defaultReason = report.reason || '';
+    } else if (reportType === 'comment') {
+      const reportResult = await client.query(
+        `SELECT
+           r.id,
+           r.comment_id,
+           r.target_uid,
+           r.reason,
+           r.status,
+           sc.post_id
+         FROM subject_comment_reports r
+         JOIN subject_comments sc
+           ON sc.id = r.comment_id
+          AND sc.subject_id = r.subject_id
+         WHERE r.id = $1
+           AND r.subject_id = $2
+         LIMIT 1`,
+        [reportId, subjectId]
+      );
+      const report = reportResult.rows[0] || null;
+      if (!report) {
+        return res.status(404).json({ ok: false, message: 'Report not found.' });
+      }
+      targetUid = report.target_uid || '';
+      postId = Number(report.post_id || 0) || null;
+      commentId = Number(report.comment_id || 0) || null;
       defaultReason = report.reason || '';
     } else {
       const reportResult = await client.query(
@@ -3319,6 +3540,13 @@ router.post('/api/subjects/:id/reports/:reportType/:reportId/action', async (req
       defaultReason = normalizeText(resultPayload.summary, 1000);
     }
 
+    if (moderationAction === 'take_down_subject_post' && reportType === 'comment') {
+      return res.status(400).json({ ok: false, message: 'Comment reports must use the comment takedown action.' });
+    }
+    if (moderationAction === 'take_down_subject_comment' && reportType !== 'comment') {
+      return res.status(400).json({ ok: false, message: 'Only comment reports can take down comments.' });
+    }
+
     if (moderationAction === 'take_down_subject_post' && postId) {
       const removed = await takeDownSubjectPost(
         postId,
@@ -3328,6 +3556,17 @@ router.post('/api/subjects/:id/reports/:reportType/:reportId/action', async (req
       );
       if (!removed) {
         return res.status(404).json({ ok: false, message: 'Target post no longer exists.' });
+      }
+    }
+    if (moderationAction === 'take_down_subject_comment' && commentId) {
+      const removed = await takeDownSubjectComment(
+        commentId,
+        req.user.uid,
+        note || defaultReason || 'Taken down from unit/thread moderation',
+        client
+      );
+      if (!removed) {
+        return res.status(404).json({ ok: false, message: 'Target comment no longer exists.' });
       }
     }
 
@@ -3354,6 +3593,26 @@ router.post('/api/subjects/:id/reports/:reportType/:reportId/action', async (req
     if (reportType === 'manual') {
       await client.query(
         `UPDATE subject_post_reports
+         SET status = $3,
+             moderation_action = $4,
+             resolution_note = $5,
+             resolved_at = CASE WHEN $3 IN ('resolved_action_taken', 'resolved_no_action', 'rejected') THEN NOW() ELSE NULL END,
+             resolved_by_uid = CASE WHEN $3 IN ('resolved_action_taken', 'resolved_no_action', 'rejected') THEN $6 ELSE NULL END,
+             updated_at = NOW()
+         WHERE id = $1
+           AND subject_id = $2`,
+        [
+          reportId,
+          subjectId,
+          status,
+          moderationAction === 'none' ? null : moderationAction,
+          note || null,
+          req.user.uid,
+        ]
+      );
+    } else if (reportType === 'comment') {
+      await client.query(
+        `UPDATE subject_comment_reports
          SET status = $3,
              moderation_action = $4,
              resolution_note = $5,
@@ -3630,6 +3889,238 @@ router.post('/api/subjects/:id/posts/:postId/ask-ai/messages', async (req, res) 
   }
 });
 
+router.patch('/api/subjects/:id/comments/:commentId', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'subjects:edit_comment', 60)) {
+    return;
+  }
+
+  const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
+  const commentId = parsePositiveInt(req.params.commentId, 0, Number.MAX_SAFE_INTEGER);
+  const content = normalizeText(req.body && req.body.content, 4000);
+  if (!subjectId || !commentId) {
+    return res.status(400).json({ ok: false, message: 'Invalid subject comment id.' });
+  }
+  if (!content) {
+    return res.status(400).json({ ok: false, message: 'Comment content required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const commentAccess = await loadSubjectCommentForViewer(subjectId, commentId, req.user, client, req.subjectCourseAccess);
+    const subjectLabel = formatSubjectLabel(commentAccess.subject && commentAccess.subject.kind);
+    if (commentAccess.status === 'not_found') {
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+    if (commentAccess.status === 'forbidden') {
+      return res.status(403).json({ ok: false, message: 'Not allowed.' });
+    }
+    if (commentAccess.status === 'banned') {
+      return res.status(403).json({ ok: false, message: `You are banned from interacting in this ${subjectLabel}.` });
+    }
+    if (commentAccess.status === 'suspended') {
+      return res.status(403).json({
+        ok: false,
+        message: `You are suspended from this ${subjectLabel} until ${new Date(commentAccess.suspendedUntil).toLocaleString()}.`,
+      });
+    }
+
+    const comment = commentAccess.comment || null;
+    if (!comment) {
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+    if (comment.author_uid !== req.user.uid) {
+      return res.status(403).json({ ok: false, message: 'Only the comment owner can edit this comment.' });
+    }
+    if (normalizeText(comment.status, 40).toLowerCase() !== 'active') {
+      return res.status(400).json({ ok: false, message: 'Removed comments cannot be edited.' });
+    }
+
+    const result = await client.query(
+      `UPDATE subject_comments
+       SET content = $3,
+           updated_at = NOW()
+       WHERE subject_id = $1
+         AND id = $2
+         AND author_uid = $4
+         AND status = 'active'
+       RETURNING id, subject_id, post_id, author_uid, content, created_at, updated_at`,
+      [subjectId, commentId, content, req.user.uid]
+    );
+    const row = result.rows[0] || null;
+    if (!row) {
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+
+    return res.json({
+      ok: true,
+      comment: {
+        id: Number(row.id),
+        subjectId: Number(row.subject_id),
+        postId: Number(row.post_id),
+        authorUid: row.author_uid,
+        authorName: req.user.displayName || req.user.username || req.user.email || 'Member',
+        content: row.content || '',
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || row.created_at || null,
+      },
+    });
+  } catch (error) {
+    console.error('Subject comment update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update comment.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/api/subjects/:id/comments/:commentId', async (req, res) => {
+  if (!enforceRateLimit(req, res, 'subjects:delete_comment', 40)) {
+    return;
+  }
+
+  const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
+  const commentId = parsePositiveInt(req.params.commentId, 0, Number.MAX_SAFE_INTEGER);
+  if (!subjectId || !commentId) {
+    return res.status(400).json({ ok: false, message: 'Invalid subject comment id.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const commentAccess = await loadSubjectCommentForViewer(subjectId, commentId, req.user, client, req.subjectCourseAccess);
+    const subjectLabel = formatSubjectLabel(commentAccess.subject && commentAccess.subject.kind);
+    if (commentAccess.status === 'not_found') {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+    if (commentAccess.status === 'forbidden') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ ok: false, message: 'Not allowed.' });
+    }
+    if (commentAccess.status === 'banned') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ ok: false, message: `You are banned from interacting in this ${subjectLabel}.` });
+    }
+    if (commentAccess.status === 'suspended') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        ok: false,
+        message: `You are suspended from this ${subjectLabel} until ${new Date(commentAccess.suspendedUntil).toLocaleString()}.`,
+      });
+    }
+
+    const comment = commentAccess.comment || null;
+    if (!comment) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+    if (comment.author_uid !== req.user.uid) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ ok: false, message: 'Only the comment owner can delete this comment.' });
+    }
+    if (normalizeText(comment.status, 40).toLowerCase() !== 'active') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Comment already removed.' });
+    }
+
+    const deleteResult = await client.query(
+      `UPDATE subject_comments
+       SET status = 'taken_down',
+           taken_down_by_uid = $3,
+           taken_down_reason = 'Deleted by author',
+           updated_at = NOW()
+       WHERE subject_id = $1
+         AND id = $2
+         AND author_uid = $3
+         AND status = 'active'
+       RETURNING post_id`,
+      [subjectId, commentId, req.user.uid]
+    );
+    const row = deleteResult.rows[0] || null;
+    if (!row) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+
+    const commentsCount = await refreshSubjectPostCommentCount(subjectId, row.post_id, client);
+    await client.query('COMMIT');
+    return res.json({ ok: true, commentsCount });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Subject comment delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to delete comment.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/api/subjects/:id/comments/:commentId/report', async (req, res) => {
+  const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
+  const commentId = parsePositiveInt(req.params.commentId, 0, Number.MAX_SAFE_INTEGER);
+  if (!subjectId || !commentId) {
+    return res.status(400).json({ ok: false, message: 'Invalid subject comment id.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const commentAccess = await loadSubjectCommentForViewer(subjectId, commentId, req.user, client, req.subjectCourseAccess);
+    const subjectLabel = formatSubjectLabel(commentAccess.subject && commentAccess.subject.kind);
+    if (commentAccess.status === 'not_found') {
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+    if (commentAccess.status === 'forbidden') {
+      return res.status(403).json({ ok: false, message: 'Not allowed.' });
+    }
+    if (commentAccess.status === 'banned') {
+      return res.status(403).json({ ok: false, message: `You are banned from interacting in this ${subjectLabel}.` });
+    }
+    if (commentAccess.status === 'suspended') {
+      return res.status(403).json({
+        ok: false,
+        message: `You are suspended from this ${subjectLabel} until ${new Date(commentAccess.suspendedUntil).toLocaleString()}.`,
+      });
+    }
+
+    const comment = commentAccess.comment || null;
+    if (!comment) {
+      return res.status(404).json({ ok: false, message: 'Comment not found.' });
+    }
+    if (normalizeText(comment.status, 40).toLowerCase() !== 'active') {
+      return res.status(400).json({ ok: false, message: 'Only active comments can be reported.' });
+    }
+    if (comment.author_uid && comment.author_uid === req.user.uid) {
+      return res.status(400).json({ ok: false, message: 'You cannot report your own comment.' });
+    }
+
+    const { category, customReason, details, reason } = parseReportPayload(req.body || {});
+    await client.query(
+      `INSERT INTO subject_comment_reports
+         (subject_id, comment_id, reporter_uid, target_uid, category, custom_reason, details, reason, status, moderation_action, resolution_note, resolved_at, resolved_by_uid, created_at, updated_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8, 'open', NULL, NULL, NULL, NULL, NOW(), NOW())
+       ON CONFLICT (comment_id, reporter_uid)
+       DO UPDATE SET
+         target_uid = EXCLUDED.target_uid,
+         category = EXCLUDED.category,
+         custom_reason = EXCLUDED.custom_reason,
+         details = EXCLUDED.details,
+         reason = EXCLUDED.reason,
+         status = 'open',
+         moderation_action = NULL,
+         resolution_note = NULL,
+         resolved_at = NULL,
+         resolved_by_uid = NULL,
+         updated_at = NOW()`,
+      [subjectId, commentId, req.user.uid, comment.author_uid || null, category, customReason || null, details || null, reason]
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Subject comment report failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to report comment.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
   if (!enforceRateLimit(req, res, 'subjects:create_comment', 80)) {
     return;
@@ -3682,21 +4173,7 @@ router.post('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
        RETURNING id, subject_id, post_id, author_uid, content, created_at`,
       [subjectId, postId, req.user.uid, content]
     );
-    const countResult = await client.query(
-      `UPDATE subject_posts sp
-       SET comments_count = (
-         SELECT COUNT(*)::int
-         FROM subject_comments sc
-         WHERE sc.subject_id = sp.subject_id
-           AND sc.post_id = sp.id
-           AND sc.status = 'active'
-       ),
-           updated_at = NOW()
-       WHERE sp.subject_id = $1
-         AND sp.id = $2
-       RETURNING comments_count`,
-      [subjectId, postId]
-    );
+    const commentsCount = await refreshSubjectPostCommentCount(subjectId, postId, client);
     await client.query('COMMIT');
 
     const row = insertResult.rows[0];
@@ -3718,7 +4195,7 @@ router.post('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
 
     return res.json({
       ok: true,
-      commentsCount: Number(countResult.rows[0]?.comments_count || 0),
+      commentsCount,
       comment: {
         id: Number(row.id),
         subjectId: Number(row.subject_id),
@@ -3727,6 +4204,7 @@ router.post('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
         authorName: req.user.displayName || req.user.username || req.user.email || 'Member',
         content: row.content || '',
         createdAt: row.created_at,
+        updatedAt: row.created_at,
       },
     });
   } catch (error) {
@@ -3765,6 +4243,7 @@ router.get('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
          sc.author_uid,
          sc.content,
          sc.created_at,
+         sc.updated_at,
          COALESCE(pr.display_name, a.display_name, a.username, a.email) AS author_name
        FROM subject_comments sc
        JOIN accounts a ON a.uid = sc.author_uid
@@ -3787,6 +4266,7 @@ router.get('/api/subjects/:id/posts/:postId/comments', async (req, res) => {
         authorName: row.author_name || 'Member',
         content: row.content || '',
         createdAt: row.created_at,
+        updatedAt: row.updated_at || row.created_at,
       })),
     });
   } catch (error) {

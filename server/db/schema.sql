@@ -901,6 +901,27 @@ CREATE TABLE IF NOT EXISTS subject_post_reports (
   UNIQUE (post_id, reporter_uid)
 );
 
+CREATE TABLE IF NOT EXISTS subject_comment_reports (
+  id BIGSERIAL PRIMARY KEY,
+  subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  comment_id BIGINT NOT NULL REFERENCES subject_comments(id) ON DELETE CASCADE,
+  reporter_uid TEXT NOT NULL REFERENCES accounts(uid) ON DELETE CASCADE,
+  target_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  category TEXT,
+  custom_reason TEXT,
+  details TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'under_review', 'resolved_action_taken', 'resolved_no_action', 'rejected')),
+  moderation_action TEXT,
+  resolution_note TEXT,
+  resolved_at TIMESTAMPTZ,
+  resolved_by_uid TEXT REFERENCES accounts(uid) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (comment_id, reporter_uid)
+);
+
 CREATE TABLE IF NOT EXISTS subject_warnings (
   id BIGSERIAL PRIMARY KEY,
   subject_id BIGINT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
@@ -978,6 +999,8 @@ CREATE INDEX IF NOT EXISTS subject_post_likes_user_idx ON subject_post_likes(use
 CREATE INDEX IF NOT EXISTS subject_post_bookmarks_user_created_idx ON subject_post_bookmarks(user_uid, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_post_reports_subject_status_idx ON subject_post_reports(subject_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_post_reports_target_idx ON subject_post_reports(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_comment_reports_subject_status_idx ON subject_comment_reports(subject_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS subject_comment_reports_target_idx ON subject_comment_reports(comment_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_warnings_subject_created_idx ON subject_warnings(subject_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_warnings_target_created_idx ON subject_warnings(target_uid, created_at DESC);
 CREATE INDEX IF NOT EXISTS subject_ban_requests_status_created_idx ON subject_ban_requests(status, created_at DESC);

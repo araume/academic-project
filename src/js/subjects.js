@@ -180,6 +180,13 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function truncateUiText(value, max = 240) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max).trim()}...`;
+}
+
 function apiLabel(kind, mode = 'singular', capitalize = false) {
   const normalized = String(kind || 'unit').trim().toLowerCase() === 'thread' ? 'thread' : 'unit';
   let value = normalized;
@@ -702,11 +709,13 @@ async function copyTextToClipboard(text) {
   return result !== null;
 }
 
-async function collectReportPayload() {
+async function collectReportPayload(options = {}) {
+  const title = options.title || 'Report post';
+  const subtitle = options.subtitle || 'Select the reason and add optional details.';
   if (typeof window.showReportDialog === 'function') {
     return window.showReportDialog({
-      title: 'Report post',
-      subtitle: 'Select the reason and add optional details.',
+      title,
+      subtitle,
     });
   }
 
@@ -756,6 +765,15 @@ function openSubjectPostDiscussion(post) {
   card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   const input = card.querySelector('input[name="content"]');
   if (input) input.focus();
+}
+
+async function refreshSubjectPostDiscussion(subjectId, postId) {
+  if (!subjectId || !postId) return;
+  state.requestedPostId = postId;
+  setSubjectPostCommentsExpanded(postId, true);
+  syncSubjectLocation(subjectId, postId);
+  await fetchAndRenderSubjectFeed(subjectId);
+  highlightSubjectPost(postId);
 }
 
 function currentSubjectPostLabel() {
@@ -816,9 +834,71 @@ async function shareSubjectPost(post) {
 async function reportSubjectPost(post) {
   const subject = getSelectedSubject();
   if (!subject) return;
-  const payload = await collectReportPayload();
+  const payload = await collectReportPayload({
+    title: 'Report post',
+    subtitle: 'Select the reason and add optional details.',
+  });
   if (!payload) return;
   const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/posts/${encodeURIComponent(post.id)}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to submit report.');
+  }
+  window.alert('Report submitted.');
+}
+
+async function editSubjectComment(post, comment) {
+  const subject = getSelectedSubject();
+  if (!subject || !post || !comment) return;
+  const draft = window.prompt('Edit comment', comment.content || '');
+  if (draft === null) return;
+  const content = String(draft || '').trim();
+  if (!content) {
+    window.alert('Comment cannot be empty.');
+    return;
+  }
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/comments/${encodeURIComponent(comment.id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to update comment.');
+  }
+  await refreshSubjectPostDiscussion(subject.id, post.id);
+}
+
+async function deleteSubjectComment(post, comment) {
+  const subject = getSelectedSubject();
+  if (!subject || !post || !comment) return;
+  if (!window.confirm('Delete this comment?')) return;
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/comments/${encodeURIComponent(comment.id)}`, {
+    method: 'DELETE',
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to delete comment.');
+  }
+  await refreshSubjectPostDiscussion(subject.id, post.id);
+}
+
+async function reportSubjectComment(post, comment) {
+  const subject = getSelectedSubject();
+  if (!subject || !post || !comment) return;
+  const payload = await collectReportPayload({
+    title: 'Report comment',
+    subtitle: 'Select the reason and add optional details.',
+  });
+  if (!payload) return;
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subject.id)}/comments/${encodeURIComponent(comment.id)}/report`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1221,10 +1301,60 @@ function buildSubjectCommentsSection(post) {
       commentItem.className = 'subject-comment';
       const commentMeta = document.createElement('div');
       commentMeta.className = 'subject-comment-meta';
-      commentMeta.innerHTML = `
+      const commentMetaCopy = document.createElement('div');
+      commentMetaCopy.className = 'subject-comment-meta-copy';
+      const commentUpdated = comment.updatedAt && comment.updatedAt !== comment.createdAt
+        ? `${timeAgo(comment.createdAt)} · edited ${timeAgo(comment.updatedAt)}`
+        : timeAgo(comment.createdAt);
+      commentMetaCopy.innerHTML = `
         <strong>${escapeHtml(comment.authorName || 'Member')}</strong>
-        <span>${escapeHtml(timeAgo(comment.createdAt))}</span>
+        <span>${escapeHtml(commentUpdated)}</span>
       `;
+      commentMeta.appendChild(commentMetaCopy);
+
+      const canManageComment = Boolean(state.viewerUid) && comment.authorUid === state.viewerUid;
+      const canReportComment = Boolean(comment.authorUid) && comment.authorUid !== state.viewerUid;
+      if (canManageComment || canReportComment) {
+        const menuWrap = document.createElement('div');
+        menuWrap.className = 'subject-post-menu-wrap subject-comment-menu-wrap';
+        menuWrap.innerHTML = `
+          <button type="button" class="subject-post-menu-button subject-comment-menu-button" aria-label="Comment actions">
+            <img src="/assets/ellipsis.svg" alt="" />
+          </button>
+          <div class="subject-post-menu subject-comment-menu is-hidden">
+            ${canReportComment ? '<button type="button" data-action="report">Report comment</button>' : ''}
+            ${canManageComment ? '<button type="button" data-action="edit">Edit comment</button>' : ''}
+            ${canManageComment ? '<button type="button" class="is-danger" data-action="delete">Delete comment</button>' : ''}
+          </div>
+        `;
+        const menuButton = menuWrap.querySelector('.subject-post-menu-button');
+        const menu = menuWrap.querySelector('.subject-post-menu');
+        if (menuButton && menu) {
+          menuButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const willShow = menu.classList.contains('is-hidden');
+            closeAllSubjectPostMenus();
+            menu.classList.toggle('is-hidden', !willShow);
+          });
+          menu.querySelectorAll('button[data-action]').forEach((button) => {
+            button.addEventListener('click', async () => {
+              menu.classList.add('is-hidden');
+              try {
+                if (button.dataset.action === 'report') {
+                  await reportSubjectComment(post, comment);
+                } else if (button.dataset.action === 'edit') {
+                  await editSubjectComment(post, comment);
+                } else if (button.dataset.action === 'delete') {
+                  await deleteSubjectComment(post, comment);
+                }
+              } catch (error) {
+                window.alert(error.message || 'Unable to complete comment action.');
+              }
+            });
+          });
+        }
+        commentMeta.appendChild(menuWrap);
+      }
       const content = document.createElement('p');
       content.textContent = comment.content || '';
       commentItem.appendChild(commentMeta);
@@ -1265,11 +1395,7 @@ function buildSubjectCommentsSection(post) {
         throw new Error(data.message || 'Unable to submit comment.');
       }
       input.value = '';
-      state.requestedPostId = post.id;
-      setSubjectPostCommentsExpanded(post.id, true);
-      syncSubjectLocation(subject.id, post.id);
-      await fetchAndRenderSubjectFeed(subject.id);
-      highlightSubjectPost(post.id);
+      await refreshSubjectPostDiscussion(subject.id, post.id);
     } catch (error) {
       window.alert(error.message || 'Unable to submit comment.');
     } finally {
@@ -2039,10 +2165,14 @@ function renderModerationPendingPosts(subjectId, pendingPosts) {
   });
 }
 
-function buildReportActionOptions(selected) {
+function buildReportActionOptions(selected, report = null) {
+  const targetType = report && report.targetType === 'comment' ? 'comment' : 'post';
   const options = [
     { value: 'none', label: 'No action' },
-    { value: 'take_down_subject_post', label: 'Take down post' },
+    {
+      value: targetType === 'comment' ? 'take_down_subject_comment' : 'take_down_subject_post',
+      label: targetType === 'comment' ? 'Take down comment' : 'Take down post',
+    },
     { value: 'warn_target_user', label: 'Warn student' },
     { value: 'suspend_target_user', label: 'Suspend student' },
     { value: 'request_ban_target_user', label: 'Request ban' },
@@ -2077,27 +2207,33 @@ function renderModerationReports(subjectId, reports) {
     const key = `${report.sourceType}:${report.id}`;
     const article = document.createElement('article');
     article.className = 'subject-moderation-card';
+    const targetLabel = report.targetType === 'comment' ? 'Comment report' : 'Post report';
     const reportSummary = report.sourceType === 'ai'
       ? `AI report · Risk ${report.riskLevel || 'unknown'}${report.riskScore !== null && report.riskScore !== undefined ? ` (${report.riskScore})` : ''}`
-      : `Manual report · ${report.reporterName || 'Member'}`;
+      : `${targetLabel} · ${report.reporterName || 'Member'}`;
     const reasonText = report.sourceType === 'ai'
       ? report.summary || (Array.isArray(report.flags) ? report.flags.join(', ') : '')
       : report.reason || report.details || report.customReason || '';
+    const contentPreview = truncateUiText(report.content || '', report.targetType === 'comment' ? 200 : 260);
+    const reportTitle = report.targetType === 'comment'
+      ? report.title || `Comment on ${report.postTitle || 'Untitled post'}`
+      : report.title || 'Untitled post';
     article.innerHTML = `
       <div class="subject-moderation-card-head">
         <div class="subject-moderation-card-meta">
-          <strong>${escapeHtml(report.title || 'Untitled post')}</strong>
+          <strong>${escapeHtml(reportTitle)}</strong>
           <span>${escapeHtml(reportSummary)}</span>
           <span>${escapeHtml(report.authorName || 'Member')} · ${escapeHtml(formatDateTime(report.createdAt))}</span>
         </div>
       </div>
-      <p class="subject-moderation-detail">${escapeHtml(reasonText || 'No report summary provided.')}</p>
+      ${contentPreview ? `<p class="subject-moderation-detail">${escapeHtml(contentPreview)}</p>` : ''}
+      <p class="subject-moderation-detail${contentPreview ? ' is-secondary' : ''}">${escapeHtml(reasonText || 'No report summary provided.')}</p>
       <div class="subject-report-actions-row">
         <select class="small-select" data-report-status="${escapeHtml(key)}">
           ${buildReportStatusOptions(report.status || 'open')}
         </select>
         <select class="small-select" data-report-action="${escapeHtml(key)}">
-          ${buildReportActionOptions(report.moderationAction || 'none')}
+          ${buildReportActionOptions(report.moderationAction || 'none', report)}
         </select>
         <button type="button" class="secondary-button" data-report-apply="${escapeHtml(key)}">Apply</button>
       </div>
