@@ -35,6 +35,7 @@ const createSubjectCodeLabel = document.getElementById('createSubjectCodeLabel')
 const createSubjectDescriptionLabel = document.getElementById('createSubjectDescriptionLabel');
 
 const openCreateSubjectPostModal = document.getElementById('openCreateSubjectPostModal');
+const openMySubjectPostsModalButton = document.getElementById('openMySubjectPostsModal');
 const createSubjectPostModal = document.getElementById('createSubjectPostModal');
 const closeCreateSubjectPostModal = document.getElementById('closeCreateSubjectPostModal');
 const createSubjectPostForm = document.getElementById('createSubjectPostForm');
@@ -48,6 +49,13 @@ const editSubjectPostForm = document.getElementById('editSubjectPostForm');
 const editSubjectPostTitle = document.getElementById('editSubjectPostTitle');
 const editSubjectPostHelper = document.getElementById('editSubjectPostHelper');
 const editSubjectPostMessage = document.getElementById('editSubjectPostMessage');
+const mySubjectPostsModal = document.getElementById('mySubjectPostsModal');
+const closeMySubjectPostsModal = document.getElementById('closeMySubjectPostsModal');
+const mySubjectPostsEyebrow = document.getElementById('mySubjectPostsEyebrow');
+const mySubjectPostsTitle = document.getElementById('mySubjectPostsTitle');
+const mySubjectPostsSubtitle = document.getElementById('mySubjectPostsSubtitle');
+const mySubjectPostsMessage = document.getElementById('mySubjectPostsMessage');
+const mySubjectPostsList = document.getElementById('mySubjectPostsList');
 
 const subjectModerationModal = document.getElementById('subjectModerationModal');
 const closeSubjectModerationModal = document.getElementById('closeSubjectModerationModal');
@@ -123,6 +131,10 @@ const state = {
   feedPosts: [],
   requestedPostId: initialSelection.postId,
   expandedCommentPostIds: new Set(initialSelection.postId ? [initialSelection.postId] : []),
+  myPosts: {
+    subjectId: null,
+    posts: [],
+  },
   moderation: {
     subjectId: null,
     subject: null,
@@ -456,6 +468,15 @@ function renderTabLabels() {
 }
 
 function setSubjectFeedHeader(subject) {
+  if (
+    mySubjectPostsModal
+    && !mySubjectPostsModal.classList.contains('is-hidden')
+    && state.myPosts.subjectId
+    && (!subject || Number(state.myPosts.subjectId) !== Number(subject.id))
+  ) {
+    closeModal(mySubjectPostsModal);
+  }
+
   if (!subject) {
     if (subjectCourseLabel) subjectCourseLabel.textContent = 'Select a unit';
     if (subjectTitle) subjectTitle.textContent = 'Unit feed';
@@ -464,6 +485,10 @@ function setSubjectFeedHeader(subject) {
     if (openCreateSubjectPostModal) {
       openCreateSubjectPostModal.disabled = true;
       openCreateSubjectPostModal.textContent = 'New post';
+    }
+    if (openMySubjectPostsModalButton) {
+      openMySubjectPostsModalButton.disabled = true;
+      openMySubjectPostsModalButton.textContent = 'My posts';
     }
     if (openSubjectAiModalButton) {
       openSubjectAiModalButton.disabled = true;
@@ -487,6 +512,10 @@ function setSubjectFeedHeader(subject) {
   if (openCreateSubjectPostModal) {
     openCreateSubjectPostModal.disabled = false;
     openCreateSubjectPostModal.textContent = `New ${singular} post`;
+  }
+  if (openMySubjectPostsModalButton) {
+    openMySubjectPostsModalButton.disabled = false;
+    openMySubjectPostsModalButton.textContent = 'My posts';
   }
   if (openSubjectAiModalButton) {
     openSubjectAiModalButton.disabled = false;
@@ -804,7 +833,189 @@ async function deleteSubjectPost(post) {
   }
   state.requestedPostId = null;
   setSubjectPostCommentsExpanded(post.id, false);
-  await Promise.all([fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()]);
+  const refreshTasks = [
+    fetchAndRenderSubjectFeed(subject.id),
+    loadSubjectsBootstrap(),
+  ];
+  if (mySubjectPostsModal && !mySubjectPostsModal.classList.contains('is-hidden') && Number(state.myPosts.subjectId) === Number(subject.id)) {
+    refreshTasks.push(loadMySubjectPosts(subject.id));
+  }
+  await Promise.all(refreshTasks);
+}
+
+function getMySubjectPostsModalSubject() {
+  if (!state.myPosts.subjectId) return getSelectedSubject();
+  return state.subjects.find((item) => Number(item.id) === Number(state.myPosts.subjectId)) || getSelectedSubject();
+}
+
+function approvalToneForPost(post) {
+  const status = String(post && post.approvalStatus ? post.approvalStatus : 'approved').toLowerCase();
+  if (status === 'pending') return { label: 'Pending approval', modifier: 'is-warning' };
+  if (status === 'rejected') return { label: 'Rejected', modifier: 'is-danger' };
+  return { label: 'Posted', modifier: 'is-accent' };
+}
+
+function renderMySubjectPosts() {
+  if (!mySubjectPostsList) return;
+  const subject = getMySubjectPostsModalSubject();
+  const posts = Array.isArray(state.myPosts.posts) ? state.myPosts.posts : [];
+  mySubjectPostsList.innerHTML = '';
+
+  if (!posts.length) {
+    mySubjectPostsList.innerHTML = `<p class="subject-empty">You have no posts in this ${escapeHtml(apiLabel(subject?.kind))} yet.</p>`;
+    return;
+  }
+
+  posts.forEach((post) => {
+    const article = document.createElement('article');
+    article.className = 'my-subject-post-card';
+
+    const head = document.createElement('div');
+    head.className = 'my-subject-post-head';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'my-subject-post-title-wrap';
+
+    const title = document.createElement('h4');
+    title.textContent = post.title || 'Untitled post';
+    titleWrap.appendChild(title);
+
+    const meta = document.createElement('p');
+    meta.className = 'my-subject-post-meta';
+    meta.textContent = `Created ${formatDateTime(post.createdAt)}${post.updatedAt && post.updatedAt !== post.createdAt ? ` · Updated ${formatDateTime(post.updatedAt)}` : ''}`;
+    titleWrap.appendChild(meta);
+    head.appendChild(titleWrap);
+
+    const badgeWrap = document.createElement('div');
+    badgeWrap.className = 'my-subject-post-badges';
+    const tone = approvalToneForPost(post);
+    badgeWrap.appendChild(createSubjectPostBadge(tone.label, tone.modifier));
+    head.appendChild(badgeWrap);
+    article.appendChild(head);
+
+    const body = document.createElement('p');
+    body.className = 'my-subject-post-body';
+    body.textContent = post.content || '';
+    article.appendChild(body);
+
+    const utilityRow = document.createElement('div');
+    utilityRow.className = 'subject-post-utility-row';
+    utilityRow.appendChild(createSubjectPostBadge(`${Number(post.likesCount || 0)} likes`));
+    utilityRow.appendChild(createSubjectPostBadge(`${Number(post.commentsCount || 0)} comments`));
+    const attachment = buildSubjectPostAttachment(post);
+    if (attachment) utilityRow.appendChild(attachment);
+    article.appendChild(utilityRow);
+
+    const approvalStatus = String(post.approvalStatus || 'approved').toLowerCase();
+    if (approvalStatus === 'pending') {
+      const pending = document.createElement('p');
+      pending.className = 'subject-post-status-copy';
+      pending.textContent = `Submitted ${timeAgo(post.approvalRequestedAt || post.createdAt)} and hidden until approval.`;
+      article.appendChild(pending);
+    }
+    if (approvalStatus === 'rejected') {
+      const rejection = document.createElement('p');
+      rejection.className = 'subject-post-status-copy is-danger';
+      rejection.textContent = post.rejectionNote
+        ? `Rejected: ${post.rejectionNote}`
+        : 'Rejected by the moderators for this unit/thread.';
+      article.appendChild(rejection);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'my-subject-post-actions';
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = approvalStatus === 'pending' ? 'ghost-button' : 'danger-button';
+    deleteButton.textContent = approvalStatus === 'pending' ? 'Cancel pending' : 'Delete post';
+    deleteButton.addEventListener('click', async () => {
+      try {
+        await removeMySubjectPost(post);
+      } catch (error) {
+        if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to remove your post.';
+      }
+    });
+    actions.appendChild(deleteButton);
+    article.appendChild(actions);
+
+    mySubjectPostsList.appendChild(article);
+  });
+}
+
+async function loadMySubjectPosts(subjectId) {
+  if (!subjectId) return;
+  state.myPosts.subjectId = subjectId;
+  if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = '';
+  if (mySubjectPostsList) {
+    mySubjectPostsList.innerHTML = '<p class="subject-empty">Loading your posts...</p>';
+  }
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/my-posts`);
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to load your posts.');
+  }
+
+  state.myPosts.posts = Array.isArray(data.posts) ? data.posts : [];
+  const subject = data.subject || getMySubjectPostsModalSubject() || {};
+  const kind = subject.kind || 'unit';
+  if (mySubjectPostsEyebrow) {
+    mySubjectPostsEyebrow.textContent = `${apiLabel(kind, 'plural', true)}`;
+  }
+  if (mySubjectPostsTitle) {
+    mySubjectPostsTitle.textContent = `My posts in ${subject.subjectName || `this ${apiLabel(kind)}`}`;
+  }
+  if (mySubjectPostsSubtitle) {
+    mySubjectPostsSubtitle.textContent = `Review your posted, pending, and rejected submissions for this ${apiLabel(kind)} and remove them when needed.`;
+  }
+  renderMySubjectPosts();
+}
+
+async function openMySubjectPostsManager() {
+  const subject = getSelectedSubject();
+  if (!subject) return;
+  openModal(mySubjectPostsModal);
+  try {
+    await loadMySubjectPosts(subject.id);
+  } catch (error) {
+    if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to load your posts.';
+  }
+}
+
+async function removeMySubjectPost(post) {
+  const subject = getMySubjectPostsModalSubject();
+  const subjectId = state.myPosts.subjectId || (subject ? subject.id : null);
+  if (!subject || !subjectId || !post) return;
+
+  const approvalStatus = String(post.approvalStatus || 'approved').toLowerCase();
+  const confirmText = approvalStatus === 'pending'
+    ? `Cancel this pending ${apiLabel(subject.kind)} post?`
+    : `Delete this ${apiLabel(subject.kind)} post?`;
+  if (!window.confirm(confirmText)) return;
+
+  const response = await fetch(`/api/subjects/${encodeURIComponent(subjectId)}/posts/${encodeURIComponent(post.id)}`, {
+    method: 'DELETE',
+  });
+  const data = await response.json().catch(() => ({ ok: false }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'Unable to remove your post.');
+  }
+
+  if (state.requestedPostId === post.id) {
+    state.requestedPostId = null;
+  }
+  setSubjectPostCommentsExpanded(post.id, false);
+  if (mySubjectPostsMessage) {
+    mySubjectPostsMessage.textContent = approvalStatus === 'pending'
+      ? 'Pending post canceled.'
+      : 'Post deleted.';
+  }
+
+  await Promise.all([
+    loadMySubjectPosts(subjectId),
+    fetchAndRenderSubjectFeed(subjectId),
+    loadSubjectsBootstrap(),
+  ]);
 }
 
 function buildSubjectPostAttachment(post) {
@@ -1112,7 +1323,10 @@ function renderPostList(posts) {
   subjectPosts.innerHTML = '';
   if (!state.feedPosts.length) {
     const selected = getSelectedSubject();
-    subjectPosts.innerHTML = `<p class="subject-empty">No posts yet for this ${escapeHtml(apiLabel(selected?.kind))}.</p>`;
+    const emptyMessage = selected && selected.canModerate !== true
+      ? `No posts are visible yet for this ${apiLabel(selected?.kind)}. Use My posts to review your pending or rejected submissions.`
+      : `No posts yet for this ${apiLabel(selected?.kind)}.`;
+    subjectPosts.innerHTML = `<p class="subject-empty">${escapeHtml(emptyMessage)}</p>`;
     return;
   }
 
@@ -2083,10 +2297,18 @@ if (createSubjectPostForm) {
       }
       closeModal(createSubjectPostModal);
       createSubjectPostForm.reset();
-      state.requestedPostId = data.post?.id ? Number(data.post.id) : null;
+      const createdApprovalStatus = String(data.post?.approvalStatus || 'approved').toLowerCase();
+      const createdPostIsVisible = createdApprovalStatus === 'approved';
+      state.requestedPostId = createdPostIsVisible && data.post?.id ? Number(data.post.id) : null;
       syncSubjectLocation(subject.id, state.requestedPostId);
-      await Promise.all([fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()]);
-      if (createSubjectPostMessage) createSubjectPostMessage.textContent = data.message || '';
+      const refreshTasks = [fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()];
+      if (mySubjectPostsModal && !mySubjectPostsModal.classList.contains('is-hidden') && Number(state.myPosts.subjectId) === Number(subject.id)) {
+        refreshTasks.push(loadMySubjectPosts(subject.id));
+      }
+      await Promise.all(refreshTasks);
+      if (!createdPostIsVisible && data.message) {
+        window.alert(data.message);
+      }
     } catch (error) {
       if (createSubjectPostMessage) createSubjectPostMessage.textContent = error.message || 'Unable to create post.';
     } finally {
@@ -2138,10 +2360,15 @@ if (editSubjectPostForm) {
         throw new Error(data.message || 'Unable to update post.');
       }
       const editedPostId = activeEditSubjectPostId;
+      const editedApprovalStatus = String(data.post?.approvalStatus || 'approved').toLowerCase();
       closeEditSubjectPostDialog();
-      state.requestedPostId = editedPostId;
-      syncSubjectLocation(subject.id, editedPostId);
-      await Promise.all([fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()]);
+      state.requestedPostId = editedApprovalStatus === 'approved' ? editedPostId : null;
+      syncSubjectLocation(subject.id, state.requestedPostId);
+      const refreshTasks = [fetchAndRenderSubjectFeed(subject.id), loadSubjectsBootstrap()];
+      if (mySubjectPostsModal && !mySubjectPostsModal.classList.contains('is-hidden') && Number(state.myPosts.subjectId) === Number(subject.id)) {
+        refreshTasks.push(loadMySubjectPosts(subject.id));
+      }
+      await Promise.all(refreshTasks);
       window.alert(data.message || 'Post updated.');
     } catch (error) {
       if (editSubjectPostMessage) editSubjectPostMessage.textContent = error.message || 'Unable to update post.';
@@ -2159,6 +2386,26 @@ if (openSubjectModerationModalButton) {
     const subject = getSelectedSubject();
     if (!subject || subject.canModerate !== true) return;
     await openSubjectModeration(subject);
+  });
+}
+
+if (openMySubjectPostsModalButton) {
+  openMySubjectPostsModalButton.addEventListener('click', async () => {
+    try {
+      await openMySubjectPostsManager();
+    } catch (error) {
+      if (mySubjectPostsMessage) mySubjectPostsMessage.textContent = error.message || 'Unable to load your posts.';
+    }
+  });
+}
+
+if (closeMySubjectPostsModal) {
+  closeMySubjectPostsModal.addEventListener('click', () => closeModal(mySubjectPostsModal));
+}
+
+if (mySubjectPostsModal) {
+  mySubjectPostsModal.addEventListener('click', (event) => {
+    if (event.target === mySubjectPostsModal) closeModal(mySubjectPostsModal);
   });
 }
 

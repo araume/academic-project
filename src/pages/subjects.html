@@ -106,6 +106,7 @@
         <div class="subject-feed-actions">
           <button type="button" class="secondary-button is-hidden" id="openSubjectModerationModal">Moderation</button>
           <button type="button" class="secondary-button" id="openSubjectAiModal" disabled>Unit AI</button>
+          <button type="button" class="secondary-button" id="openMySubjectPostsModal" disabled>My posts</button>
           <button type="button" class="primary-button" id="openCreateSubjectPostModal" disabled>New post</button>
         </div>
       </div>
@@ -188,6 +189,21 @@
         <button type="submit" class="primary-button">Save changes</button>
         <p id="editSubjectPostMessage" class="form-message"></p>
       </form>
+    </div>
+  </div>
+
+  <div class="modal is-hidden" id="mySubjectPostsModal">
+    <div class="modal-card my-subject-posts-modal-card">
+      <button type="button" class="close-button" id="closeMySubjectPostsModal">×</button>
+      <div class="moderation-head">
+        <div>
+          <p class="eyebrow" id="mySubjectPostsEyebrow">My posts</p>
+          <h3 id="mySubjectPostsTitle">My posts in this space</h3>
+          <p id="mySubjectPostsSubtitle" class="subject-description">Review your posted, pending, and rejected submissions here.</p>
+        </div>
+        <p id="mySubjectPostsMessage" class="form-message"></p>
+      </div>
+      <div id="mySubjectPostsList" class="my-subject-posts-list"></div>
     </div>
   </div>
 

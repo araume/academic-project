@@ -949,7 +949,7 @@ function canViewerSeeSubjectPostRow(row, viewerUid, canModerate = false) {
   const approvalStatus = normalizeSubjectPostApprovalStatus(row.approval_status, 'approved');
   if (approvalStatus === 'approved') return true;
   if (canModerate) return true;
-  return Boolean(viewerUid) && row.author_uid === viewerUid;
+  return false;
 }
 
 async function loadSubjectPostForViewer(subjectId, postId, user, client = pool, courseAccess = null) {
@@ -1485,10 +1485,9 @@ router.get('/api/subjects/:id/feed', async (req, res) => {
          AND status = 'active'
          AND (
            approval_status = 'approved'
-           OR author_uid = $2
-           OR $3::boolean = true
+           OR $2::boolean = true
          )`,
-      [subjectId, req.user.uid, canModerate]
+      [subjectId, canModerate]
     );
     const total = Number(totalResult.rows[0]?.total || 0);
 
@@ -1529,7 +1528,6 @@ router.get('/api/subjects/:id/feed', async (req, res) => {
          AND sp.status = 'active'
          AND (
            sp.approval_status = 'approved'
-           OR sp.author_uid = $2
            OR $5::boolean = true
          )
        ORDER BY sp.created_at DESC, sp.id DESC
@@ -1661,6 +1659,117 @@ router.get('/api/subjects/:id/feed', async (req, res) => {
   } catch (error) {
     console.error('Subject feed fetch failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to load the unit/thread feed.' });
+  }
+});
+
+router.get('/api/subjects/:id/my-posts', async (req, res) => {
+  const subjectId = parsePositiveInt(req.params.id, 0, Number.MAX_SAFE_INTEGER);
+  if (!subjectId) {
+    return res.status(400).json({ ok: false, message: 'Invalid subject id.' });
+  }
+
+  try {
+    const subjectState = await loadSubjectForViewer(subjectId, req.user, pool, req.subjectCourseAccess);
+    if (subjectState.status === 'not_found') {
+      return res.status(404).json({ ok: false, message: 'Container not found.' });
+    }
+    if (subjectState.status === 'forbidden') {
+      return res.status(403).json({ ok: false, message: 'Not allowed to view this unit or thread.' });
+    }
+
+    const listResult = await pool.query(
+      `SELECT
+         sp.id,
+         sp.subject_id,
+         sp.title,
+         sp.content,
+         sp.attachment_library_document_uuid,
+         sp.likes_count,
+         sp.comments_count,
+         sp.approval_status,
+         sp.approval_required,
+         sp.approval_requested_at,
+         sp.approved_at,
+         sp.rejected_at,
+         sp.rejection_note,
+         sp.created_at,
+         sp.updated_at
+       FROM subject_posts sp
+       WHERE sp.subject_id = $1
+         AND sp.author_uid = $2
+         AND sp.status = 'active'
+       ORDER BY sp.created_at DESC, sp.id DESC`,
+      [subjectId, req.user.uid]
+    );
+
+    const attachmentUuids = [
+      ...new Set(
+        listResult.rows
+          .map((row) => row.attachment_library_document_uuid)
+          .filter(Boolean)
+      ),
+    ];
+    const documentByUuid = new Map();
+    if (attachmentUuids.length) {
+      const docsResult = await pool.query(
+        `SELECT uuid, title, course, subject, visibility, is_restricted, link, uploader_uid
+         FROM documents
+         WHERE uuid = ANY($1::uuid[])`,
+        [attachmentUuids]
+      );
+      const signedRows = await Promise.all(
+        docsResult.rows.map(async (row) => {
+          const visible = canAccessDocumentRow(row, req.user);
+          if (!visible) return null;
+          const link = await signIfNeeded(row.link);
+          return {
+            uuid: row.uuid,
+            title: row.title || 'Untitled document',
+            course: row.course || null,
+            subject: row.subject || null,
+            visibility: row.visibility || 'public',
+            link,
+          };
+        })
+      );
+      signedRows.forEach((row) => {
+        if (row && row.uuid) {
+          documentByUuid.set(row.uuid, row);
+        }
+      });
+    }
+
+    return res.json({
+      ok: true,
+      subject: {
+        id: Number(subjectState.subject.id),
+        kind: normalizeSubjectKind(subjectState.subject.kind, SUBJECT_KIND_UNIT),
+        courseName: subjectState.subject.course_name || '',
+        subjectName: subjectState.subject.subject_name || '',
+      },
+      posts: listResult.rows.map((row) => ({
+        id: Number(row.id),
+        subjectId: Number(row.subject_id),
+        title: row.title || 'Untitled post',
+        content: row.content || '',
+        likesCount: Number(row.likes_count || 0),
+        commentsCount: Number(row.comments_count || 0),
+        approvalStatus: normalizeSubjectPostApprovalStatus(row.approval_status, 'approved'),
+        approvalRequired: row.approval_required === true,
+        approvalRequestedAt: row.approval_requested_at || null,
+        approvedAt: row.approved_at || null,
+        rejectedAt: row.rejected_at || null,
+        rejectionNote: row.rejection_note || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        attachment: row.attachment_library_document_uuid
+          ? documentByUuid.get(row.attachment_library_document_uuid) || null
+          : null,
+      })),
+    });
+  } catch (error) {
+    console.error('Subject my-posts fetch failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load your posts for this unit/thread.' });
   }
 });
 
@@ -1820,7 +1929,7 @@ router.post('/api/subjects/:id/posts', async (req, res) => {
       ok: true,
       message: autoApprove
         ? `Post published to the ${subjectLabel} feed.`
-        : `Post submitted for ${subjectLabel} approval.`,
+        : `Post submitted and hidden until ${subjectLabel} approval.`,
       post: {
         id: Number(row.id),
         subjectId: Number(row.subject_id),
@@ -2020,7 +2129,7 @@ router.patch('/api/subjects/:id/posts/:postId', async (req, res) => {
       ok: true,
       message: autoApprove
         ? `Post updated in this ${subjectLabel}.`
-        : `Post updated and sent back for ${subjectLabel} approval.`,
+        : `Post updated, hidden from the feed, and sent back for ${subjectLabel} approval.`,
       post: {
         id: Number(row.id),
         subjectId: Number(row.subject_id),
