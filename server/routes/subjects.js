@@ -415,6 +415,11 @@ function buildSubjectPostTargetUrl(subjectId, postId) {
   return `/subjects?subjectId=${encodeURIComponent(subjectId)}&postId=${encodeURIComponent(postId)}`;
 }
 
+function buildSubjectModerationTargetUrl(subjectId) {
+  if (!subjectId) return '/subjects';
+  return `/subjects?subjectId=${encodeURIComponent(subjectId)}`;
+}
+
 function buildSubjectMyPostsTargetUrl(subjectId, { postId = null, status = 'all' } = {}) {
   if (!subjectId) return '/subjects';
   const params = new URLSearchParams();
@@ -473,6 +478,40 @@ async function createSubjectPostOwnerNotification({
   });
 }
 
+async function notifySubjectModeratorsOfPendingPost({
+  actorUid,
+  subject,
+  postId,
+  postTitle,
+  client = pool,
+}) {
+  const safeActorUid = normalizeText(actorUid, 120);
+  if (!safeActorUid || !subject || !postId) {
+    return;
+  }
+
+  const recipientUids = await listSubjectModeratorRecipientUids(subject, safeActorUid, client);
+  if (!recipientUids.length) {
+    return;
+  }
+
+  await createNotificationsForRecipients({
+    recipientUids,
+    actorUid: safeActorUid,
+    type: 'subject_post_pending_approval',
+    entityType: 'subject_post',
+    entityId: String(postId),
+    targetUrl: buildSubjectModerationTargetUrl(subject.id),
+    meta: {
+      postTitle: postTitle || 'Untitled post',
+      subjectId: Number(subject && subject.id ? subject.id : 0) || null,
+      subjectKind: normalizeSubjectKind(subject && (subject.kind || subject.subject_kind), SUBJECT_KIND_UNIT),
+      subjectName: getSubjectNotificationName(subject),
+      courseName: subject && (subject.course_name || subject.courseName) ? subject.course_name || subject.courseName : '',
+    },
+  });
+}
+
 async function canViewerCreateSubjectKind(kind, user, client = pool, courseAccess = null, courseName = '') {
   const role = getPlatformRole(user);
   const normalizedKind = normalizeSubjectKind(kind, SUBJECT_KIND_UNIT);
@@ -520,6 +559,44 @@ async function listAdminRecipientUids(client = pool) {
      FROM accounts
      WHERE COALESCE(is_banned, false) = false
        AND COALESCE(platform_role, 'member') IN ('owner', 'admin')`
+  );
+  return result.rows.map((row) => row.uid).filter(Boolean);
+}
+
+async function listSubjectModeratorRecipientUids(subject, actorUid, client = pool) {
+  if (!subject || !subject.course_name) return [];
+  const subjectCourse = canonicalCourseNameForSubjects(subject.course_name);
+  if (!subjectCourse) return [];
+  const safeActorUid = normalizeText(actorUid, 120);
+  const result = await client.query(
+    `SELECT DISTINCT recipients.uid
+     FROM (
+       SELECT a.uid
+       FROM accounts a
+       WHERE COALESCE(a.is_banned, false) = false
+         AND COALESCE(a.platform_role, 'member') IN ('owner', 'admin')
+
+       UNION
+
+       SELECT a.uid
+       FROM accounts a
+       LEFT JOIN profiles pr
+         ON pr.uid = a.uid
+       WHERE COALESCE(a.is_banned, false) = false
+         AND COALESCE(a.platform_role, 'member') = 'professor'
+         AND lower(COALESCE(NULLIF(pr.main_course, ''), a.course, '')) = lower($1)
+
+       UNION
+
+       SELECT cda.depadmin_uid AS uid
+       FROM course_dep_admin_assignments cda
+       JOIN accounts a
+         ON a.uid = cda.depadmin_uid
+       WHERE COALESCE(a.is_banned, false) = false
+         AND lower(cda.course_name) = lower($1)
+     ) AS recipients
+     WHERE ($2 = '' OR recipients.uid <> $2)`,
+    [subjectCourse, safeActorUid]
   );
   return result.rows.map((row) => row.uid).filter(Boolean);
 }
@@ -1099,6 +1176,7 @@ function canViewerSeeSubjectPostRow(row, viewerUid, canModerate = false) {
   if (normalizeText(row.status, 40).toLowerCase() !== 'active') return false;
   const approvalStatus = normalizeSubjectPostApprovalStatus(row.approval_status, 'approved');
   if (approvalStatus === 'approved') return true;
+  if (approvalStatus === 'pending') return false;
   if (canModerate) return true;
   return false;
 }
@@ -2136,13 +2214,24 @@ router.post('/api/subjects/:id/posts', async (req, res) => {
       }).catch((error) => {
         console.error('Subject post auto content scan failed:', error);
       });
+
+      if (!autoApprove) {
+        notifySubjectModeratorsOfPendingPost({
+          actorUid: req.user.uid,
+          subject,
+          postId: row.id,
+          postTitle: row.title || 'Untitled post',
+        }).catch((error) => {
+          console.error('Subject pending-post moderator notification failed:', error);
+        });
+      }
     });
 
     return res.json({
       ok: true,
       message: autoApprove
         ? `Post published to the ${subjectLabel} feed.`
-        : `Post submitted and hidden until ${subjectLabel} approval.`,
+        : `Post submitted until ${subjectLabel} approval.`,
       post: {
         id: Number(row.id),
         subjectId: Number(row.subject_id),
@@ -2336,6 +2425,17 @@ router.patch('/api/subjects/:id/posts/:postId', async (req, res) => {
       }).catch((error) => {
         console.error('Subject post edit auto content scan failed:', error);
       });
+
+      if (!autoApprove) {
+        notifySubjectModeratorsOfPendingPost({
+          actorUid: req.user.uid,
+          subject,
+          postId: row.id,
+          postTitle: row.title || 'Untitled post',
+        }).catch((error) => {
+          console.error('Subject pending-post moderator notification failed:', error);
+        });
+      }
     });
 
     return res.json({

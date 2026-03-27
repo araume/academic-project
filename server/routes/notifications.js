@@ -62,6 +62,9 @@ function buildNotificationMessage(row) {
   if (row.type === 'document_upload_rejected') {
     return `rejected your upload: ${documentTitle}`;
   }
+  if (row.type === 'subject_post_pending_approval') {
+    return `submitted a ${subjectKind} post for approval: ${postTitle}`;
+  }
   if (row.type === 'subject_post_liked') {
     return `liked your ${subjectKind} post: ${postTitle}`;
   }

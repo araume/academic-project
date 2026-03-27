@@ -12,6 +12,7 @@ const NOTIFICATION_TYPES = new Set([
   'document_upload_pending_approval',
   'document_upload_approved',
   'document_upload_rejected',
+  'subject_post_pending_approval',
   'subject_post_liked',
   'subject_post_commented',
   'subject_post_approved',
@@ -33,6 +34,7 @@ const TYPE_SETTING_COLUMN = {
   document_upload_pending_approval: 'notify_document_activity',
   document_upload_approved: 'notify_document_activity',
   document_upload_rejected: 'notify_document_activity',
+  subject_post_pending_approval: 'notify_post_activity',
   subject_post_liked: 'notify_post_activity',
   subject_post_commented: 'notify_post_activity',
   subject_post_approved: 'notify_post_activity',
@@ -128,6 +130,7 @@ async function ensureNotificationsTables() {
           'document_upload_pending_approval',
           'document_upload_approved',
           'document_upload_rejected',
+          'subject_post_pending_approval',
           'subject_post_liked',
           'subject_post_commented',
           'subject_post_approved',
@@ -176,6 +179,7 @@ async function ensureNotificationsTables() {
           'document_upload_pending_approval',
           'document_upload_approved',
           'document_upload_rejected',
+          'subject_post_pending_approval',
           'subject_post_liked',
           'subject_post_commented',
           'subject_post_approved',
@@ -538,6 +542,13 @@ function buildPushPayload({ type, actorDisplayName, entityType, entityId, target
     return {
       title: 'Your upload was rejected',
       body: `${safeActor} rejected ${documentTitle || 'your upload'}.`,
+      data: { type, entityType, entityId, targetUrl },
+    };
+  }
+  if (type === 'subject_post_pending_approval') {
+    return {
+      title: `New ${subjectLabel} post pending approval`,
+      body: `${safeActor} submitted ${postTitle || `a ${subjectLabel} post`} for approval.`,
       data: { type, entityType, entityId, targetUrl },
     };
   }

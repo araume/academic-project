@@ -95,6 +95,7 @@ const subjectPostAiMessages = document.getElementById('subjectPostAiMessages');
 const subjectPostAiForm = document.getElementById('subjectPostAiForm');
 const subjectPostAiInput = document.getElementById('subjectPostAiInput');
 const subjectPostAiMessage = document.getElementById('subjectPostAiMessage');
+const SUBJECT_MENU_ICON_SRC = '/assets/dot-menu.svg';
 
 function parsePositiveInteger(value, max = Number.MAX_SAFE_INTEGER) {
   const parsed = Number(value);
@@ -1319,7 +1320,7 @@ function buildSubjectCommentsSection(post) {
         menuWrap.className = 'subject-post-menu-wrap subject-comment-menu-wrap';
         menuWrap.innerHTML = `
           <button type="button" class="subject-post-menu-button subject-comment-menu-button" aria-label="Comment actions">
-            <img src="/assets/ellipsis.svg" alt="" />
+            <img src="${SUBJECT_MENU_ICON_SRC}" alt="" />
           </button>
           <div class="subject-post-menu subject-comment-menu is-hidden">
             ${canReportComment ? '<button type="button" data-action="report">Report comment</button>' : ''}
@@ -1438,7 +1439,7 @@ function renderSubjectPostCard(post, index) {
   const canReport = String(post.approvalStatus || 'approved').toLowerCase() === 'approved' && !post.isOwner;
   menuWrap.innerHTML = `
     <button type="button" class="subject-post-menu-button" aria-label="Post actions">
-      <img src="/assets/ellipsis.svg" alt="" />
+      <img src="${SUBJECT_MENU_ICON_SRC}" alt="" />
     </button>
     <div class="subject-post-menu is-hidden">
       <button type="button" data-action="bookmark">${post.bookmarked ? 'Remove bookmark' : 'Bookmark post'}</button>
@@ -1964,7 +1965,8 @@ async function performMemberModerationAction(subjectId, memberUid, action) {
     throw new Error(data.message || 'Unable to complete moderation action.');
   }
   if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
-  await loadSubjectModeration(subjectId);
+  closeModal(subjectModerationModal);
+  await Promise.all([fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
 }
 
 async function handlePendingPostAction(subjectId, postId, action) {
@@ -1985,10 +1987,8 @@ async function handlePendingPostAction(subjectId, postId, action) {
     throw new Error(data.message || 'Unable to update post approval.');
   }
   if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
-  if (action === 'approve' && ['depadmin', 'professor'].includes(state.viewerRole)) {
-    closeModal(subjectModerationModal);
-  }
-  await Promise.all([loadSubjectModeration(subjectId), fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
+  closeModal(subjectModerationModal);
+  await Promise.all([fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
 }
 
 async function handleReportModerationAction(subjectId, report) {
@@ -2019,7 +2019,8 @@ async function handleReportModerationAction(subjectId, report) {
     throw new Error(data.message || 'Unable to apply moderation action.');
   }
   if (subjectModerationMessage) subjectModerationMessage.textContent = data.message || 'Moderation action applied.';
-  await Promise.all([loadSubjectModeration(subjectId), fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
+  closeModal(subjectModerationModal);
+  await Promise.all([fetchAndRenderSubjectFeed(subjectId), loadSubjectsBootstrap()]);
 }
 
 function renderModerationMembers(subjectId, members) {
